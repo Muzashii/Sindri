@@ -1,0 +1,43 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Mock Solicitação Maker</title></head><body>
+<ul class="nav nav-tabs"><li><a href="#tab_1-1">AGUARDANDO</a></li><li><a href="#tab_2-2">EM EXECUÇÃO</a></li></ul>
+<div class="tab-content"><div class="tab-pane active" id="tab_1-1"><table><tbody>
+<tr><td>8759</td><td>500123</td><td>Aluno Teste</td><td>Corte Laser</td><td>01/10/2026 00:07:20</td><td>Aguardando</td><td></td>
+<td><a data-codigo="8759" class="js-visualisa-solicitacao" onclick="abreSolicitacao(8759)">ver</a></td></tr>
+<tr><td>8748</td><td>569605</td><td>Outro Aluno</td><td>Impressão 3D</td><td>30/09/2026 13:45:58</td><td>Aguardando</td><td></td>
+<td><a data-codigo="8748" class="js-visualisa-solicitacao" onclick="abreSolicitacao(8748)">ver</a></td></tr>
+</tbody></table><input type="hidden" id="paginaAtual" value="1">
+<ul class="pagination"><li><a data-qtdlinhas="12" data-codigostatus="1" data-pagina="1">1</a></li>
+<li><a data-qtdlinhas="12" data-codigostatus="1" data-pagina="2">2</a></li></ul></div>
+<div class="tab-pane" id="tab_2-2"><table><tbody>
+<tr><td>8700</td><td>560000</td><td>Aluno Executando</td><td>Corte Laser</td><td>20/09/2026 10:00:00</td><td>Em execução</td><td></td>
+<td><a data-codigo="8700" class="js-visualisa-solicitacao" onclick="abreSolicitacao(8700)">ver</a></td></tr>
+</tbody></table></div></div>
+<div id="modal"></div>
+<script>
+var PAGE1 = null;
+document.addEventListener('click', function(ev){
+  var a = ev.target.closest && ev.target.closest('.pagination a'); if(!a) return;
+  var pane = a.closest('.tab-pane'); if(!PAGE1) PAGE1 = pane.innerHTML;
+  var n = a.getAttribute('data-pagina');
+  setTimeout(function(){
+    if (n === '1') { pane.innerHTML = PAGE1; return; }
+    pane.innerHTML = '<table><tbody><tr><td>8701</td><td>561111</td><td>Aluno Pagina Dois</td><td>Corte Laser</td><td>15/09/2026 09:00:00</td><td>Aguardando</td><td></td>' +
+      '<td><a data-codigo="8701" class="js-visualisa-solicitacao" onclick="abreSolicitacao(8701)">ver</a></td></tr></tbody></table>' +
+      '<input type="hidden" id="paginaAtual" value="2"><ul class="pagination"><li><a data-qtdlinhas="12" data-codigostatus="1" data-pagina="1">1</a></li>' +
+      '<li><a data-qtdlinhas="12" data-codigostatus="1" data-pagina="2">2</a></li></ul>';
+  }, 300);
+});
+function abreSolicitacao(n){
+  document.getElementById('modal').innerHTML = '';
+  setTimeout(function(){
+    document.getElementById('modal').innerHTML =
+    '<div class="modal-dialog"><div class="modal-content"><div class="modal-header"><h4 class="modal-title" id="myModalLabel">Solicitação n° '+n+'</h4></div>'+
+    '<div class="modal-body"><b>RM:</b> 500123<br><b>Nome:</b> Aluno Teste<br><b>Turma:</b> 1ECR<br><b>Curso:</b> Engenharia de Computação (Noturno)<br><b>Tipo de Solicitação:</b> Corte Laser<br><b>Observações:</b> Valeu<br><b>Projeto:</b> Projeto Exemplo<br><b>Professor:</b> Prof Exemplo<br>'+
+    '<table><tbody id="tabela-corpo-arquivos">'+
+    '<tr><td><a download="Cod'+n+'_furos.dxf" href="furos.dxf">Peça_Furos_3mm.dxf</a></td><th>MDF 3mm</th><td>2</td></tr>'+
+    '<tr><td><a download="Cod'+n+'_simples.dxf" href="simples.dxf">Peça_Simples_6mm.dxf</a></td><th>MDF 6mm</th><td>1</td></tr>'+
+    '<tr><td><a download="Cod'+n+'_blocos.dxf" href="blocos.dxf">Base_6mm.dxf</a></td><th>MDF 6mm</th><td>3</td></tr>'+
+    '</tbody></table></div></div></div>';
+  }, 400);
+}
+</script></body></html>

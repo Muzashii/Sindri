@@ -1,0 +1,100 @@
+# Decisões de implementação
+
+Registro das escolhas feitas onde a especificação deixava espaço, conforme pedido no documento.
+
+## Importação
+1. **Explosão de blocos própria** (`INSERT.virtual_entities()` recursivo) em vez de `recursive_decompose`, para resolver
+   a camada `0` e a cor `BYBLOCK` pelo bloco pai. `MINSERT` é expandido em todas as cópias; `ATTRIB` vira texto.
+2. **Extrusão invertida (0,0,-1)** — comum em arquivos do CorelDraw/Inkscape — é normalizada com `ezdxf.upright`.
+   Entidades com extrusão realmente inclinada (3D) são convertidas em polilinha fina.
+3. **Cor**: BYLAYER/BYBLOCK são resolvidos na importação e gravados explicitamente na exportação (o RDWorks separa camadas
+   pela cor da entidade). Cor RGB (true color) é convertida para a **ACI mais próxima**, pois R12/R2000 não guardam RGB.
+4. **Duplicadas**: removidas quando a geometria coincide com 0,01 mm (incluindo linhas invertidas). Sobreposição
+   **parcial** de segmentos colineares não é tratada na v1.
+5. **Encadeamento**: as pontas são agrupadas por grade espacial com a tolerância de junção; o caminho começa por nós de
+   grau ímpar (pontas de cadeias abertas) e estende para os dois lados.
+6. **Peças**: cada contorno fechado que não está dentro de outro é uma peça; *tudo* dentro dele (qualquer profundidade)
+   pertence à peça. Isso inclui um contorno fechado que estava dentro de um furo no arquivo original.
+7. **Furos aproveitáveis (part-in-part)**: só os furos diretos, **sem nada dentro**, com a **mesma cor do contorno
+   externo** (cor diferente = provável gravação) e que não tocam outra geometria interna (texto/linhas de gravação).
+8. **Contornos abertos e marcas soltas**: são agrupados quando se tocam (1 mm) e viram uma peça cujo "molde" para o
+   encaixe é o envoltório convexo — nunca se sobrepõem a outras peças. Ficam marcados em vermelho com aviso.
+9. **Peças idênticas**: comparação por área, perímetro, nº de furos, camadas/cores e textos; depois distância de
+   Hausdorff do desenho completo após alinhar centroides e testar rotações candidatas (arestas mais longas e eixo
+   principal). Peças desenhadas de formas diferentes (ex.: arco solto × polilinha com bulge) são reconhecidas como iguais;
+   o desenho da primeira ocorrência é usado como modelo. Espelhadas **não** são agrupadas.
+10. **Texto**: a caixa delimitadora é estimada (≈0,7 × altura por caractere), pois as fontes do RDWorks podem diferir.
+
+11a. **Unidade errada no cabeçalho**: se, na unidade declarada, o desenho ficar maior que 6 m ou menor que 2 mm,
+    o programa procura a unidade que deixa o desenho com tamanho plausível (prioridade mm, polegadas, cm, m), aplica
+    sozinho e mostra um aviso amarelo. Pode ser trocada em Parâmetros › Arquivo DXF › Unidade (salva no projeto).
+11b. **Textos ignorados por padrão na interface/linha de comando**: nos arquivos do laboratório os textos são nomes
+    de peça/anotações e não devem ser gravados. Desmarque "Ignorar textos" (ou use `--com-textos`) para gravá-los.
+11c. **Filtro de camadas**: a lista de camadas mostra todas as do arquivo; camadas desmarcadas (cotas, nomes…) não
+    entram no encaixe nem na exportação.
+
+## Geometria e garantia de espaçamento
+11. Cada peça é discretizada (tolerância de curva), simplificada (Douglas-Peucker) e recebe offset arredondado de
+    `espaço/2 + tol. de curva + tol. de simplificação + tol. dos arcos do offset`. Assim, **se os polígonos com folga
+    não se sobrepõem, as peças reais ficam a ≥ espaço de distância**, mesmo com os erros de discretização. Custo: cerca de
+    0,2 mm de folga extra por lado com os valores padrão.
+12. Furos para part-in-part são encolhidos em `espaço/2 + tol. de curva + tol. dos arcos`.
+13. A margem é aplicada ao desenho real: a região permitida para o polígono com folga é a placa menos a margem, mais
+    `espaço/2`.
+14. Coordenadas inteiras do Clipper em micrômetros (1 unidade = 0,001 mm).
+
+11d. **Detalhe do contorno no encaixe (desempenho)**: no modo *Equilibrado* (padrão) o contorno usado no cálculo
+    passa por um fechamento morfológico de 10 mm (cresce e encolhe com quinas vivas), que preenche dentes/rasgos de
+    borda com abertura até ~20 mm — típico de caixas com "finger joint". Só acrescenta área, então nunca gera
+    sobreposição. Numa peça com dentes isso reduz ~290 vértices para ~13 e o NFP de 4 s para menos de 1 ms.
+    *Preciso* desliga o fechamento; *Rápido* usa 20 mm. O offset do contorno externo passou a ser em quina viva
+    (miter), que contém o arredondado e não multiplica vértices.
+11e. Os processos de cálculo recebem o cache de NFP já calculado pela primeira solução.
+
+11f. **Intranet FIAP**: navegador embutido (QtWebEngine) com perfil persistente — o usuário faz o login e a
+    sessão fica salva; o programa não manipula senha. Os dados são lidos do DOM da página
+    (`a.js-visualisa-solicitacao`, `abreSolicitacao(n)`, `#myModalLabel`, `#tabela-corpo-arquivos`) e os arquivos
+    são baixados pela própria página (mesma sessão). Se o layout da intranet mudar, só `app/core/intranet.py`
+    (scripts JS) precisa ser ajustado. A quantidade da tabela multiplica todas as peças daquele arquivo.
+
+## NFP e posicionamento
+15. NFP = soma de Minkowski de A com −B (`pyclipper.MinkowskiSum`) **unida a A−b₀ e a a₀−B**, cobrindo os casos
+    "B inteira dentro de A" e "A inteira dentro de B" (sem isso apareciam posições falsamente válidas).
+16. O NFP é encolhido 0,002 mm para permitir contato exato (encostar) sem gerar regiões degeneradas, e "furos" de NFP
+    menores que 0,25 mm² são descartados (artefatos numéricos que permitiam sobreposição).
+17. Critério de posição: os dois da especificação viraram um **gene** do indivíduo — `bbox` (menor caixa delimitadora,
+    desempate x, y) e `left` (mais à esquerda, depois mais abaixo). O algoritmo genético escolhe o melhor.
+18. Peças em furos que estão dentro de outro furo funcionam: o anfitrião e seus "ancestrais" não bloqueiam a região.
+19. Otimizações do decodificador: uma placa que recusou uma variante (peça+rotação) nunca mais a aceitará (a placa só
+    enche); rejeição rápida por área livre; translação de NFP com NumPy; filtro por caixa delimitadora.
+20. Rotação "livre" = passos de 15° (24 posições), para o cache de NFP continuar eficiente.
+
+## Algoritmo genético
+21. Indivíduo = genes `(instância, rotação, espelhado)` + critério. População inicial: área decrescente com a rotação de
+    menor caixa (deitada), a mesma com critério `left`, ordenação pela maior dimensão e mutações.
+22. Fitness: `100·peças_sem_lugar + 2·(placas−1) + área_bbox_última/área_placa + 0,1·largura_última/largura_placa +
+    0,05·Σ área_bbox_outras/área_placa`. Peças sem lugar vêm antes do nº de placas (só ocorrem quando o número máximo de
+    placas é atingido ou "abrir nova placa" está desligado).
+23. Paralelismo com `ProcessPoolExecutor` (contexto *spawn*, igual ao Windows), um processo por núcleo − 1; cada
+    processo tem seu cache de NFP. A primeira solução é calculada antes de abrir os processos (aparece em ~1–2 s).
+
+## Interface
+24. As placas ficam lado a lado no canvas; arrastar uma peça para outra placa a move para lá. ◀ ▶ centralizam cada placa.
+25. Aba "Arquivo original" mostra o desenho importado (contornos abertos em vermelho); aba "Encaixe" mostra o resultado.
+26. Checagem de colisão manual usa os mesmos polígonos com folga do encaixe (vermelho = viola espaço ou margem).
+27. `Del` remove a peça do encaixe **e diminui a quantidade** (senão ela voltaria no próximo encaixe).
+28. Alterar a tolerância de curva reprocessa os arquivos automaticamente (a discretização depende dela).
+
+## Exportação
+29. A geometria original é escrita de novo (não copiada entre documentos) a partir das primitivas normalizadas, já
+    transformadas. **R12** não tem LWPOLYLINE/ELLIPSE/SPLINE/MTEXT: polilinhas viram POLYLINE com bulge (arcos
+    preservados), elipses e splines viram POLYLINE fina (0,01 mm) e MTEXT vira TEXT por linha. R12 também não tem campo
+    de unidade — o RDWorks deve ser configurado para mm na importação.
+30. Ordem de corte: dentro de cada peça, contornos internos antes do externo; entre peças, vizinho mais próximo a partir
+    da origem.
+31. O relatório é PDF (resumo + uma página por placa) e PNG por placa, gerados com o próprio Qt (sem dependências extras).
+
+## Pendências conhecidas / a validar no laboratório
+- Testar R12 × R2000 no RDWorks real e manter como padrão o que importar melhor (hoje: R2000).
+- Comparar o aproveitamento com o encaixe manual de referência (critério de aceite 4) usando arquivos reais.
+- Gerar e testar o `.exe` no Windows (`build_exe.bat`).

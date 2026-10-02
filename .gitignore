@@ -1,0 +1,12 @@
+.venv/
+libs/
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.spec
+sindri_erro.log
+*.zip
