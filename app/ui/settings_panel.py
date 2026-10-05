@@ -4,7 +4,7 @@ from __future__ import annotations
 from PySide6.QtCore import Signal
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QIcon, QPixmap, QPainter
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox, QFrame, QHBoxLayout,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QFrame, QHBoxLayout,
                                QLabel, QListWidget, QListWidgetItem, QSpinBox, QVBoxLayout, QWidget,
                                QPushButton, QScrollArea)
 from ..core.geometry import aci_to_rgb
@@ -218,7 +218,7 @@ class SettingsPanel(QWidget):
         for lab in body.findChildren(QLabel):
             if lab.buddy() is not None:
                 lab.setObjectName("FieldLabel")
-        emit = lambda *_: self.paramsChanged.emit()  # noqa: E731
+        emit = lambda *_: self.paramsChanged.emit()
         for wdg in (self.w, self.h, self.margin, self.spacing, self.curve, self.mut,
                     self.pop, self.stop_ni):
             wdg.valueChanged.connect(emit)

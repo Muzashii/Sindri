@@ -1,4 +1,3 @@
-import json
 import os
 import time
 
@@ -97,7 +96,7 @@ def test_dialogo_baixa_da_pagina_simulada(tmp_path):
         import PySide6.QtWebEngineWidgets  # noqa: F401
     except Exception:
         pytest.skip("QtWebEngine indisponível")
-    from PySide6.QtCore import QSettings, QUrl
+    from PySide6.QtCore import QSettings
     from PySide6.QtWidgets import QApplication
     app = QApplication.instance() or QApplication([])
     QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, str(tmp_path / "cfg"))

@@ -43,7 +43,7 @@ class _Sheet:
     material: Optional[str] = None     # placas nunca misturam materiais
     failed: set = field(default_factory=set)   # variantes que já não couberam (a placa só enche)
 
-    def add(self, pl: "_Placed"):
+    def add(self, pl: _Placed):
         self.placed.append(pl)
         self.extend_bbox(pl.variant, pl.x, pl.y)
         self.free_area -= pl.variant.area_int

@@ -3,16 +3,10 @@ import random
 import numpy as np
 import pyclipper
 import pytest
-from shapely.geometry import Polygon, Point
+from shapely.geometry import Polygon
 
 from app.core.geometry import from_int_path
-from app.core.models import NestParams, Placement
 from app.core.nfp import NFPCache, PartShape
-from app.core.optimizer import shapes_from_parts
-from app.core.part_builder import import_files
-from app.core.placement import Decoder
-from app.core.validate import validate_layout
-from tests.conftest import fx
 
 
 def _shape(pid, coords, holes=(), rots=(0.0,)):
@@ -37,7 +31,6 @@ def test_nfp_separa_colisao_de_nao_colisao(a, b):
             nfp = cache.nfp(va, vb)
             pa = Polygon(from_int_path(va.path))
             pb = Polygon(from_int_path(vb.path))
-            region = None
             for _ in range(300):
                 x, y = rnd.uniform(-150, 150), rnd.uniform(-150, 150)
                 pt = (int(x * 1000), int(y * 1000))

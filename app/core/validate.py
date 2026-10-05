@@ -6,14 +6,10 @@ Usa discretização de 0,01 mm do contorno externo original e confere:
 """
 from __future__ import annotations
 
-from functools import lru_cache
-from typing import Optional
 
-import numpy as np
 from shapely.geometry import Polygon, box
 from shapely.strtree import STRtree
 
-from .geometry import Transform, ring_to_polygon
 from .models import NestParams, Part, Placement
 
 FINE_TOL = 0.01

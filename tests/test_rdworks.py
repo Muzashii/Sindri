@@ -1,4 +1,3 @@
-import os
 
 from app.core.rdworks import files_to_open, find_rdworks
 

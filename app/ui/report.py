@@ -15,7 +15,7 @@ import os
 from dataclasses import dataclass, field
 
 from PySide6.QtCore import QMarginsF, QPointF, QRectF, Qt
-from PySide6.QtGui import (QBrush, QColor, QFont, QFontMetricsF, QImage, QPageLayout, QPageSize, QPainter,
+from PySide6.QtGui import (QBrush, QColor, QFont, QFontMetricsF, QPageLayout, QPageSize, QPainter,
                            QPdfWriter, QPen)
 from shapely import affinity
 from shapely.ops import polylabel
@@ -23,7 +23,7 @@ from shapely.ops import polylabel
 from ..core.models import NestParams, NestResult, Part, Placement
 from .render import part_graphics
 
-from .owners import OWNER_COLORS, part_number  # noqa: E402
+from .owners import OWNER_COLORS, part_number
 RES = 150                      # dpi do PDF
 MARGIN_MM = 12.0
 
@@ -493,29 +493,3 @@ def export_pdf(path: str, title: str, parts: dict[str, Part], result: NestResult
         pass
     return path
 
-
-def export_pngs(out_dir: str, base: str, parts: dict[str, Part], result: NestResult,
-                params: NestParams, width_px: int = 1800, requests: list[dict] | None = None) -> list[str]:
-    """Imagem de cada placa (não é mais gerada na exportação; fica para uso avulso)."""
-    files = []
-    owners = owners_for(parts, result.placements, requests)
-    mode = "tag" if len([k for k in owners if k]) > 1 else "num"
-    for si, n, stitle, _mat in sheet_titles(parts, result.placements):
-        hpx = int(width_px * params.sheet_height / params.sheet_width) + 70
-        img = QImage(width_px, hpx, QImage.Format_ARGB32)
-        img.fill(QColor("white"))
-        painter = QPainter(img)
-        painter.setRenderHint(QPainter.Antialiasing)
-        cnt, util = sheet_stats(parts, result.placements, params, si)
-        f = QFont("Arial")
-        f.setPixelSize(26)
-        painter.setFont(f)
-        painter.setPen(QColor("#222"))
-        painter.drawText(QPointF(20, 40), f"{stitle} · {cnt} peças · aproveitamento {100 * util:.1f}%")
-        render_sheet(painter, QRectF(10, 60, width_px - 20, hpx - 70), parts, result.placements, params, si,
-                     owners, mode)
-        painter.end()
-        path = os.path.join(out_dir, f"{base}_placa{n:02d}.png")
-        img.save(path)
-        files.append(path)
-    return files

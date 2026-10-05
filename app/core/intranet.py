@@ -360,10 +360,6 @@ class RequestDetail:
         return self.info.get("RM", "")
 
     @property
-    def dxf_files(self) -> list[RequestFile]:
-        return [f for f in self.files if f.is_dxf]
-
-    @property
     def student(self) -> str:
         return self.info.get("Nome", "")
 
@@ -420,7 +416,7 @@ def file_materials(files: list[RequestFile]) -> dict[str, str]:
     return {os.path.abspath(f.local_path): f.material for f in files if f.local_path}
 
 
-def request_summary(detail: "RequestDetail", materials: list[str]) -> dict:
+def request_summary(detail: RequestDetail, materials: list[str]) -> dict:
     """Dados exibidos no cartão da solicitação e salvos no projeto."""
     i = detail.info
     return {"code": detail.code, "rm": i.get("RM", ""), "nome": i.get("Nome", ""),
@@ -433,7 +429,7 @@ def file_multipliers(files: list[RequestFile]) -> dict[str, int]:
     return {os.path.abspath(f.local_path): f.quantity for f in files if f.local_path}
 
 
-def file_tags(details_files: list[tuple["RequestDetail", list[RequestFile]]]) -> dict[str, str]:
+def file_tags(details_files: list[tuple[RequestDetail, list[RequestFile]]]) -> dict[str, str]:
     """Caminho local -> nº da solicitação (para saber de quem é cada peça num lote)."""
     return {os.path.abspath(f.local_path): str(d.code) for d, fs in details_files for f in fs if f.local_path}
 
@@ -446,7 +442,7 @@ def batch_label(codes: list) -> str:
     return f"lote_{codes[0]}_mais{len(codes) - 1}"
 
 
-def batch_summary(details_files: list[tuple["RequestDetail", list[RequestFile]]]) -> dict:
+def batch_summary(details_files: list[tuple[RequestDetail, list[RequestFile]]]) -> dict:
     """Cartão/projeto de um lote: um resumo por solicitação + materiais de todas."""
     reqs, mats = [], []
     for d, fs in details_files:

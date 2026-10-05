@@ -6,7 +6,6 @@ import pytest
 from app.core.models import NestParams, Placement
 from app.core.optimizer import GeneticNester, nest, shapes_from_parts
 from app.core.part_builder import import_files
-from app.core.placement import Decoder
 from app.core.validate import validate_layout
 from tests.conftest import fx
 
@@ -138,7 +137,6 @@ def test_quantidade_zero():
 
 def test_detalhe_rapido_fecha_dentes_e_continua_valido(tmp_path):
     """Peças com dentes (finger joint): o modo equilibrado reduz vértices e o encaixe segue sem colisão."""
-    import math
     doc = ezdxf.new()
     doc.header["$INSUNITS"] = 4
     m = doc.modelspace()

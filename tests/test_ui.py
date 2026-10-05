@@ -6,9 +6,9 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
+from PySide6.QtWidgets import QApplication, QMessageBox
 
-from tests.conftest import fx  # noqa: E402
+from tests.conftest import fx
 
 
 @pytest.fixture(scope="module")
@@ -107,16 +107,17 @@ def test_fluxo_completo(app, tmp_path, monkeypatch):
                     "open_rdworks": True}
 
     launched = []
-    monkeypatch.setattr(mw, "ExportDialog", FakeDlg)
-    monkeypatch.setattr(mw, "find_rdworks", lambda saved=None: "C:/RDWorksV8/RDWorksV8.exe")
-    monkeypatch.setattr(mw, "launch", lambda exe, path: launched.append((exe, path)))
+    from app.ui.mainwindow import export as mwe
+    monkeypatch.setattr(mwe, "ExportDialog", FakeDlg)
+    monkeypatch.setattr(mwe, "find_rdworks", lambda saved=None: "C:/RDWorksV8/RDWorksV8.exe")
+    monkeypatch.setattr(mwe, "launch", lambda exe, path: launched.append((exe, path)))
     w.export()
     assert len(launched) == 1 and launched[0][1].endswith("t_todas_placas.dxf")
     assert QApplication.clipboard().text() == os.path.abspath(launched[0][1])
     # só dois arquivos: todas as placas + relatório
     assert sorted(f for f in os.listdir(tmp_path) if f.startswith("t_")) == ["t_relatorio.pdf", "t_todas_placas.dxf"]
     # 2ª vez (Ctrl+E): exporta direto, sem janela, com nome livre (_2) em vez de perguntar
-    monkeypatch.setattr(mw, "ExportDialog", None)
+    monkeypatch.setattr(mwe, "ExportDialog", None)
     w.request_label = "t"
     w.export()
     assert os.path.isfile(tmp_path / "t_2_todas_placas.dxf") and os.path.isfile(tmp_path / "t_2_relatorio.pdf")

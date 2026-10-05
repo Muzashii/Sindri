@@ -104,7 +104,7 @@ def test_arquivo_inexistente():
 
 
 def test_varios_arquivos_com_pecas_repetidas_entre_si():
-    rep = import_files([fx("simples.dxf"), fx("simples.dxf").replace("simples", "simples")])
+    import_files([fx("simples.dxf"), fx("simples.dxf").replace("simples", "simples")])
     rep2 = import_files([fx("furos.dxf"), fx("exemplo_lab.dxf")])
     lid = max(rep2.parts, key=lambda p: p.area)
     assert lid.quantity == 3  # 1 de furos.dxf + 2 de exemplo_lab.dxf

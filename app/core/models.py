@@ -32,7 +32,7 @@ class Prim:
         return d
 
     @staticmethod
-    def from_json(d: dict) -> "Prim":
+    def from_json(d: dict) -> Prim:
         rgb = tuple(d["rgb"]) if d.get("rgb") else None
         return Prim(d["kind"], d["data"], d.get("layer", "0"), d.get("color", 7), rgb)
 
@@ -93,7 +93,7 @@ class Placement:
         return asdict(self)
 
     @staticmethod
-    def from_json(d: dict) -> "Placement":
+    def from_json(d: dict) -> Placement:
         return Placement(**d)
 
 
@@ -119,7 +119,7 @@ class NestResult:
         }
 
     @staticmethod
-    def from_json(d: dict) -> "NestResult":
+    def from_json(d: dict) -> NestResult:
         return NestResult(
             placements=[Placement.from_json(p) for p in d["placements"]],
             sheets_used=d["sheets_used"],
@@ -154,7 +154,7 @@ class NestParams:
     excluded_layers: list = field(default_factory=list)   # camadas que não entram no encaixe
     closed_sheets: list = field(default_factory=list)     # placas já cortadas: não recebem peças novas
 
-    def import_kwargs(self) -> dict:  # noqa: D401
+    def import_kwargs(self) -> dict:
         return {"units_override": self.units_override if self.units_override >= 0 else None,
                 "ignore_text": self.ignore_text, "excluded_layers": set(self.excluded_layers)}
 
@@ -166,7 +166,7 @@ class NestParams:
         return asdict(self)
 
     @staticmethod
-    def from_json(d: dict) -> "NestParams":
+    def from_json(d: dict) -> NestParams:
         p = NestParams()
         for k, v in d.items():
             if hasattr(p, k):

@@ -145,7 +145,7 @@ def spline_ellipse():
     msp = doc.modelspace()
     msp.add_ellipse((0, 0), major_axis=(40, 0), ratio=0.5, dxfattribs={"layer": "CORTE"})
     # gota: spline aberta + linha fechando
-    sp = msp.add_spline([(100, 0), (120, 30), (140, 40), (160, 30), (180, 0)],
+    msp.add_spline([(100, 0), (120, 30), (140, 40), (160, 30), (180, 0)],
                         dxfattribs={"layer": "CORTE"})
     msp.add_line((180, 0), (100, 0), dxfattribs={"layer": "CORTE"})
     # meia elipse + linha

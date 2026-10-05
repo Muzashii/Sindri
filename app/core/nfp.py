@@ -19,8 +19,7 @@ import numpy as np
 import pyclipper
 from shapely.geometry import Polygon
 
-from .geometry import (CLIPPER_SCALE, Transform, offset_int, polygon_to_int, to_int_path,
-                       from_int_path)
+from .geometry import (CLIPPER_SCALE, Transform, offset_int, polygon_to_int, from_int_path)
 
 MIN_NFP_HOLE_MM2 = 0.25  # furos de NFP menores que isso são artefatos numéricos
 EPS_INT = 2  # 0.002 mm: permite encostar exatamente (evita regiões degeneradas)

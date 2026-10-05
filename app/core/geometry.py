@@ -14,7 +14,7 @@ from typing import Iterable, Optional
 import numpy as np
 import pyclipper
 from ezdxf.math import BSpline, ConstructionEllipse, Vec3, bulge_to_arc, fit_points_to_cad_cv
-from shapely.geometry import Polygon, MultiPolygon, LinearRing
+from shapely.geometry import Polygon, MultiPolygon
 from shapely import make_valid
 
 from .models import Prim
@@ -282,10 +282,6 @@ def ring_to_polygon(pts: np.ndarray) -> Optional[Polygon]:
     return Polygon(poly.exterior.coords)
 
 
-def rotate_coords(coords: np.ndarray, rot_deg: float, mirror: bool = False) -> np.ndarray:
-    return Transform(rot_deg, mirror).pts_array(coords)
-
-
 def to_int_path(coords: Iterable) -> list[tuple[int, int]]:
     return [(int(round(x * CLIPPER_SCALE)), int(round(y * CLIPPER_SCALE))) for x, y in coords]
 
@@ -330,6 +326,3 @@ def int_paths_to_shapely(paths: list) -> Polygon | MultiPolygon:
         return polys[0]
     return MultiPolygon(polys)
 
-
-def polygon_area_int(path) -> float:
-    return abs(pyclipper.Area(path)) / (CLIPPER_SCALE ** 2)

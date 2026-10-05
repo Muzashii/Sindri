@@ -86,7 +86,7 @@ def image_file(name: str, color: str, size: int = 14, stroke: float = 3.0) -> st
 
 def app_icon() -> QIcon:
     """Ícone do Sindri: martelo de ferreiro sobre peças encaixadas, em quadrado azul arredondado."""
-    from PySide6.QtGui import QBrush, QColor, QLinearGradient, QPen
+    from PySide6.QtGui import QBrush, QColor, QLinearGradient
     ic = QIcon()
     for size in (16, 24, 32, 48, 64, 128, 256):
         pm = QPixmap(size, size)

@@ -31,7 +31,7 @@ def test_menu_limpar(tmp_path, monkeypatch):
     pytest.importorskip("PySide6")
     from PySide6.QtCore import QSettings
     from PySide6.QtWidgets import QApplication
-    app = QApplication.instance() or QApplication([])
+    QApplication.instance() or QApplication([])
     QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, str(tmp_path / "cfg"))
     from app.ui import main_window as mw
     from app.ui.dialogs import settings
@@ -58,7 +58,8 @@ def test_menu_limpar(tmp_path, monkeypatch):
         def chosen(self):
             return [f for k, _, fs, d in self.groups if d for f in fs]
 
-    monkeypatch.setattr(mw, "CleanupDialog", FakeDlg)
+    from app.ui.mainwindow import files as mwf
+    monkeypatch.setattr(mwf, "CleanupDialog", FakeDlg)
     w = mw.MainWindow()
     w.cleanup_files()
     assert seen["groups"] == {"down": 1, "rep": 1, "cut": 1}

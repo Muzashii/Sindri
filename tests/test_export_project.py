@@ -12,7 +12,6 @@ from app.core.models import NestParams, Placement
 from app.core.optimizer import nest
 from app.core.part_builder import import_files
 from app.core.project import ProjectError, load_project, save_project
-from app.core.validate import validate_layout
 from tests.conftest import fx
 
 
@@ -72,7 +71,7 @@ def test_ordem_internos_antes_dos_externos(nested, tmp_path):
     files, parts, params, res = nested
     out = export_sheets(parts, res.placements, params, str(tmp_path), "o", "R2000", inner_first=True)
     msp = ezdxf.readfile(out[0]).modelspace()
-    lid = max(parts, key=lambda p: p.area)
+    max(parts, key=lambda p: p.area)
     # na tampa, os furos (círculo e rasgos) são escritos antes do contorno externo
     types = [e.dxftype() for e in msp]
     first_circle = types.index("CIRCLE")

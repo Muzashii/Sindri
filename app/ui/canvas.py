@@ -1,13 +1,11 @@
 """Canvas (QGraphicsView): placas, peças, zoom, pan, arrastar e girar."""
 from __future__ import annotations
 
-from typing import Callable, Optional
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal, QTimer
-from PySide6.QtGui import (QBrush, QColor, QFont, QPainter, QPainterPath, QPen, QTransform,
-                           QPalette)
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtGui import (QBrush, QColor, QFont, QPainter, QPainterPath, QPen)
 from PySide6.QtWidgets import (QGraphicsItem, QGraphicsPathItem, QGraphicsScene,
-                               QGraphicsSimpleTextItem, QGraphicsView, QMenu, QApplication)
+                               QGraphicsSimpleTextItem, QGraphicsView, QApplication)
 
 from ..core.models import NestParams, Part, Placement, Prim
 from ..core.geometry import prim_rgb
@@ -174,7 +172,7 @@ class SheetLabel(QGraphicsItem):
 
 
 class PartItem(QGraphicsItem):
-    def __init__(self, part: Part, placement: Placement, canvas: "NestCanvas"):
+    def __init__(self, part: Part, placement: Placement, canvas: NestCanvas):
         super().__init__()
         self.part = part
         self.placement = placement

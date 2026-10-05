@@ -53,10 +53,6 @@ def tokens() -> dict:
     return _current
 
 
-def is_dark() -> bool:
-    return _dark
-
-
 def qcolor(name: str) -> QColor:
     """Cor de um token; aceita #rrggbbaa."""
     v = _current[name]

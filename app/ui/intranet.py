@@ -16,7 +16,7 @@ from PySide6.QtCore import QStandardPaths, Qt, QTimer, QUrl
 from PySide6.QtWidgets import (QCheckBox, QAbstractItemView, QApplication, QComboBox, QDialog, QFileDialog,
                                QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
                                QMessageBox, QPushButton, QScrollArea, QSplitter, QStackedWidget,
-                               QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout, QWidget)
+                               QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from ..core.intranet import (ALL_STATUS, JS_CRAWL_RESET, JS_CRAWL_STATE, crawl_script, date_key,
                              merge_rows, status_options, INTRANET_URL, JS_DETAIL, JS_LIST, JS_OPEN, RequestDetail,
@@ -574,12 +574,6 @@ class IntranetDialog(QDialog):
         self.code.setText(it.text())
         self.view_request()
 
-    def _row_selected(self):
-        r = self.list.currentRow()
-        if r >= 0 and self.list.item(r, 0):
-            self.code.setText(self.list.item(r, 0).text())
-            self.view_request()
-
     # ------------------------------------------------------------------ visualizar
     def view_request(self):
         txt = self.code.text().strip()
@@ -1018,7 +1012,7 @@ class IntranetDialog(QDialog):
         self._fetch_next()
 
     def _show_batch(self):
-        t = theme.tokens()
+        theme.tokens()
         self._clear_detail()
         self.file_rows = {}
         top = QHBoxLayout()

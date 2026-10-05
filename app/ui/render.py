@@ -1,10 +1,9 @@
 """Conversão das peças em QPainterPath (canvas, miniaturas e relatório)."""
 from __future__ import annotations
 
-from functools import lru_cache
 
 import numpy as np
-from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QPixmap, QTransform, QBrush
 
 from ..core.geometry import flatten_prim, prim_rgb

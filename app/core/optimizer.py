@@ -23,7 +23,7 @@ import numpy as np
 from shapely import affinity
 
 from .models import NestParams, NestResult, Part, Placement
-from .nfp import PartShape, round_rot
+from .nfp import PartShape
 from .placement import Decoder
 
 Gene = tuple[int, float, bool]          # (índice da instância, rotação, espelhado)
@@ -224,7 +224,6 @@ class GeneticNester:
         stop_event = stop_event or threading.Event()
         t0 = time.time()
         self.last_improve = t0
-        self._paused_for = 0.0
         stop_after = float(getattr(self.params, "stop_after_seconds", 0) or 0)
 
         def should_stop():

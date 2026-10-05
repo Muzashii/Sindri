@@ -71,7 +71,7 @@ def read_dxf(path: str, units_override: Optional[int] = None, ignore_text: bool 
         raise DXFImportError(f"Arquivo não encontrado: {name}")
     try:
         doc = ezdxf.readfile(path)
-    except IOError as e:
+    except OSError as e:
         raise DXFImportError(f"Não foi possível abrir \"{name}\": {e}") from e
     except ezdxf.DXFStructureError:
         try:
@@ -109,7 +109,7 @@ def read_dxf(path: str, units_override: Optional[int] = None, ignore_text: bool 
         try:
             _collect(e, doc, prims, skipped, parent_layer=None, parent_color=7, parent_rgb=None,
                      factor=factor, depth=0)
-        except Exception as ex:  # entidade problemática não derruba a importação
+        except Exception:  # entidade problemática não derruba a importação
             key = f"{e.dxftype()} (com erro)"
             skipped[key] = skipped.get(key, 0) + 1
     for t, n in skipped.items():
@@ -284,7 +284,6 @@ def _entity_to_prims(e) -> list[Prim]:
             ext = e.dxf.extrusion
             if abs(ext.z - 1.0) > 1e-9:
                 return _fallback_path(e)
-            elev = 0.0
             pts = []
             for v in e.vertices:
                 flags = v.dxf.get("flags", 0)

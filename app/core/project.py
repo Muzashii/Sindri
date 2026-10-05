@@ -74,7 +74,7 @@ def save_project(path: str, files: list[str], params: NestParams, parts: list[Pa
 
 def load_project(path: str) -> Project:
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError) as e:
         raise ProjectError(f"Não foi possível abrir o projeto: {e}") from e

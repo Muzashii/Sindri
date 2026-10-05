@@ -18,11 +18,11 @@ def _fmt(v: float) -> str:
 
 
 class PartRow(QFrame):
-    def __init__(self, part: Part, warns: list[str], dark: bool, panel: "PartsPanel"):
+    def __init__(self, part: Part, warns: list[str], dark: bool, panel: PartsPanel):
         super().__init__()
         self.setObjectName("PartRow")
         self.part = part
-        t = theme.tokens()
+        theme.tokens()
         lay = QHBoxLayout(self)
         lay.setContentsMargins(8, 8, 8, 8)
         lay.setSpacing(10)

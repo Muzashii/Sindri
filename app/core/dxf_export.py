@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import math
 import os
-from typing import Optional
 
 import ezdxf
 from ezdxf import bbox as ezbbox
