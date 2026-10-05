@@ -166,3 +166,29 @@ def test_salvamento_automatico_e_recuperacao(app, tmp_path, monkeypatch):
     w.dirty = w2.dirty = False
     w.close()
     w2.close()
+
+
+def test_filtro_por_solicitacao(app, tmp_path, monkeypatch):
+    from PySide6.QtCore import QSettings
+    QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, str(tmp_path / "cfg"))
+    from app.ui import main_window as mw
+    from app.core.intranet import RequestDetail, RequestFile
+    from app.core.models import Placement
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: 0)
+    w = mw.MainWindow()
+    d1 = RequestDetail(1, {"RM": "1", "Nome": "A"}, [RequestFile("a.dxf", "", "MDF 3mm", 1, local_path=fx("furos.dxf"))])
+    d2 = RequestDetail(2, {"RM": "2", "Nome": "B"}, [RequestFile("b.dxf", "", "MDF 3mm", 1, local_path=fx("simples.dxf"))])
+    w._load_batch([(d1, d1.files), (d2, d2.files)])
+    w.placements = [Placement(p.id, 0, 0, 50 + 30 * i, 50, 0, False) for i, p in enumerate(w.parts)]
+    w.n_sheets = 1
+    w.tabs.setCurrentIndex(1)
+    w._redraw()
+    w.parts_panel._req_buttons["2"].click()
+    assert w.parts_panel.filter_tag == "2" and w.canvas.filter_tag == "2"
+    vis = [r.part.tag for i, r in enumerate(w.parts_panel.rows) if not w.parts_panel.list.item(i).isHidden()]
+    assert vis and set(vis) == {"2"}
+    w.parts_panel._req_buttons["2"].click()                      # clicar de novo mostra todas
+    assert w.canvas.filter_tag == "" and all(not w.parts_panel.list.item(i).isHidden()
+                                             for i in range(len(w.parts_panel.rows)))
+    w.dirty = False
+    w.close()

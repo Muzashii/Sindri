@@ -187,6 +187,12 @@ QToolButton#DoneButton { border: 1px solid %(border)s; border-radius: 6px; paddi
 QToolButton#DoneButton:checked { background: #16a34a; color: white; border-color: #16a34a; font-weight: 700; }
 QFrame#SheetsBox { background: %(surface2)s; border: 1px solid %(border)s; border-radius: 9px; }
 QLabel#SheetsTitle { font-weight: 700; }
+QPushButton#ReqRow { text-align: left; padding: 5px 8px; border: 1px solid %(border)s; border-radius: 7px;
+    background: %(surface)s; font-weight: 500; }
+QPushButton#ReqRow:hover { background: %(accent_soft)s; }
+QPushButton#ReqRow:checked { background: %(accent)s; color: white; font-weight: 700; }
+QPushButton#ReqAll { text-align: center; padding: 4px; border: none; background: transparent; color: %(accent)s;
+    font-weight: 600; }
 QLabel#PartName { font-weight: 700; color: %(text)s; }
 QLabel#PartSub { color: %(muted)s; font-size: 8pt; }
 QFrame#RequestCard { background: %(accent_soft)s; border: 1px solid %(accent)s; border-radius: 10px; }

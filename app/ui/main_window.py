@@ -272,6 +272,7 @@ class MainWindow(QMainWindow):
         split = QSplitter(Qt.Horizontal)
         self.parts_panel.doneChanged.connect(self.on_part_done)
         self.parts_panel.sheetToggled.connect(self.on_sheet_cut)
+        self.parts_panel.requestFilter.connect(self.on_request_filter)
         split.addWidget(self.parts_panel)
         split.addWidget(outer)
         split.addWidget(self.settings_panel)
@@ -1153,6 +1154,7 @@ class MainWindow(QMainWindow):
         self.canvas.owner_colors = owner_colors(self.parts)
         self.canvas.cut_sheets = self.cut_sheets
         self.canvas.done_parts = self.done_parts
+        self.canvas.filter_tag = self.parts_panel.filter_tag
         self.canvas.show_layout(self.pmap, self.placements, self.settings_panel.params(), n, keep_view)
         self.canvas.set_editable(self.worker is None)
         self._refresh_cut_panel()
@@ -1183,6 +1185,25 @@ class MainWindow(QMainWindow):
         if self.canvas.mode == "layout":
             for it in self.canvas.part_items:
                 it.update()
+
+    def on_request_filter(self, tag: str):
+        """Mostra no desenho só as peças de uma solicitação (as outras ficam apagadas)."""
+        self.canvas.set_filter(tag)
+        if not tag:
+            self.statusBar().showMessage("Mostrando todas as solicitações.", 4000)
+            return
+        if self.placements and self.tabs.currentIndex() != 1:
+            self.tabs.setCurrentIndex(1)
+        sheets = sorted({pl.sheet_index for pl in self.placements if self.pmap[pl.part_id].tag == tag})
+        nums = sheet_numbers(self.pmap, self.placements)
+        n = sum(1 for pl in self.placements if self.pmap[pl.part_id].tag == tag)
+        if sheets:
+            self.goto_sheet(sheets[0])
+            self.statusBar().showMessage(
+                f"Solicitação {tag}: {n} peça(s) na(s) placa(s) {', '.join(str(nums.get(s, s + 1)) for s in sheets)}. "
+                "Clique de novo nela para ver todas.", 10000)
+        else:
+            self.statusBar().showMessage(f"Solicitação {tag}: nenhuma peça encaixada ainda.", 6000)
 
     def on_part_done(self, pid: str, on: bool):
         (self.done_parts.add if on else self.done_parts.discard)(pid)

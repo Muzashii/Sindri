@@ -191,6 +191,9 @@ class PartItem(QGraphicsItem):
     def paint(self, painter: QPainter, option, widget=None):
         g = self.gfx
         dark = self.canvas.dark
+        hidden = bool(self.canvas.filter_tag) and self.part.tag != self.canvas.filter_tag
+        if hidden:                       # filtro por solicitação: as outras peças quase somem
+            painter.setOpacity(0.12)
         if self.colliding:
             fill = theme.qcolor("danger")
             fill.setAlpha(120)
@@ -223,7 +226,7 @@ class PartItem(QGraphicsItem):
             painter.setPen(pen)
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(g.fill.boundingRect())
-        if self.canvas.show_labels and self.label_txt:
+        if self.canvas.show_labels and self.label_txt and not hidden:
             self._paint_label(painter)
 
     def _is_done(self) -> bool:
@@ -364,6 +367,7 @@ class NestCanvas(QGraphicsView):
     show_labels: bool = True
     cut_sheets: set = set()
     done_parts: set = set()
+    filter_tag: str = ""
 
     def show_layout(self, parts: dict[str, Part], placements: list[Placement], params: NestParams,
                     n_sheets: int, keep_view: bool = False):
@@ -411,6 +415,11 @@ class NestCanvas(QGraphicsView):
             self.centerOn(center)
         else:
             self.fit_all()
+
+    def set_filter(self, tag: str):
+        self.filter_tag = tag
+        for it in self.part_items:
+            it.update()
 
     def set_cut(self, cut: set):
         """Atualiza só a marcação 'cortada' das placas (sem redesenhar as peças)."""

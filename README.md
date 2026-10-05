@@ -21,6 +21,9 @@ círculos preservados, camadas/cores mantidas e interface em português.
 **Quem é cada peça e o que já foi cortado (dentro do programa):**
 - No **Encaixe**, cada peça aparece **pintada com a cor da solicitação e com o nº escrito em cima** (numa
   solicitação só: o nº da peça). `N` liga/desliga os números (menu Exibir).
+- Num **lote**, o cartão no topo da lista de Peças tem uma linha por solicitação (na cor dela): clique para ver
+  **só as peças daquela pessoa** — na lista e no desenho (as outras ficam apagadas). Clique de novo (ou em
+  *Mostrar todas*) para voltar.
 - Na lista de **Peças**, cada peça tem o botão **Feito**: marcada, a linha fica verde e a peça fica cinza com ✓ no
   desenho. Acima da lista, **Placas cortadas** tem uma caixinha por placa; marcar uma placa marca como feitas as
   peças que só estão em placas cortadas. Num lote, a solicitação ganha ✓ no cartão quando todas as peças dela

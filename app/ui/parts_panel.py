@@ -162,6 +162,7 @@ class PartsPanel(QWidget):
     rotationLockChanged = Signal(str, bool)
     partSelected = Signal(str)
     doneChanged = Signal(str, bool)       # peça marcada como feita (cortada)
+    requestFilter = Signal(str)           # mostrar só as peças de uma solicitação ("" = todas)
     sheetToggled = Signal(int, bool)      # placa marcada como cortada
 
     def __init__(self, parent=None):
@@ -200,6 +201,10 @@ class PartsPanel(QWidget):
         self.req_mats.setSpacing(4)
         rc.addWidget(self.req_title)
         rc.addWidget(self.req_line1)
+        self.req_rows = QVBoxLayout()           # lote: uma linha clicável por solicitação
+        self.req_rows.setSpacing(3)
+        rc.addLayout(self.req_rows)
+        self.filter_tag = ""
         rc.addWidget(self.req_line2)
         rc.addLayout(self.req_mats)
         self.req_card.hide()
@@ -280,6 +285,28 @@ class PartsPanel(QWidget):
             self.sheet_checks[s["si"]] = cb
             self.sheets_grid.addWidget(cb, i // cols, i % cols)
 
+    def set_filter(self, tag: str):
+        """Mostra na lista só as peças da solicitação escolhida e avisa a janela (desenho)."""
+        self.filter_tag = tag
+        try:
+            if getattr(self, "_all_btn", None) is not None:
+                self._all_btn.setVisible(bool(tag))
+        except RuntimeError:
+            pass
+        for code, b in getattr(self, "_req_buttons", {}).items():
+            try:
+                b.setChecked(code == tag)
+            except RuntimeError:
+                pass
+        self._apply_filter()
+        self.requestFilter.emit(tag)
+
+    def _apply_filter(self):
+        for i, r in enumerate(self.rows):
+            it = self.list.item(i)
+            if it is not None:
+                it.setHidden(bool(self.filter_tag) and r.part.tag != self.filter_tag)
+
     def set_done(self, done: set, progress: dict | None = None):
         self._done = set(done)
         self._progress = dict(progress or {})
@@ -292,22 +319,51 @@ class PartsPanel(QWidget):
 
     def set_request(self, info: dict | None, done_tags: set | None = None):
         """Cartão com nº da solicitação, RM, aluno e projeto (arquivos vindos da intranet)."""
-        while self.req_mats.count():
-            w = self.req_mats.takeAt(0).widget()
-            if w:
-                w.hide()
-                w.setParent(None)
-                w.deleteLater()
+        for lay in (self.req_mats, self.req_rows):
+            while lay.count():
+                w = lay.takeAt(0).widget()
+                if w:
+                    w.hide()
+                    w.setParent(None)
+                    w.deleteLater()
         if not info:
             self.req_card.hide()
+            if self.filter_tag:
+                self.set_filter("")
             return
         if info.get("batch"):
+            from .owners import OWNER_COLORS
             reqs = info.get("requests", [])
+            codes = sorted(str(r.get("code", "")) for r in reqs)
+            cols = {c: OWNER_COLORS[i % len(OWNER_COLORS)] for i, c in enumerate(codes)}
             self.req_title.setText(f"Lote · {len(reqs)} solicitações")
+            self.req_line1.setText("Clique numa solicitação para ver só as peças dela:")
+            self.req_line1.setObjectName("Muted")
             dt = done_tags or set()
-            self.req_line1.setText("\n".join(
-                ("✓ " if str(r.get("code", "")) in dt else "") +
-                f"{r.get('code', '')}  ·  RM {r.get('rm', '—')}  ·  {r.get('nome', '')}" for r in reqs))
+            self._req_buttons = {}
+            for r in reqs:
+                code = str(r.get("code", ""))
+                n = sum(p.quantity for p in self.parts if p.tag == code)
+                b = QPushButton()
+                b.setObjectName("ReqRow")
+                b.setCheckable(True)
+                b.setChecked(code == self.filter_tag)
+                b.setCursor(Qt.PointingHandCursor)
+                done = "✓ " if code in dt else ""
+                b.setText(f"{done}{code}  ·  {r.get('nome', '') or '—'}" + (f"   ({n} pç)" if n else ""))
+                b.setToolTip(f"Solicitação {code} · RM {r.get('rm', '—')} · {r.get('nome', '')}\n"
+                             "Clique para mostrar só as peças desta solicitação (clique de novo para ver todas)")
+                b.setStyleSheet(f"QPushButton#ReqRow {{ border-left: 6px solid {cols.get(code, '#888')}; }}")
+                b.clicked.connect(lambda _=False, c=code: self.set_filter("" if self.filter_tag == c else c))
+                self._req_buttons[code] = b
+                self.req_rows.addWidget(b)
+            allb = QPushButton("Mostrar todas as solicitações")
+            allb.setObjectName("ReqAll")
+            allb.setCursor(Qt.PointingHandCursor)
+            allb.clicked.connect(lambda: self.set_filter(""))
+            allb.setVisible(bool(self.filter_tag))
+            self._all_btn = allb
+            self.req_rows.addWidget(allb)
             self.req_line2.hide()
             for m in info.get("materials", []):
                 chip = QLabel(m)
@@ -318,6 +374,7 @@ class PartsPanel(QWidget):
             self.req_card.setToolTip("")
             self.req_card.show()
             return
+        self.req_line1.setObjectName("ReqLine")
         self.req_title.setText(f"Solicitação nº {info.get('code', '')}")
         self.req_line1.setText(f"RM {info.get('rm', '—')}  ·  {info.get('nome', '')}")
         extra = []
@@ -388,6 +445,9 @@ class PartsPanel(QWidget):
             if r.part.id in done:
                 r.set_done(True)
         self._done_count = sum(1 for p in self.parts if p.id in done)
+        if self.filter_tag and not any(p.tag == self.filter_tag for p in self.parts):
+            self.filter_tag = ""
+        self._apply_filter()
         self._update_empty()
         self.update_summary(too_big=too_big)
         self.refresh_icons()
