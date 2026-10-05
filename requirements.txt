@@ -3,3 +3,4 @@ shapely>=2.0.4
 pyclipper>=1.3
 ezdxf>=1.1
 PySide6>=6.6
+pypdf>=4.0

@@ -111,11 +111,10 @@ def test_fluxo_completo(app, tmp_path, monkeypatch):
     monkeypatch.setattr(mw, "find_rdworks", lambda saved=None: "C:/RDWorksV8/RDWorksV8.exe")
     monkeypatch.setattr(mw, "launch", lambda exe, path: launched.append((exe, path)))
     w.export()
-    assert len(launched) == 1 and launched[0][1].endswith(".dxf")
+    assert len(launched) == 1 and launched[0][1].endswith("t_todas_placas.dxf")
     assert QApplication.clipboard().text() == os.path.abspath(launched[0][1])
-    assert os.path.isfile(tmp_path / "t_placa01.dxf")
-    assert os.path.isfile(tmp_path / "t_relatorio.pdf")
-    assert os.path.isfile(tmp_path / "t_placa01.png")
+    # só dois arquivos: todas as placas + relatório
+    assert sorted(f for f in os.listdir(tmp_path) if f.startswith("t_")) == ["t_relatorio.pdf", "t_todas_placas.dxf"]
 
     w.set_dark(True)
     w.set_dark(False)

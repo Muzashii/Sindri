@@ -10,10 +10,13 @@ círculos preservados, camadas/cores mantidas e interface em português.
 1. **Arraste o DXF** para a janela (ou `Ctrl+O`). As peças aparecem agrupadas na lista da esquerda, com a quantidade.
 2. Escolha a **placa** no topo e clique em **▶ Encaixar** (`Espaço`). A melhor solução aparece e vai melhorando ao vivo.
    Clique em **⏹ Parar** quando estiver bom.
-3. Clique em **⬇ Exportar para RDWorks** (`Ctrl+E`). Sai um DXF por placa (`projeto_placa01.dxf`, …) e, se quiser, um
-   relatório PDF/PNG. Com **Abrir no RDWorks depois de exportar** (padrão), o RDWorks já abre com o arquivo
-   (o de todas as placas, se gerado, senão a placa 1). Na primeira vez, se ele não for encontrado, o Sindri pede
-   para você mostrar o `RDWorksV8.exe`.
+3. Clique em **⬇ Exportar para RDWorks** (`Ctrl+E`). Saem só **2 arquivos**:
+   - `nome_todas_placas.dxf` — todas as placas (de todos os materiais) organizadas lado a lado, na ordem do
+     relatório. Com **Abrir no RDWorks depois de exportar** (padrão) ele já abre no RDWorks.
+   - `nome_relatorio.pdf` — resumo com **checklist de corte** (uma caixinha por placa) e de entrega (uma por
+     solicitação), uma página por placa com cada peça **pintada com a cor da solicitação e o nº escrito em
+     cima** (numa solicitação só: o nº da peça), e a lista de peças por solicitação para ir marcando. As
+     caixinhas funcionam impressas e também clicando no PDF (Edge/Chrome/Acrobat: marque e salve).
 
 Depois do encaixe você pode **arrastar** peças (ficam vermelhas se colidirem), **girar** (`R`), **travar** (`L`) e
 encaixar de novo só o restante, mover entre placas (arraste até a outra placa ou botão direito), remover (`Del`) e
@@ -55,7 +58,7 @@ Botão **Intranet FIAP** (ou `Ctrl+I`): abre a página de Solicitações Maker n
    diferentes nunca são agrupadas, e o relatório lista cada solicitação. Os arquivos saem como `lote_8759-8760_…`.
 6. **Materiais nunca dividem placa**: cada material (ex.: MDF 3mm em azul, MDF 6mm em laranja) ganha suas
    próprias placas, com a cor no contorno e na etiqueta. Arrastar uma peça para a placa de outro material deixa
-   ela vermelha. A exportação gera `8759_RM500123_MDF3mm_placa01.dxf`, `8759_RM500123_MDF6mm_placa01.dxf`…
+   ela vermelha. A exportação gera `8759_RM500123_todas_placas.dxf` (as placas de 3mm e depois as de 6mm) e `8759_RM500123_relatorio.pdf`.
 
 ## Dicas
 - **Peças com tamanho absurdo (ex.: 141000 × 12500 mm)?** O arquivo declara a unidade errada. O programa corrige
@@ -76,7 +79,7 @@ Botão **Intranet FIAP** (ou `Ctrl+I`): abre a página de Solicitações Maker n
   (ver `DECISIONS.md`) e há uma verificação final com geometria fina antes de exportar.
 - **Exportação**: geometria **original** (arcos continuam arcos) apenas girada/movida; mm, origem em (0,0); camadas e
   cores preservadas; R2000 (padrão) ou R12; contorno da placa opcional na camada `PLACA` (cinza, desligado por padrão);
-  furos antes do contorno externo; caminho mais curto entre peças; relatório PDF/PNG.
+  furos antes do contorno externo; caminho mais curto entre peças; relatório PDF com checklist.
 - **Projetos**: salva/abre `.sindri` (JSON) com arquivos, parâmetros, quantidades e o encaixe — reabre exatamente igual.
 
 ## Estrutura

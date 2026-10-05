@@ -249,20 +249,34 @@ def export_sheets(parts: list[Part] | dict[str, Part], placements: list[Placemen
             _finish(doc, path)
             files.append(path)
         if len(groups) > 1:
-            # um arquivo só com TODAS as placas de todos os materiais, lado a lado
-            # (materiais separados por um espaço maior), para abrir de uma vez no RDWorks
-            doc = _new_doc(version)
-            msp = doc.modelspace()
-            dx = 0.0
-            for g, (mat, sis) in enumerate(groups):
-                if g:
-                    dx += 3 * gap
-                for si in sis:
-                    if sheet_outline:
-                        _plate(msp, params, dx)
-                    emit(msp, [pl for pl in placements if pl.sheet_index == si], dx)
-                    dx += params.sheet_width + gap
-            path = os.path.join(out_dir, f"{base_name}_todas_placas.dxf")
-            _finish(doc, path)
-            files.append(path)
+            files.append(export_all_sheets(pmap, placements, params, out_dir, base_name, version,
+                                           sheet_outline, inner_first, sort_path, gap))
     return files
+
+
+def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Placement], params: NestParams,
+                      out_dir: str, base_name: str = "projeto", version: str = "R2000",
+                      sheet_outline: bool = False, inner_first: bool = True, sort_path: bool = True,
+                      gap: float = 20.0) -> str:
+    """Um arquivo só (<nome>_todas_placas.dxf) com TODAS as placas de todos os materiais lado a lado,
+    na mesma ordem do relatório (materiais separados por um espaço maior). É o que abre no RDWorks."""
+    pmap = parts if isinstance(parts, dict) else {p.id: p for p in parts}
+    os.makedirs(out_dir, exist_ok=True)
+    doc = _new_doc(version)
+    msp = doc.modelspace()
+    dx = 0.0
+    for g, (mat, sis) in enumerate(sheet_groups(pmap, placements)):
+        if g:
+            dx += 3 * gap
+        for si in sis:
+            if sheet_outline:
+                _plate(msp, params, dx)
+            pls = [pl for pl in placements if pl.sheet_index == si]
+            seq = order_placements(pmap, pls) if sort_path else pls
+            for pl in seq:
+                for pr in placed_prims(pmap[pl.part_id], pl, dx, inner_first):
+                    write_prim(msp, pr, version)
+            dx += params.sheet_width + gap
+    path = os.path.join(out_dir, f"{base_name}_todas_placas.dxf")
+    _finish(doc, path)
+    return path

@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QFrame, QHB
                                QVBoxLayout, QWidget, QInputDialog, QSizePolicy)
 
 from ..core.collision import CollisionChecker
-from ..core.dxf_export import export_sheets
+from ..core.dxf_export import export_all_sheets
 from ..core.rdworks import files_to_open, find_rdworks, launch
 from ..core.models import ImportReport, NestParams, NestResult, Part, Placement
 from ..core.optimizer import shapes_from_parts
@@ -27,7 +27,7 @@ from .canvas import NestCanvas, sheet_offset
 from .dialogs import ExportDialog, PresetsDialog, load_presets, save_presets, settings
 from .parts_panel import PartsPanel
 from .render import clear_graphics_cache
-from .report import export_pdf, export_pngs
+from .report import export_pdf
 from .settings_panel import SettingsPanel
 from .theme import apply_theme
 from .icons import icon, pixmap
@@ -309,6 +309,12 @@ class MainWindow(QMainWindow):
         self.status_label.setObjectName("State")
         h.addWidget(self.status_label)
         return box
+
+    def _report_requests(self) -> list[dict]:
+        i = self.request_info
+        if not i:
+            return []
+        return list(i.get("requests", [])) if i.get("batch") else [i]
 
     def _report_header(self) -> list[str]:
         i = self.request_info
@@ -1417,16 +1423,14 @@ class MainWindow(QMainWindow):
         self._compact_sheets()
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            # para abrir no RDWorks sempre geramos o arquivo com todas as placas organizadas
-            files = export_sheets(self.parts, self.placements, p, o["folder"], o["base"], o["version"],
-                                  combined=o["combined"] or bool(o.get("open_rdworks")), sheet_outline=o["outline"],
-                                  inner_first=o["inner"], sort_path=o["path"])
-            if o["report"]:
-                res = NestResult(self.placements, self.n_sheets, self._utilization(), 0.0, self.unplaced)
-                pdf = os.path.join(o["folder"], f"{o['base']}_relatorio.pdf")
-                export_pdf(pdf, o["base"], self.pmap, res, p, header=self._report_header())
-                files.append(pdf)
-                files += export_pngs(o["folder"], o["base"], self.pmap, res, p)
+            # só dois arquivos: todas as placas organizadas num DXF (abre no RDWorks) + relatório
+            files = [export_all_sheets(self.parts, self.placements, p, o["folder"], o["base"], o["version"],
+                                       sheet_outline=o["outline"], inner_first=o["inner"], sort_path=o["path"])]
+            res = NestResult(self.placements, self.n_sheets, self._utilization(), 0.0, self.unplaced)
+            pdf = os.path.join(o["folder"], f"{o['base']}_relatorio.pdf")
+            export_pdf(pdf, o["base"], self.pmap, res, p, header=self._report_header(),
+                       requests=self._report_requests())
+            files.append(pdf)
         except Exception as e:
             QApplication.restoreOverrideCursor()
             QMessageBox.critical(self, "Erro ao exportar", f"Não foi possível salvar os arquivos:\n{e}")

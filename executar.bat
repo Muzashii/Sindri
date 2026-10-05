@@ -7,7 +7,7 @@ echo   Sindri
 echo ==========================================
 echo Pasta: %~dp0
 echo.
-set "CHECK=import numpy, shapely, shapely.geometry, pyclipper, ezdxf, PySide6.QtWidgets"
+set "CHECK=import numpy, shapely, shapely.geometry, pyclipper, ezdxf, pypdf, PySide6.QtWidgets"
 set "LOG=%TEMP%\sindri_check.txt"
 
 REM Se ja ficou combinado usar o Anaconda (o Windows nao bloqueia o numpy dele), vai direto
@@ -98,7 +98,7 @@ set "PYTHONPATH=%~dp0libs"
 "%CPY%" -c "%CHECK%" >"%LOG%" 2>&1
 if not errorlevel 1 goto :conda_ok
 echo Instalando o que falta na pasta libs - na primeira vez pode levar alguns minutos...
-"%CPY%" -m pip install --upgrade --target "%~dp0libs" --no-deps pyclipper ezdxf pyparsing fonttools typing_extensions PySide6 PySide6_Essentials PySide6_Addons shiboken6
+"%CPY%" -m pip install --upgrade --target "%~dp0libs" --no-deps pyclipper ezdxf pypdf pyparsing fonttools typing_extensions PySide6 PySide6_Essentials PySide6_Addons shiboken6
 "%CPY%" -c "import shapely.geometry; import shapely; assert int(shapely.__version__[0]) >= 2" >nul 2>nul
 if errorlevel 1 "%CPY%" -m pip install --upgrade --target "%~dp0libs" --no-deps shapely
 "%CPY%" -c "%CHECK%" >"%LOG%" 2>&1

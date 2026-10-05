@@ -109,7 +109,7 @@ class ExportDialog(QDialog):
         frow.addWidget(btn)
         form.addRow("Pasta", frow)
         self.base = QLineEdit(base)
-        self.base.setToolTip("Os arquivos serão nome_placa01.dxf, nome_placa02.dxf…")
+        self.base.setToolTip("Gera nome_todas_placas.dxf (todas as placas organizadas) e nome_relatorio.pdf")
         form.addRow("Nome", self.base)
         self.version = QComboBox()
         self.version.addItem("R2000 (recomendado)", "R2000")
@@ -118,9 +118,6 @@ class ExportDialog(QDialog):
         self.version.setCurrentIndex(1 if st.value("export/version", "R2000") == "R12" else 0)
         form.addRow("Versão do DXF", self.version)
         lay.addLayout(form)
-        self.combined = QCheckBox("Também gerar um arquivo com todas as placas lado a lado")
-        self.combined.setChecked(st.value("export/combined", "false") == "true" and n_sheets > 1)
-        self.combined.setEnabled(n_sheets > 1)
         self.outline = QCheckBox("Incluir contorno da placa (camada PLACA, cinza)")
         self.outline.setToolTip("Útil para conferir. Desative a camada PLACA no RDWorks para não cortá-la!")
         self.outline.setChecked(st.value("export/outline", "false") == "true")
@@ -129,13 +126,17 @@ class ExportDialog(QDialog):
         self.inner.setChecked(st.value("export/inner", "true") == "true")
         self.path = QCheckBox("Ordenar peças pelo caminho mais curto")
         self.path.setChecked(st.value("export/path", "true") == "true")
-        self.report = QCheckBox("Gerar relatório (PDF + imagem PNG de cada placa)")
-        self.report.setChecked(st.value("export/report", "true") == "true")
         self.open_rd = QCheckBox("Abrir no RDWorks depois de exportar")
         self.open_rd.setToolTip("Abre o RDWorks com um arquivo contendo todas as placas organizadas lado a "
                                 "lado (todos os materiais; os arquivos de cada placa também são salvos).")
         self.open_rd.setChecked(st.value("export/open_rdworks", "true") == "true")
-        for c in (self.combined, self.outline, self.inner, self.path, self.report, self.open_rd):
+        info = QLabel("Saem 2 arquivos: <b>todas as placas</b> organizadas num DXF (o que vai para o RDWorks) "
+                      "e o <b>relatório PDF</b> com o desenho de cada placa, de quem é cada peça e a "
+                      "lista para marcar o que já foi cortado.")
+        info.setWordWrap(True)
+        info.setObjectName("Muted")
+        lay.addWidget(info)
+        for c in (self.outline, self.inner, self.path, self.open_rd):
             lay.addWidget(c)
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.button(QDialogButtonBox.Ok).setText("Exportar")
@@ -152,11 +153,9 @@ class ExportDialog(QDialog):
     def _accept(self):
         st = settings()
         st.setValue("export/version", self.version.currentData())
-        st.setValue("export/combined", "true" if self.combined.isChecked() else "false")
         st.setValue("export/outline", "true" if self.outline.isChecked() else "false")
         st.setValue("export/inner", "true" if self.inner.isChecked() else "false")
         st.setValue("export/path", "true" if self.path.isChecked() else "false")
-        st.setValue("export/report", "true" if self.report.isChecked() else "false")
         st.setValue("export/open_rdworks", "true" if self.open_rd.isChecked() else "false")
         if not self.base.text().strip():
             self.base.setText("projeto")
@@ -166,6 +165,6 @@ class ExportDialog(QDialog):
         return {"folder": self.folder.text().strip() or os.getcwd(),
                 "base": self.base.text().strip() or "projeto",
                 "version": self.version.currentData(),
-                "combined": self.combined.isChecked(), "outline": self.outline.isChecked(),
+                "outline": self.outline.isChecked(),
                 "inner": self.inner.isChecked(), "path": self.path.isChecked(),
-                "report": self.report.isChecked(), "open_rdworks": self.open_rd.isChecked()}
+                "open_rdworks": self.open_rd.isChecked()}
