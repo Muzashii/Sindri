@@ -168,3 +168,49 @@ class ExportDialog(QDialog):
                 "outline": self.outline.isChecked(),
                 "inner": self.inner.isChecked(), "path": self.path.isChecked(),
                 "open_rdworks": self.open_rd.isChecked()}
+
+
+class CleanupDialog(QDialog):
+    """Escolher o que apagar: solicitações baixadas, relatórios e arquivos de corte exportados."""
+
+    def __init__(self, groups: list[tuple[str, str, list[str], bool]], parent=None):
+        """groups: [(chave, título, arquivos, marcado por padrão)]"""
+        from ..core.cleanup import human, total_size
+        super().__init__(parent)
+        self.setWindowTitle("Limpar arquivos do Sindri")
+        self.setMinimumWidth(520)
+        lay = QVBoxLayout(self)
+        intro = QLabel("Os arquivos escolhidos vão para a <b>Lixeira</b> (dá para recuperar de lá).")
+        intro.setWordWrap(True)
+        lay.addWidget(intro)
+        self.checks: dict[str, QCheckBox] = {}
+        self.files: dict[str, list[str]] = {}
+        for key, title, files, default in groups:
+            cb = QCheckBox(f"{title}  —  {len(files)} arquivo(s), {human(total_size(files))}")
+            cb.setChecked(default and bool(files))
+            cb.setEnabled(bool(files))
+            if files:
+                cb.setToolTip("\n".join(files[:25]) + ("\n…" if len(files) > 25 else ""))
+            self.checks[key] = cb
+            self.files[key] = files
+            lay.addWidget(cb)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.ok = bb.button(QDialogButtonBox.Ok)
+        self.ok.setText("Mover para a Lixeira")
+        bb.button(QDialogButtonBox.Cancel).setText("Cancelar")
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+        for cb in self.checks.values():
+            cb.toggled.connect(self._update)
+        self._update()
+
+    def _update(self, *_):
+        self.ok.setEnabled(any(cb.isChecked() for cb in self.checks.values()))
+
+    def chosen(self) -> list[str]:
+        out = []
+        for k, cb in self.checks.items():
+            if cb.isChecked():
+                out += self.files[k]
+        return out

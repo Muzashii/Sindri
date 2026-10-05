@@ -26,6 +26,10 @@ círculos preservados, camadas/cores mantidas e interface em português.
   *Entregue*. O botão *Ver* leva até a placa. O checklist é salvo junto com o projeto e recomeça quando você
   encaixa de novo.
 
+**Limpar arquivos:** *Arquivo › Limpar arquivos baixados e relatórios…* mostra quantos arquivos e quanto espaço
+ocupam as solicitações baixadas da intranet, os relatórios PDF e os arquivos de corte exportados, e manda os que
+você marcar para a **Lixeira** (relatórios e solicitações vêm marcados; arquivos de corte, não).
+
 Depois do encaixe você pode **arrastar** peças (ficam vermelhas se colidirem), **girar** (`R`), **travar** (`L`) e
 encaixar de novo só o restante, mover entre placas (arraste até a outra placa ou botão direito), remover (`Del`) e
 desfazer/refazer (`Ctrl+Z` / `Ctrl+Y`). O botão **Limpar** (acima da lista de peças, ou `Ctrl+Shift+Del`)

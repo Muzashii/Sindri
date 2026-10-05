@@ -24,7 +24,7 @@ from ..core.project import ProjectError, load_project, save_project
 from ..core.validate import validate_layout
 from ..workers.nest_worker import NestWorker
 from .canvas import NestCanvas, sheet_offset
-from .dialogs import ExportDialog, PresetsDialog, load_presets, save_presets, settings
+from .dialogs import CleanupDialog, ExportDialog, PresetsDialog, load_presets, save_presets, settings
 from .parts_panel import PartsPanel
 from .cut_panel import CutPanel
 from .owners import owner_colors, sheet_numbers
@@ -40,6 +40,13 @@ MAX_UNDO = 100
 
 def fmt_pct(v: float) -> str:
     return f"{100 * v:.1f}".replace(".", ",") + "%"
+
+
+def _str_list(v) -> list[str]:
+    """QSettings devolve str quando a lista tem 1 item (Windows) — normaliza para lista."""
+    if isinstance(v, str):
+        return [v] if v else []
+    return [x for x in (v or []) if isinstance(x, str)]
 
 
 def theme_accent():
@@ -466,6 +473,8 @@ class MainWindow(QMainWindow):
         m_file.addSeparator()
         act(m_file, "Exportar para RDWorks…", self.export, "Ctrl+E")
         m_file.addSeparator()
+        act(m_file, "Limpar arquivos baixados e relatórios…", self.cleanup_files)
+        m_file.addSeparator()
         act(m_file, "Sair", self.close, "Ctrl+Q")
 
         self.a_undo = act(m_edit, "Desfazer", self.undo, "Ctrl+Z")
@@ -742,6 +751,55 @@ class MainWindow(QMainWindow):
                          + ". As peças estão juntas nas placas; o nome de cada peça começa com o nº da "
                            "solicitação.", "info")
         self.setWindowTitle(f"{APP_NAME} — Lote {codes}")
+
+    def cleanup_files(self):
+        """Apaga (Lixeira) as solicitações baixadas da intranet e os arquivos exportados."""
+        from PySide6.QtCore import QFile
+        from ..core.cleanup import (CUT_PATTERNS, REPORT_PATTERNS, downloaded_files, exported_files, human,
+                                    remove_empty_dirs, total_size)
+        from ..core.intranet import default_base_folder
+        st = settings()
+        base = st.value("intranet/folder", default_base_folder())
+        hist = _str_list(st.value("export/history", []))
+        dirs = {os.path.dirname(h) for h in hist} | {st.value("export/last_dir", "")}
+        log = os.path.join(os.path.dirname(base), "intranet_log.txt")
+        groups = [
+            ("down", "Arquivos das solicitações baixadas da intranet", downloaded_files(base), True),
+            ("rep", "Relatórios PDF exportados", exported_files(hist, dirs, REPORT_PATTERNS), True),
+            ("cut", "Arquivos de corte exportados (…_todas_placas.dxf)", exported_files(hist, dirs, CUT_PATTERNS),
+             False),
+        ]
+        if os.path.isfile(log):
+            groups[0][2].append(log)
+        if not any(g[2] for g in groups):
+            QMessageBox.information(self, "Limpar arquivos", "Não há arquivos baixados nem relatórios para apagar.")
+            return
+        dlg = CleanupDialog(groups, self)
+        if not dlg.exec():
+            return
+        files = dlg.chosen()
+        loaded = {os.path.abspath(f) for f in self.files}
+        if loaded & {os.path.abspath(f) for f in files}:
+            if self.worker is not None:
+                self.stop_nest(wait=True)
+            self.clear_all(ask=False)        # as peças abertas vêm de arquivos que serão apagados
+        size = total_size(files)
+        failed = []
+        for f in files:
+            if not QFile.moveToTrash(f):
+                try:
+                    os.remove(f)
+                except OSError:
+                    failed.append(f)
+        remove_empty_dirs(base)
+        st.setValue("export/history", [h for h in hist if os.path.isfile(h)])
+        if failed:
+            QMessageBox.warning(self, "Limpar arquivos",
+                                f"{len(files) - len(failed)} arquivo(s) apagados. Não consegui apagar "
+                                f"{len(failed)} (talvez abertos em outro programa):\n\n" +
+                                "\n".join(os.path.basename(f) for f in failed[:15]))
+        else:
+            self.statusBar().showMessage(f"{len(files)} arquivo(s) ({human(size)}) enviados para a Lixeira.", 8000)
 
     def clear_all(self, ask: bool = True):
         """Remove todos os arquivos, peças e o encaixe (volta para a tela inicial)."""
@@ -1531,6 +1589,8 @@ class MainWindow(QMainWindow):
             export_pdf(pdf, o["base"], self.pmap, res, p, header=self._report_header(),
                        requests=self._report_requests())
             files.append(pdf)
+            hist = _str_list(settings().value("export/history", []))
+            settings().setValue("export/history", (hist + [f for f in files if f not in hist])[-500:])
         except Exception as e:
             QApplication.restoreOverrideCursor()
             QMessageBox.critical(self, "Erro ao exportar", f"Não foi possível salvar os arquivos:\n{e}")
