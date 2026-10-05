@@ -23,8 +23,15 @@ círculos preservados, camadas/cores mantidas e interface em português.
   solicitação só: o nº da peça, o mesmo da lista). `N` liga/desliga os números (menu Exibir).
 - A aba **Corte** (ao lado de *Peças*, `Ctrl+K`) é o checklist: uma linha por placa para marcar ao cortar (a placa
   fica verde na tela) e uma por solicitação, que avisa "✓ tudo cortado — pode separar" e tem a caixinha
-  *Entregue*. O botão *Ver* leva até a placa. O checklist é salvo junto com o projeto e recomeça quando você
-  encaixa de novo.
+  *Entregue*. O botão *Ver* leva até a placa. O checklist é salvo junto com o projeto.
+- **Encaixar de novo com placas já cortadas** pergunta: *Só o que falta* (as placas cortadas ficam como estão e
+  não recebem peças novas; o resto é reorganizado) ou *Tudo de novo*.
+- **Salvamento automático**: o encaixe e o checklist são guardados sozinhos em `Documentos\Sindri\
+  ultimo_trabalho.sindri`. Se o Sindri fechar sem salvar, ao abrir ele oferece recuperar (ou *Arquivo › Recuperar
+  último trabalho*).
+- No arquivo do RDWorks, a opção **Contorno e nº de cada placa** (padrão) desenha o contorno e escreve
+  “PLACA 1”, “PLACA 2”… acima de cada uma, na camada **cinza**. No RDWorks coloque essa camada com
+  **saída = NÃO** antes de cortar.
 
 **Limpar arquivos:** *Arquivo › Limpar arquivos baixados e relatórios…* mostra quantos arquivos e quanto espaço
 ocupam as solicitações baixadas da intranet, os relatórios PDF e os arquivos de corte exportados, e manda os que

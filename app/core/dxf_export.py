@@ -182,6 +182,38 @@ def _plate(msp, params: NestParams, dx: float):
         msp.add_line(pts[i], pts[(i + 1) % 4], dxfattribs=at)
 
 
+# fonte de traços (vetores) para escrever "PLACA n" — vira linha no RDWorks em qualquer versão
+_STROKES = {
+    "0": [[(0, 0), (1, 0), (1, 2), (0, 2), (0, 0)]],
+    "1": [[(0.5, 0), (0.5, 2), (0.2, 1.7)]],
+    "2": [[(0, 2), (1, 2), (1, 1), (0, 1), (0, 0), (1, 0)]],
+    "3": [[(0, 2), (1, 2), (1, 0), (0, 0)], [(0, 1), (1, 1)]],
+    "4": [[(0, 2), (0, 1), (1, 1)], [(1, 2), (1, 0)]],
+    "5": [[(1, 2), (0, 2), (0, 1), (1, 1), (1, 0), (0, 0)]],
+    "6": [[(1, 2), (0, 2), (0, 0), (1, 0), (1, 1), (0, 1)]],
+    "7": [[(0, 2), (1, 2), (1, 0)]],
+    "8": [[(0, 0), (1, 0), (1, 2), (0, 2), (0, 0)], [(0, 1), (1, 1)]],
+    "9": [[(1, 1), (0, 1), (0, 2), (1, 2), (1, 0), (0, 0)]],
+    "P": [[(0, 0), (0, 2), (1, 2), (1, 1), (0, 1)]],
+    "L": [[(0, 2), (0, 0), (1, 0)]],
+    "A": [[(0, 0), (0, 2), (1, 2), (1, 0)], [(0, 1), (1, 1)]],
+    "C": [[(1, 0), (0, 0), (0, 2), (1, 2)]],
+    " ": [],
+}
+
+
+def _stroke_text(msp, text: str, x: float, y: float, height: float, layer: str, color: int):
+    """Escreve texto com linhas (sem fonte): largura de cada caractere = metade da altura."""
+    sy, sx = height / 2.0, height * 0.55
+    at = {"layer": layer, "color": color}
+    cx = x
+    for ch in text.upper():
+        for line in _STROKES.get(ch, []):
+            pts = [(cx + px * sx, y + py * sy) for px, py in line]
+            msp.add_lwpolyline(pts, dxfattribs=at)
+        cx += sx + height * 0.3
+
+
 def material_tag(material: str) -> str:
     """'MDF 3mm' -> 'MDF3mm' (para nomes de arquivo)."""
     import re
@@ -269,8 +301,12 @@ def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Plac
         if g:
             dx += 3 * gap
         for si in sis:
+            n_sheet = sum(len(x) for _, x in sheet_groups(pmap, placements)[:g]) + sis.index(si) + 1
             if sheet_outline:
                 _plate(msp, params, dx)
+                # nº da placa acima dela, na mesma camada cinza do contorno (desativar no RDWorks)
+                hh = min(40.0, max(12.0, 0.05 * params.sheet_height))
+                _stroke_text(msp, f"PLACA {n_sheet}", dx, params.sheet_height + hh * 0.6, hh, PLATE_LAYER, 8)
             pls = [pl for pl in placements if pl.sheet_index == si]
             seq = order_placements(pmap, pls) if sort_path else pls
             for pl in seq:

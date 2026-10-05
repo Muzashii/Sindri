@@ -180,3 +180,22 @@ def test_placa_vazia_antes_de_travada_nao_mistura_material():
     pm = {p.id: p for p in rep.parts}
     for si in {pl.sheet_index for pl in res.placements}:
         assert len({pm[pl.part_id].material for pl in res.placements if pl.sheet_index == si}) == 1
+
+
+def test_placa_cortada_nao_recebe_pecas_novas():
+    """'Só o que falta': peças da placa cortada ficam travadas e nada novo entra nela."""
+    from app.core.models import NestParams, Placement
+    from app.core.optimizer import nest
+    from app.core.part_builder import import_files
+    from tests.conftest import fx
+    import os
+    a = fx("simples.dxf")
+    rep = import_files([a], multipliers={os.path.abspath(a): 3})
+    first = rep.parts[0]
+    locked = [Placement(first.id, 0, 0, 60, 60, 0, False, True)]
+    p = NestParams(sheet_width=600, sheet_height=400, closed_sheets=[0])
+    res = nest(rep.parts, p, locked=locked, time_limit=5, max_generations=1, workers=0, seed=1)
+    keep = next(pl for pl in res.placements if pl.part_id == first.id and pl.instance == 0)
+    others = [pl for pl in res.placements if pl.sheet_index == keep.sheet_index and pl is not keep]
+    assert others == []                       # placa cortada só com o que já estava nela
+    assert len(res.placements) == sum(x.quantity for x in rep.parts)

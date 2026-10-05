@@ -151,6 +151,7 @@ class NestParams:
     detail: int = 1                   # contorno no encaixe: 0 preciso, 1 equilibrado, 2 rápido
     ignore_text: bool = True          # textos costumam ser nomes/anotações, não gravação
     excluded_layers: list = field(default_factory=list)   # camadas que não entram no encaixe
+    closed_sheets: list = field(default_factory=list)     # placas já cortadas: não recebem peças novas
 
     def import_kwargs(self) -> dict:  # noqa: D401
         return {"units_override": self.units_override if self.units_override >= 0 else None,

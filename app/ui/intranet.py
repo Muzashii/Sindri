@@ -420,6 +420,23 @@ class IntranetDialog(QDialog):
         else:
             self._merge_and_show(data.get("progress") or status)
 
+    def _log_dl(self, msg: str):
+        """Registro dos downloads (vai junto no intranet_log.txt)."""
+        import datetime as _dt
+        self._dl_lines = (getattr(self, "_dl_lines", []) + [f"{_dt.datetime.now():%H:%M:%S} {msg}"])[-300:]
+        self._logs = getattr(self, "_logs", {})
+        self._logs["~downloads"] = "== downloads\n" + "\n".join(self._dl_lines)
+        self._flush_log()
+
+    def _flush_log(self):
+        try:
+            folder = os.path.dirname(self.base_folder) or self.base_folder
+            os.makedirs(folder, exist_ok=True)
+            with open(os.path.join(folder, "intranet_log.txt"), "w", encoding="utf-8") as fh:
+                fh.write("\n\n".join(self._logs.values()) + "\n")
+        except OSError:
+            pass
+
     def _write_log(self, status: str, data: dict):
         """Registro da leitura das páginas (ajuda a diagnosticar se o site mudar)."""
         lines = [f"== {status}: {len(data.get('rows') or [])} linhas lidas"]
@@ -428,13 +445,7 @@ class IntranetDialog(QDialog):
         lines += list(data.get("log") or [])
         self._logs = getattr(self, "_logs", {})
         self._logs[status] = "\n".join(lines)
-        try:
-            folder = os.path.dirname(self.base_folder) or self.base_folder
-            os.makedirs(folder, exist_ok=True)
-            with open(os.path.join(folder, "intranet_log.txt"), "w", encoding="utf-8") as fh:
-                fh.write("\n\n".join(self._logs.values()) + "\n")
-        except OSError:
-            pass
+        self._flush_log()
 
     def _update_status_options(self):
         """Recria a lista de status com as abas encontradas, mantendo a escolha atual."""
@@ -762,6 +773,7 @@ class IntranetDialog(QDialog):
                     lab = self.file_rows.get(self._fkey(d, f))
                     if lab:
                         lab.setText("baixando…")
+                    self._log_dl(f"pedido {key}  <- {f.url}")
                     self.page.download(QUrl(f.url), key)
         except OSError as e:
             self._pending = {}
@@ -799,6 +811,9 @@ class IntranetDialog(QDialog):
 
     def _download_requested(self, req):
         key = self._match(req) if self._sending else None
+        if self._sending:
+            self._log_dl(f"chegou nome={req.downloadFileName()!r} url={req.url().toString()} -> "
+                         + (key or "NÃO RECONHECIDO"))
         if key is None:
             return  # download feito pelo usuário na página: comportamento padrão
         self._claimed.add(key)
@@ -816,6 +831,8 @@ class IntranetDialog(QDialog):
             return
         d, f = item
         ok = req.state() == QWebEngineDownloadRequest.DownloadCompleted and os.path.isfile(f.local_path)
+        self._log_dl(f"fim {key}: {'ok' if ok else 'ERRO estado=' + str(req.state())} "
+                     f"{req.receivedBytes()} bytes -> {f.local_path}")
         lab = self.file_rows.get(self._fkey(d, f))
         if lab:
             lab.setText("✓ baixado" if ok else "erro")
@@ -830,7 +847,8 @@ class IntranetDialog(QDialog):
     def _download_timeout(self):
         if not self._pending:
             return
-        for d, f in self._pending.values():
+        for k, (d, f) in self._pending.items():
+            self._log_dl(f"SEM RESPOSTA (tempo esgotado) {k}")
             f.local_path = None
             lab = self.file_rows.get(self._fkey(d, f))
             if lab:

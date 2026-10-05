@@ -36,6 +36,9 @@ def main() -> int:
             win.open_project(files[0])
         else:
             win.load_files(files)
+    else:
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(400, win.check_autosave_on_start)   # oferece recuperar o último trabalho
     return app.exec()
 
 

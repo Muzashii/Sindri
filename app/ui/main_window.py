@@ -42,6 +42,11 @@ def fmt_pct(v: float) -> str:
     return f"{100 * v:.1f}".replace(".", ",") + "%"
 
 
+def _now_txt() -> str:
+    import datetime as _dt
+    return f"{_dt.datetime.now():%d/%m/%Y %H:%M}"
+
+
 def _str_list(v) -> list[str]:
     """QSettings devolve str quando a lista tem 1 item (Windows) — normaliza para lista."""
     if isinstance(v, str):
@@ -473,6 +478,7 @@ class MainWindow(QMainWindow):
         m_file.addSeparator()
         act(m_file, "Exportar para RDWorks…", self.export, "Ctrl+E")
         m_file.addSeparator()
+        act(m_file, "Recuperar último trabalho (salvo automaticamente)", self.recover_autosave)
         act(m_file, "Limpar arquivos baixados e relatórios…", self.cleanup_files)
         m_file.addSeparator()
         act(m_file, "Sair", self.close, "Ctrl+Q")
@@ -595,6 +601,8 @@ class MainWindow(QMainWindow):
             self.stop_nest(wait=True)
         if not self.confirm_discard(add):
             return False
+        old = (dict(self.file_multipliers), dict(self.file_materials), dict(self.file_tags), set(self.cut_sheets),
+               set(self.delivered), self.request_label, self.request_info)
         if not add:
             self.settings_panel.reset_file_options()   # arquivo novo: unidade automática, todas as camadas
             self.file_multipliers = {}
@@ -611,7 +619,13 @@ class MainWindow(QMainWindow):
         if tags:
             self.file_tags.update(tags)
         files = list(self.files) + [p for p in paths if p not in self.files] if add else list(paths)
-        self._import(files, keep_quantities=add)
+        if self._import(files, keep_quantities=add) is False:
+            # leitura falhou: volta ao estado anterior (as peças antigas continuam na tela)
+            (self.file_multipliers, self.file_materials, self.file_tags, self.cut_sheets, self.delivered,
+             self.request_label, self.request_info) = old
+            self.parts_panel.set_request(self.request_info)
+            self._refresh_cut_panel()
+            return False
         return True
 
     def _import(self, files: list[str], keep_quantities: bool = False):
@@ -624,7 +638,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QApplication.restoreOverrideCursor()
             QMessageBox.critical(self, "Erro ao abrir", f"Não foi possível ler os arquivos.\n\n{e}")
-            return
+            return False
         finally:
             if QApplication.overrideCursor():
                 QApplication.restoreOverrideCursor()
@@ -686,6 +700,7 @@ class MainWindow(QMainWindow):
 
     def _save_params(self):
         settings().setValue("ui/last_params", json.dumps(self.settings_panel.params().to_json()))
+        settings().setValue("autosave/clean", "true")      # fechou normalmente (salvou ou descartou)
 
     def open_intranet(self):
         """Abre a intranet, baixa a solicitação escolhida e carrega no encaixe (placas por material)."""
@@ -899,18 +914,70 @@ class MainWindow(QMainWindow):
                 return
             if not path.lower().endswith((".sindri", ".dxfnest")):
                 path += ".sindri"
-        res = NestResult(self.placements, self.n_sheets, self._utilization(), 0.0, self.unplaced)
         try:
-            save_project(path, self.files, self.settings_panel.params(), self.parts, res,
-                         multipliers=self.file_multipliers, label=self.request_label,
-                         materials=self.file_materials, request=self.request_info, tags=self.file_tags,
-                         checklist={"cut": sorted(self.cut_sheets), "delivered": sorted(self.delivered)})
+            self._write_project(path)
         except OSError as e:
             QMessageBox.critical(self, "Erro ao salvar", f"Não foi possível salvar o projeto:\n{e}")
             return
         self.project_path = path
         self.dirty = False
         self.statusBar().showMessage(f"Projeto salvo em {path}", 6000)
+
+    def _write_project(self, path: str):
+        res = NestResult(self.placements, self.n_sheets, self._utilization(), 0.0, self.unplaced)
+        save_project(path, self.files, self.settings_panel.params(), self.parts, res,
+                     multipliers=self.file_multipliers, label=self.request_label,
+                     materials=self.file_materials, request=self.request_info, tags=self.file_tags,
+                     checklist={"cut": sorted(self.cut_sheets), "delivered": sorted(self.delivered)})
+
+    # ------------------------------------------------------------------ salvamento automático
+    @staticmethod
+    def autosave_path() -> str:
+        from ..core.intranet import default_base_folder
+        return os.path.join(os.path.dirname(default_base_folder()), "ultimo_trabalho.sindri")
+
+    def schedule_autosave(self):
+        if not hasattr(self, "_autosave_timer"):
+            self._autosave_timer = QTimer(self)
+            self._autosave_timer.setSingleShot(True)
+            self._autosave_timer.timeout.connect(self.autosave)
+        self._autosave_timer.start(2000)
+
+    def autosave(self):
+        """Guarda o trabalho atual (encaixe + checklist) para recuperar se o programa fechar sem salvar."""
+        if not self.files or not self.placements or self.worker is not None:
+            return
+        try:
+            path = self.autosave_path()
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            self._write_project(path)
+            settings().setValue("autosave/clean", "false")
+            settings().setValue("autosave/when", _now_txt())
+        except Exception:
+            pass
+
+    def recover_autosave(self, ask: bool = True):
+        path = self.autosave_path()
+        if not os.path.isfile(path):
+            QMessageBox.information(self, "Recuperar", "Não há trabalho salvo automaticamente.")
+            return
+        self.open_project(path)
+        if self.project_path == path:
+            self.project_path = None          # "Salvar" pergunta onde guardar de verdade
+            self.dirty = True
+            self.statusBar().showMessage("Último trabalho recuperado. Use Salvar para guardar como projeto.", 8000)
+
+    def check_autosave_on_start(self):
+        if settings().value("autosave/clean", "true") == "true" or not os.path.isfile(self.autosave_path()):
+            return
+        when = settings().value("autosave/when", "")
+        r = QMessageBox.question(self, "Recuperar trabalho",
+                                 "O Sindri foi fechado sem salvar o último trabalho"
+                                 + (f" ({when})" if when else "") + ".\nRecuperar o encaixe e o checklist de corte?",
+                                 QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+        settings().setValue("autosave/clean", "true")
+        if r == QMessageBox.Yes:
+            self.recover_autosave()
 
     def open_project_dialog(self):
         start = settings().value("ui/last_dir", os.path.expanduser("~"))
@@ -1133,6 +1200,7 @@ class MainWindow(QMainWindow):
         if self.canvas.mode == "layout":
             self.canvas.set_cut(self.cut_sheets)
         self._refresh_cut_panel()
+        self.schedule_autosave()
         nums = sheet_numbers(self.pmap, self.placements)
         if on and len(self.cut_sheets) >= len(nums):
             self.statusBar().showMessage("Todas as placas cortadas! 🎉", 8000)
@@ -1141,6 +1209,7 @@ class MainWindow(QMainWindow):
         (self.delivered.add if on else self.delivered.discard)(tag)
         self.dirty = True
         self._refresh_cut_panel()
+        self.schedule_autosave()
 
     def reset_checklist(self):
         self.cut_sheets.clear()
@@ -1316,18 +1385,35 @@ class MainWindow(QMainWindow):
         if sum(pt.quantity for pt in self.parts) == 0:
             QMessageBox.information(self, "Encaixar", "Todas as quantidades estão em zero.")
             return
+        keep_cut = False
         if self.cut_sheets and self.placements:
-            r = QMessageBox.question(
-                self, "Encaixar de novo",
-                f"{len(self.cut_sheets)} placa(s) já estão marcadas como cortadas no checklist.\n"
-                "Encaixar de novo reorganiza as peças e desmarca o checklist das placas.\n\n"
-                "Dica: para encaixar só o que falta, remova (Del) as peças das placas já cortadas "
-                "ou trave (L) as que devem ficar onde estão.\n\nContinuar?",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if r != QMessageBox.Yes:
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Question)
+            box.setWindowTitle("Encaixar de novo")
+            box.setText(f"{len(self.cut_sheets)} placa(s) já estão marcadas como cortadas.")
+            box.setInformativeText("“Só o que falta” mantém as placas cortadas como estão e reorganiza apenas "
+                                   "as outras peças (sem usar as placas já cortadas).\n"
+                                   "“Tudo de novo” reorganiza tudo e desmarca o checklist das placas.")
+            b_rest = box.addButton("Só o que falta", QMessageBox.AcceptRole)
+            b_all = box.addButton("Tudo de novo", QMessageBox.DestructiveRole)
+            box.addButton("Cancelar", QMessageBox.RejectRole)
+            box.setDefaultButton(b_rest)
+            box.exec()
+            if box.clickedButton() == b_rest:
+                keep_cut = True
+            elif box.clickedButton() != b_all:
                 return
         p = self.settings_panel.params()
         self.params = p
+        self._cut_keys = set()
+        if keep_cut:
+            # peças das placas cortadas ficam travadas onde estão; essas placas não recebem peças novas
+            self._cut_keys = {(pl.part_id, pl.instance) for pl in self.placements if pl.sheet_index in self.cut_sheets}
+            for pl in self.placements:
+                if (pl.part_id, pl.instance) in self._cut_keys:
+                    pl.locked = True
+            p = copy.copy(p)
+            p.closed_sheets = sorted(self.cut_sheets)
         locked = [pl for pl in self.placements if pl.locked and pl.instance < self.pmap[pl.part_id].quantity]
         if self.placements:
             self._push_undo()
@@ -1356,7 +1442,11 @@ class MainWindow(QMainWindow):
             return
         self.placements = list(res.placements)
         self.unplaced = list(res.unplaced)
-        self.cut_sheets.clear()          # encaixe novo: as placas mudam (entregas continuam valendo)
+        keys = getattr(self, "_cut_keys", set())
+        if keys:                         # "só o que falta": as placas cortadas continuam marcadas
+            self.cut_sheets = {pl.sheet_index for pl in self.placements if (pl.part_id, pl.instance) in keys}
+        else:
+            self.cut_sheets.clear()      # encaixe novo: as placas mudam (entregas continuam valendo)
         self.n_sheets = max(res.sheets_used, max([pl.sheet_index + 1 for pl in self.placements], default=0))
         self._redraw(keep_view=self._layout_shown_once)
         self._layout_shown_once = True
@@ -1378,6 +1468,7 @@ class MainWindow(QMainWindow):
         self.worker = None
         self.dirty = True
         self.canvas.set_editable(True)
+        self.schedule_autosave()
         self._update_buttons()
         self._update_status()
         missing = sum(p.quantity for p in self.parts) - len(self.placements)
@@ -1453,6 +1544,7 @@ class MainWindow(QMainWindow):
                 grow = True
         self._compact_sheets()
         self.dirty = True
+        self.schedule_autosave()
         if grow or any(it.placement.sheet_index != s for it, s, _, _ in moved):
             self._redraw(keep_view=True)
         else:
@@ -1651,7 +1743,8 @@ class MainWindow(QMainWindow):
         box.setText(f"{len(files)} arquivo(s) salvos em:\n{o['folder']}" + (f"\n\n{opened}" if opened else ""))
         box.setDetailedText("\n".join(os.path.basename(f) for f in files))
         if o["outline"]:
-            box.setInformativeText("Lembrete: desative a camada PLACA (cinza) no RDWorks para não cortá-la.")
+            box.setInformativeText("IMPORTANTE: no RDWorks, na camada cinza (contorno e nº das placas), coloque "
+                                   "saída = NÃO para o laser não passar por ela.")
         open_btn = box.addButton("Abrir pasta", QMessageBox.ActionRole)
         box.addButton("OK", QMessageBox.AcceptRole)
         box.exec()

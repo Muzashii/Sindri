@@ -225,7 +225,10 @@ class Decoder:
             m_try = [m0] + [m for m in mirror_opts if m != m0]
             done = False
             mat = shape.material
+            closed = set(getattr(p, "closed_sheets", None) or [])
             for si in range(len(sheets) + 1):
+                if si in closed and si < len(sheets):
+                    continue
                 if si == len(sheets):
                     if not p.multi_sheet and any(s.material == mat for s in sheets):
                         break

@@ -118,9 +118,10 @@ class ExportDialog(QDialog):
         self.version.setCurrentIndex(1 if st.value("export/version", "R2000") == "R12" else 0)
         form.addRow("Versão do DXF", self.version)
         lay.addLayout(form)
-        self.outline = QCheckBox("Incluir contorno da placa (camada PLACA, cinza)")
-        self.outline.setToolTip("Útil para conferir. Desative a camada PLACA no RDWorks para não cortá-la!")
-        self.outline.setChecked(st.value("export/outline", "false") == "true")
+        self.outline = QCheckBox("Contorno e nº de cada placa (“PLACA 1”, “PLACA 2”…) na camada PLACA, cinza")
+        self.outline.setToolTip("Mostra no RDWorks qual placa é qual. Na camada cinza (PLACA), marque saída = NÃO "
+                                "antes de cortar, para o laser não passar por ela!")
+        self.outline.setChecked(st.value("export/outline2", "true") == "true")
         self.inner = QCheckBox("Cortar contornos internos antes dos externos")
         self.inner.setToolTip("Evita que a peça se solte e se mova antes de os furos serem cortados.")
         self.inner.setChecked(st.value("export/inner", "true") == "true")
@@ -153,7 +154,7 @@ class ExportDialog(QDialog):
     def _accept(self):
         st = settings()
         st.setValue("export/version", self.version.currentData())
-        st.setValue("export/outline", "true" if self.outline.isChecked() else "false")
+        st.setValue("export/outline2", "true" if self.outline.isChecked() else "false")
         st.setValue("export/inner", "true" if self.inner.isChecked() else "false")
         st.setValue("export/path", "true" if self.path.isChecked() else "false")
         st.setValue("export/open_rdworks", "true" if self.open_rd.isChecked() else "false")

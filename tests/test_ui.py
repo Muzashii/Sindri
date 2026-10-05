@@ -135,3 +135,26 @@ def test_fluxo_completo(app, tmp_path, monkeypatch):
     assert not w.btn_nest.isEnabled() and not w.btn_export.isEnabled()
     w.dirty = False
     w.close()
+
+
+def test_salvamento_automatico_e_recuperacao(app, tmp_path, monkeypatch):
+    from PySide6.QtCore import QSettings
+    QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, str(tmp_path / "cfg"))
+    from app.ui import main_window as mw
+    from app.core.models import Placement
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: 0)
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.Yes))
+    monkeypatch.setattr(mw.MainWindow, "autosave_path", staticmethod(lambda: str(tmp_path / "auto.sindri")))
+    w = mw.MainWindow()
+    w.load_files([fx("simples.dxf")])
+    w.placements = [Placement(w.parts[0].id, 0, 0, 80, 80, 0, False)]
+    w.n_sheets = 1
+    w.cut_sheets = {0}
+    w.autosave()
+    assert os.path.isfile(tmp_path / "auto.sindri")
+    w2 = mw.MainWindow()
+    w2.check_autosave_on_start()               # não fechou normalmente -> oferece recuperar
+    assert w2.placements and w2.cut_sheets == {0} and w2.project_path is None
+    w.dirty = w2.dirty = False
+    w.close()
+    w2.close()
