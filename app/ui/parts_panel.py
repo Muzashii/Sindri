@@ -36,15 +36,22 @@ class PartRow(QFrame):
 
         info = QVBoxLayout()
         info.setSpacing(2)
+        # linha 1: nome (cortado com "…" se não couber; o nome inteiro fica na dica)
+        self.full_name = part.name.split(" (")[0]
+        self.name = QLabel(self.full_name)
+        self.name.setObjectName("PartName")
+        self.name.setMinimumWidth(40)
+        from PySide6.QtWidgets import QSizePolicy
+        self.name.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        info.addWidget(self.name)
+        # linha 2: material + aviso
         top = QHBoxLayout()
         top.setSpacing(6)
-        name = QLabel(part.name.split(" (")[0])
-        name.setObjectName("PartName")
-        top.addWidget(name)
         if part.material:
             chip = QLabel(part.material)
             chip.setObjectName("MatChip")
             chip.setStyleSheet(f"background: {theme.material_color(part.material).name()};")
+            chip.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
             top.addWidget(chip)
         if warns:
             b = QLabel("⚠ aviso")
@@ -57,11 +64,10 @@ class PartRow(QFrame):
         sub = QLabel(f"{_fmt(w)} × {_fmt(h)} mm")
         sub.setObjectName("PartSub")
         info.addWidget(sub)
-        extra = [f"{part.file_quantity}× no arquivo"]
-        if part.holes:
-            extra.append(f"{len(part.holes)} furo(s)")
+        extra = [f"{part.file_quantity}× no arquivo"] + ([f"{len(part.holes)} furo(s)"] if part.holes else [])
         sub2 = QLabel(" · ".join(extra))
         sub2.setObjectName("PartSub")
+        sub2.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         info.addWidget(sub2)
         lay.addLayout(info, 1)
 
@@ -150,6 +156,11 @@ class PartRow(QFrame):
             self.done_btn.setChecked(v)
             self.done_btn.blockSignals(False)
         self._apply_done(v)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        fm = self.name.fontMetrics()
+        self.name.setText(fm.elidedText(self.full_name, Qt.ElideRight, max(30, self.name.width())))
 
     def set_selected(self, sel: bool):
         self.setProperty("selected", sel)
@@ -273,8 +284,9 @@ class PartsPanel(QWidget):
         cols = 2 if len(sheets) > 1 else 1
         for i, s in enumerate(sheets):
             mat = s.get("material") or ""
-            short = mat.replace("MDF ", "") if mat else ""
-            cb = QCheckBox(f"Placa {s['n']}" + (f" · {short}" if short else ""))
+            txt = f"Placa {s['n']}" + (f" · {mat}" if mat else "")
+            cb = QCheckBox()
+            cb.setText(cb.fontMetrics().elidedText(txt, Qt.ElideRight, 128 if cols == 2 else 260))
             cb.setToolTip(f"Placa {s['n']}" + (f" · {mat}" if mat else "") + f" · {s['count']} peças\n"
                           "Marque quando terminar de cortar: as peças que só estão em placas cortadas "
                           "ficam como feitas.")
@@ -317,7 +329,7 @@ class PartsPanel(QWidget):
         self._done_count = n
         self.update_summary()
 
-    def set_request(self, info: dict | None, done_tags: set | None = None):
+    def set_request(self, info: dict | None, done_tags: set | None = None, progress: dict | None = None):
         """Cartão com nº da solicitação, RM, aluno e projeto (arquivos vindos da intranet)."""
         for lay in (self.req_mats, self.req_rows):
             while lay.count():
@@ -344,13 +356,20 @@ class PartsPanel(QWidget):
             for r in reqs:
                 code = str(r.get("code", ""))
                 n = sum(p.quantity for p in self.parts if p.tag == code)
+                prog = (progress or {}).get(code)
                 b = QPushButton()
                 b.setObjectName("ReqRow")
                 b.setCheckable(True)
                 b.setChecked(code == self.filter_tag)
                 b.setCursor(Qt.PointingHandCursor)
                 done = "✓ " if code in dt else ""
-                b.setText(f"{done}{code}  ·  {r.get('nome', '') or '—'}" + (f"   ({n} pç)" if n else ""))
+                count = (f"{prog[0]}/{prog[1]}" if prog and prog[1] else (f"{n} pç" if n else ""))
+                label = f"{done}{code} · {r.get('nome', '') or '—'}"
+                fm = b.fontMetrics()
+                tail = f"   {count}" if count else ""
+                avail = max(120, self.req_card.width() - 40 - fm.horizontalAdvance(tail)) if self.req_card.width() > 100 \
+                    else 210
+                b.setText(fm.elidedText(label, Qt.ElideRight, avail) + tail)
                 b.setToolTip(f"Solicitação {code} · RM {r.get('rm', '—')} · {r.get('nome', '')}\n"
                              "Clique para mostrar só as peças desta solicitação (clique de novo para ver todas)")
                 b.setStyleSheet(f"QPushButton#ReqRow {{ border-left: 6px solid {cols.get(code, '#888')}; }}")

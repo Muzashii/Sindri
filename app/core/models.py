@@ -147,6 +147,7 @@ class NestParams:
     population: int = 12
     mutation_rate: float = 0.10
     max_generations_without_improvement: int = 0   # 0 = até o usuário parar
+    stop_after_seconds: float = 40.0               # para sozinho após X s sem melhorar (0 = nunca)
     units_override: int = -1          # -1 = usar a unidade declarada no DXF; senão código $INSUNITS
     detail: int = 1                   # contorno no encaixe: 0 preciso, 1 equilibrado, 2 rápido
     ignore_text: bool = True          # textos costumam ser nomes/anotações, não gravação

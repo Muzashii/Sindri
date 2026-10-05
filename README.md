@@ -6,17 +6,21 @@ Programa para o laboratório maker que recebe um ou mais arquivos **DXF**, o tam
 Mesma abordagem do SVGnest/Deepnest (No-Fit Polygon + algoritmo genético), mas com entrada e saída em DXF, arcos e
 círculos preservados, camadas/cores mantidas e interface em português.
 
-## Como usar (3 cliques)
-1. **Arraste o DXF** para a janela (ou `Ctrl+O`). As peças aparecem agrupadas na lista da esquerda, com a quantidade.
-2. Escolha a **placa** no topo e clique em **▶ Encaixar** (`Espaço`). A melhor solução aparece e vai melhorando ao vivo.
-   Clique em **⏹ Parar** quando estiver bom.
-3. Clique em **⬇ Exportar para RDWorks** (`Ctrl+E`). Saem só **2 arquivos**:
+## Como usar
+1. **Intranet FIAP** (`Ctrl+I`): marque as solicitações e clique em **Juntar na placa → Enviar**. Com
+   *Encaixar automaticamente ao enviar* (padrão) o Sindri escolhe sozinho a placa usada da última vez para aquele
+   material e já começa o encaixe. (Ou arraste um DXF para a janela / `Ctrl+O` e clique em **Encaixar**.)
+2. O encaixe melhora ao vivo e **para sozinho** depois de um tempo sem melhorar (padrão 40 s; a barra de baixo
+   mostra a contagem). O botão vira **Parar (Esc)** enquanto calcula.
+3. **Exportar** (`Ctrl+E`): direto, com as opções da última vez — gera `nome_todas_placas.dxf` + `nome_relatorio.pdf`
+   e abre o RDWorks. Se já existir, salva como `nome_2…`. `Ctrl+Shift+E` abre as opções (pasta, versão, contorno…).
+   O aviso verde no topo tem os links *Abrir pasta* e *Abrir relatório*.
    - `nome_todas_placas.dxf` — todas as placas (de todos os materiais) organizadas lado a lado, na ordem do
-     relatório. Com **Abrir no RDWorks depois de exportar** (padrão) ele já abre no RDWorks.
-   - `nome_relatorio.pdf` — resumo com **checklist de corte** (uma caixinha por placa) e de entrega (uma por
-     solicitação), uma página por placa com cada peça **pintada com a cor da solicitação e o nº escrito em
-     cima** (numa solicitação só: o nº da peça), e a lista de peças por solicitação para ir marcando. As
-     caixinhas funcionam impressas e também clicando no PDF (Edge/Chrome/Acrobat: marque e salve).
+     relatório.
+   - `nome_relatorio.pdf` — resumo, uma página por placa com o nº da solicitação em cada peça e a lista de peças.
+4. Na hora de cortar: **C** marca a placa da tela como cortada e vai para a próxima (ou clique em "○ cortada" na
+   etiqueta da placa, ou nas caixinhas *Placas cortadas*). `Alt+1…9` mostra só a solicitação N do lote, `Alt+0`
+   todas. `Ctrl+P` esconde o painel de parâmetros para o desenho ficar maior.
 
 **Quem é cada peça e o que já foi cortado (dentro do programa):**
 - No **Encaixe**, cada peça aparece **pintada com a cor da solicitação e com o nº escrito em cima** (numa

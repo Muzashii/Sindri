@@ -176,6 +176,7 @@ class GeneticNester:
         self.evaluated += 1
         self._seen[ind.key()] = res.fitness
         if self.best is None or res.fitness < self.best.fitness - 1e-9:
+            self.last_improve = time.time()
             self.best = self._to_result(res, ind)
             self.best_ind = ind
             if on_best:
@@ -222,11 +223,18 @@ class GeneticNester:
             max_generations: Optional[int] = None) -> Optional[NestResult]:
         stop_event = stop_event or threading.Event()
         t0 = time.time()
+        self.last_improve = t0
+        self._paused_for = 0.0
+        stop_after = float(getattr(self.params, "stop_after_seconds", 0) or 0)
 
         def should_stop():
             if stop_event.is_set():
                 return True
             if time_limit is not None and time.time() - t0 >= time_limit:
+                return True
+            # para sozinho: X s sem melhorar (depois de pelo menos 2 rodadas completas)
+            if stop_after > 0 and self.generation >= 2 and time.time() - self.last_improve >= stop_after:
+                self.auto_stopped = True
                 return True
             return False
 
@@ -257,8 +265,9 @@ class GeneticNester:
                                                      self.decoder.cache.export_state()))
         try:
             while not should_stop():
-                while pause_event is not None and pause_event.is_set() and not should_stop():
+                while pause_event is not None and pause_event.is_set() and not stop_event.is_set():
                     time.sleep(0.1)
+                    self.last_improve += 0.1          # pausado não conta como "sem melhorar"
                 if should_stop():
                     break
                 prev_best = self.best.fitness if self.best else math.inf
@@ -316,6 +325,9 @@ class GeneticNester:
     def _progress(self, t0, finished=False) -> dict:
         return {"generation": self.generation, "evaluated": self.evaluated,
                 "elapsed": time.time() - t0, "finished": finished,
+                "since_improve": time.time() - getattr(self, "last_improve", t0),
+                "stop_after": float(getattr(self.params, "stop_after_seconds", 0) or 0),
+                "auto_stopped": bool(getattr(self, "auto_stopped", False)),
                 "best_fitness": self.best.fitness if self.best else None}
 
 

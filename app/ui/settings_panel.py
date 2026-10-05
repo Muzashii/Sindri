@@ -183,9 +183,12 @@ class SettingsPanel(QWidget):
         self.pop.setToolTip("Quantas soluções o algoritmo testa por rodada. Maior = explora mais, cada rodada demora mais.")
         self.mut = _dspin(1, 80, 1, 0, " %", "Chance de alterar a ordem/rotação de cada peça a cada rodada.")
         self.stop_ni = QSpinBox()
-        self.stop_ni.setRange(0, 100000)
+        self.stop_ni.setRange(0, 3600)
+        self.stop_ni.setSuffix(" s")
+        self.stop_ni.setSingleStep(10)
         self.stop_ni.setSpecialValueText("nunca (até eu parar)")
-        self.stop_ni.setToolTip("Para sozinho após este número de rodadas sem melhorar. 0 = só para quando você clicar em Parar.")
+        self.stop_ni.setToolTip("O encaixe para sozinho quando passa este tempo sem encontrar uma solução melhor.\n"
+                                "0 = só para quando você clicar em Parar.")
         self.btn_reimport = QPushButton("Reprocessar arquivos")
         self.btn_reimport.setToolTip("Lê os DXF novamente com as tolerâncias acima.")
         self.btn_reimport.clicked.connect(self.reimportNeeded.emit)
@@ -193,7 +196,7 @@ class SettingsPanel(QWidget):
         f3.addRow("Tolerância de junção", self.join)
         f3.addRow("População", self.pop)
         f3.addRow("Mutação", self.mut)
-        f3.addRow("Parar sem melhora após", self.stop_ni)
+        f3.addRow("Parar sozinho sem melhora", self.stop_ni)
         f3.addRow(self.btn_reimport)
         lay.addWidget(g3)
         lay.addStretch(1)
@@ -295,7 +298,7 @@ class SettingsPanel(QWidget):
         self.join.setValue(p.join_tolerance)
         self.pop.setValue(p.population)
         self.mut.setValue(p.mutation_rate * 100)
-        self.stop_ni.setValue(p.max_generations_without_improvement)
+        self.stop_ni.setValue(int(getattr(p, "stop_after_seconds", 40)))
         idx = 2
         for i, (_, steps, free) in enumerate(ROTATION_CHOICES):
             if (free and p.free_rotation) or (not free and not p.free_rotation and steps == p.rotation_steps):
@@ -325,6 +328,7 @@ class SettingsPanel(QWidget):
             multi_sheet=self.multi.isChecked(), max_sheets=self._extra.get("max_sheets", 50),
             curve_tolerance=self.curve.value(), join_tolerance=self.join.value(),
             population=self.pop.value(), mutation_rate=self.mut.value() / 100.0,
-            max_generations_without_improvement=self.stop_ni.value(),
+            max_generations_without_improvement=0,
+            stop_after_seconds=float(self.stop_ni.value()),
             units_override=int(self.units.currentData()),
             ignore_text=self.ignore_text.isChecked(), detail=self.detail.currentIndex(), excluded_layers=list(self._excluded))

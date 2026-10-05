@@ -115,6 +115,12 @@ def test_fluxo_completo(app, tmp_path, monkeypatch):
     assert QApplication.clipboard().text() == os.path.abspath(launched[0][1])
     # só dois arquivos: todas as placas + relatório
     assert sorted(f for f in os.listdir(tmp_path) if f.startswith("t_")) == ["t_relatorio.pdf", "t_todas_placas.dxf"]
+    # 2ª vez (Ctrl+E): exporta direto, sem janela, com nome livre (_2) em vez de perguntar
+    monkeypatch.setattr(mw, "ExportDialog", None)
+    w.request_label = "t"
+    w.export()
+    assert os.path.isfile(tmp_path / "t_2_todas_placas.dxf") and os.path.isfile(tmp_path / "t_2_relatorio.pdf")
+    assert "Exportado" in w.banner_text.text()
 
     # checklist na aba Peças: placas cortadas e peças feitas
     first = min(pl.sheet_index for pl in w.placements)
@@ -161,7 +167,9 @@ def test_salvamento_automatico_e_recuperacao(app, tmp_path, monkeypatch):
     w.autosave()
     assert os.path.isfile(tmp_path / "auto.sindri")
     w2 = mw.MainWindow()
-    w2.check_autosave_on_start()               # não fechou normalmente -> oferece recuperar
+    w2.check_autosave_on_start()               # não fechou normalmente -> aviso com "Recuperar"
+    assert "Recuperar" in w2.banner_text.text()
+    w2._banner_link("recover:")
     assert w2.placements and w2.cut_sheets == {0} and w2.project_path is None
     w.dirty = w2.dirty = False
     w.close()

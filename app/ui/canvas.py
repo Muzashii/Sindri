@@ -82,12 +82,17 @@ class SheetItem(QGraphicsItem):
 
 
 class SheetLabel(QGraphicsItem):
-    """Etiqueta "Placa N · x peças · y%" acima da placa (tamanho fixo na tela)."""
+    """Etiqueta "Placa N · x peças · y%" acima da placa (tamanho fixo na tela), com o botão
+    "cortada" clicável. Encolhe quando a placa fica pequena na tela (não invade a vizinha)."""
 
-    def __init__(self, title: str, sub: str, material: str = "", done: bool = False):
+    def __init__(self, title: str, sub: str, material: str = "", done: bool = False, sheet_w: float = 0.0):
         super().__init__()
         self.title, self.sub, self.material, self.done = title, sub, material, done
+        self.sheet_w = sheet_w
+        self.index = 0
         self.setFlag(QGraphicsItem.ItemIgnoresTransformations)
+        self.setAcceptHoverEvents(True)
+        self.setCursor(Qt.PointingHandCursor)
         self.setZValue(5)
         self.f1 = QFont()
         self.f1.setBold(True)
@@ -99,25 +104,37 @@ class SheetLabel(QGraphicsItem):
         self.w2 = QFontMetrics(self.f2).horizontalAdvance(sub)
         self.w0 = (QFontMetrics(self.f2).horizontalAdvance(material) + 18) if material else 0
         self.wd = QFontMetrics(self.f2).horizontalAdvance("✓ cortada") + 18
+        self.full = self.w0 + self.w1 + self.w2 + 34 + self.wd + 6
+        self.setToolTip("Clique em “cortada” para marcar/desmarcar esta placa (atalho: C)")
         self.set_done(done)
 
     def set_done(self, done: bool):
         self.prepareGeometryChange()
         self.done = done
-        self.width = self.w0 + self.w1 + self.w2 + 34 + (self.wd + 6 if done else 0)
+        self.width = self.full
         self.update()
+
+    def _avail(self) -> float:
+        vs = self.scene().views() if self.scene() else []
+        if not vs or not self.sheet_w:
+            return 1e9
+        return abs(vs[0].transform().m11()) * self.sheet_w
 
     def boundingRect(self) -> QRectF:
         return QRectF(0, -32, self.width, 26)
 
     def paint(self, painter: QPainter, option, widget=None):
         painter.setRenderHint(QPainter.Antialiasing)
-        r = QRectF(0, -32, self.width, 24)
-        painter.setPen(QPen(theme.qcolor("border"), 1))
+        avail = self._avail()
+        compact = avail < self.full
+        width = min(self.full, max(60.0, avail - 4)) if compact else self.full
+        r = QRectF(0, -32, width, 24)
+        painter.setPen(QPen(QColor("#16a34a") if self.done else theme.qcolor("border"), 1))
         painter.setBrush(theme.qcolor("surface"))
         painter.drawRoundedRect(r, 12, 12)
         x = 12
-        if self.material:
+        show_mat = self.material and (not compact or width > self.w0 + self.w1 + 50)
+        if show_mat:
             chip = QRectF(4, -29, self.w0, 18)
             painter.setPen(Qt.NoPen)
             painter.setBrush(theme.material_color(self.material))
@@ -129,16 +146,31 @@ class SheetLabel(QGraphicsItem):
         painter.setPen(theme.qcolor("text"))
         painter.setFont(self.f1)
         painter.drawText(QRectF(x, -32, self.w1 + 2, 24), Qt.AlignVCenter | Qt.AlignLeft, self.title)
-        painter.setPen(theme.qcolor("muted"))
+        if not compact:
+            painter.setPen(theme.qcolor("muted"))
+            painter.setFont(self.f2)
+            painter.drawText(QRectF(x + self.w1 + 10, -32, self.w2 + 4, 24), Qt.AlignVCenter | Qt.AlignLeft,
+                             self.sub)
+        chip = QRectF(width - (22 if compact else self.wd) - 4, -29, 22 if compact else self.wd, 18)
         painter.setFont(self.f2)
-        painter.drawText(QRectF(x + self.w1 + 10, -32, self.w2 + 4, 24), Qt.AlignVCenter | Qt.AlignLeft, self.sub)
         if self.done:
-            chip = QRectF(self.width - self.wd - 4, -29, self.wd, 18)
             painter.setPen(Qt.NoPen)
             painter.setBrush(QColor("#16a34a"))
             painter.drawRoundedRect(chip, 9, 9)
             painter.setPen(QColor("white"))
-            painter.drawText(chip, Qt.AlignCenter, "✓ cortada")
+        else:
+            painter.setPen(QPen(theme.qcolor("muted"), 1))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(chip, 9, 9)
+            painter.setPen(theme.qcolor("muted"))
+        painter.drawText(chip, Qt.AlignCenter, ("✓" if self.done else "○") if compact
+                         else ("✓ cortada" if self.done else "○ cortada"))
+
+    def mousePressEvent(self, event):
+        vs = self.scene().views() if self.scene() else []
+        if vs and hasattr(vs[0], "sheetCutClicked"):
+            vs[0].sheetCutClicked.emit(self.index)
+        event.accept()
 
 
 class PartItem(QGraphicsItem):
@@ -278,6 +310,7 @@ class NestCanvas(QGraphicsView):
     itemsDragging = Signal(object)
     contextMenuForItems = Signal(object, object)   # lista de PartItem, QPoint global
     zoomChanged = Signal(float)
+    sheetCutClicked = Signal(int)                  # clique no "cortada" da etiqueta da placa
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -392,8 +425,9 @@ class NestCanvas(QGraphicsView):
                        for pl in pls if pl.part_id in parts)
             util = area / (params.sheet_width * params.sheet_height)
             txt = f"Placa {nums.get(i, i + 1)}"
-            sub_txt = (f"{len(pls)} peças · {100 * util:.1f}%".replace(".", ",")) if pls else "vazia"
-            label = SheetLabel(txt, sub_txt, mat, done)
+            sub_txt = (f"{len(pls)} {'peça' if len(pls) == 1 else 'peças'} · {100 * util:.1f}%".replace(".", ",")
+                       if pls else "vazia")
+            label = SheetLabel(txt, sub_txt, mat, done, params.sheet_width)
             label.setPos(sheet_offset(params, i), params.sheet_height)
             label.index = i
             self.scene().addItem(label)

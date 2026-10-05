@@ -199,3 +199,15 @@ def test_placa_cortada_nao_recebe_pecas_novas():
     others = [pl for pl in res.placements if pl.sheet_index == keep.sheet_index and pl is not keep]
     assert others == []                       # placa cortada só com o que já estava nela
     assert len(res.placements) == sum(x.quantity for x in rep.parts)
+
+
+def test_para_sozinho_sem_melhora():
+    import time
+    from app.core.models import NestParams
+    from app.core.optimizer import nest
+    from app.core.part_builder import import_files
+    from tests.conftest import fx
+    rep = import_files([fx("simples.dxf")])
+    t = time.time()
+    res = nest(rep.parts, NestParams(stop_after_seconds=1.0, population=4), time_limit=60, workers=0, seed=1)
+    assert time.time() - t < 30 and res.placements

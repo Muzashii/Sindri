@@ -167,7 +167,7 @@ class MainWindow(QMainWindow):
         self.btn_nest.setObjectName("primary")
         self.btn_nest.setMinimumWidth(130)
         self.btn_nest.setToolTip("Organiza as peças automaticamente (Espaço). Peças travadas ficam onde estão.")
-        self.btn_nest.clicked.connect(self.start_or_pause)
+        self.btn_nest.clicked.connect(self._nest_button)
         self.btn_pause = QPushButton("Pausar")
         self.btn_pause.setToolTip("Pausa/continua a otimização (Espaço)")
         self.btn_pause.clicked.connect(self.toggle_pause)
@@ -176,7 +176,8 @@ class MainWindow(QMainWindow):
         self.btn_stop.clicked.connect(lambda: self.stop_nest())
         self.btn_export = QPushButton("Exportar para RDWorks")
         self.btn_export.setObjectName("success")
-        self.btn_export.setToolTip("Salva um DXF por placa, pronto para abrir no RDWorks (Ctrl+E)")
+        self.btn_export.setToolTip("Gera o arquivo com todas as placas + relatório e abre no RDWorks (Ctrl+E).\n"
+                                   "Ctrl+Shift+E: escolher pasta e opções.")
         self.btn_export.clicked.connect(self.export)
         for w in (self.btn_nest, self.btn_pause, self.btn_stop):
             tl.addWidget(w)
@@ -244,6 +245,8 @@ class MainWindow(QMainWindow):
         self.banner_text.setWordWrap(True)
         self.banner_close = QToolButton()
         self.banner_close.clicked.connect(self.banner.hide)
+        self.banner_text.setTextFormat(Qt.RichText)
+        self.banner_text.linkActivated.connect(self._banner_link)
         bl.addWidget(self.banner_icon)
         bl.addWidget(self.banner_text, 1)
         bl.addWidget(self.banner_close)
@@ -256,6 +259,7 @@ class MainWindow(QMainWindow):
         self.canvas.itemsDragging.connect(lambda it: self._drag_timer.start())
         self.canvas.itemsReleased.connect(self.on_items_released)
         self.canvas.contextMenuForItems.connect(self.show_item_menu)
+        self.canvas.sheetCutClicked.connect(lambda si: self.on_sheet_cut(si, si not in self.cut_sheets))
         self.canvas.scene().selectionChanged.connect(self._canvas_selection)
         self.canvas.setFrameShape(QFrame.NoFrame)
         self.stack.addWidget(self.empty_state)
@@ -439,10 +443,14 @@ class MainWindow(QMainWindow):
         self.banner.setProperty("kind", kind)
         self.banner.style().unpolish(self.banner)
         self.banner.style().polish(self.banner)
-        self.banner_icon.setPixmap(pixmap("info" if kind == "info" else "warn",
-                                          t["accent"] if kind == "info" else t["warn"], 18))
+        icon_name, col = {"info": ("info", t["accent"]), "ok": ("check", "#16a34a")}.get(kind, ("warn", t["warn"]))
+        self.banner_icon.setPixmap(pixmap(icon_name, col, 18))
         self.banner_text.setText(text)
         self.banner.show()
+        self._banner_seq = getattr(self, "_banner_seq", 0) + 1
+        if kind == "info":                     # avisos informativos somem sozinhos
+            seq = self._banner_seq
+            QTimer.singleShot(9000, lambda: self.banner.hide() if self._banner_seq == seq else None)
 
     def _build_actions(self):
         mb = self.menuBar()
@@ -473,7 +481,8 @@ class MainWindow(QMainWindow):
         act(m_file, "Salvar projeto", self.save_project, "Ctrl+S")
         act(m_file, "Salvar projeto como…", lambda: self.save_project(ask=True), "Ctrl+Shift+S")
         m_file.addSeparator()
-        act(m_file, "Exportar para RDWorks…", self.export, "Ctrl+E")
+        act(m_file, "Exportar para RDWorks", self.export, "Ctrl+E")
+        act(m_file, "Exportar com opções…", self.export_with_options, "Ctrl+Shift+E")
         m_file.addSeparator()
         act(m_file, "Recuperar último trabalho (salvo automaticamente)", self.recover_autosave)
         act(m_file, "Limpar arquivos baixados e relatórios…", self.cleanup_files)
@@ -492,11 +501,26 @@ class MainWindow(QMainWindow):
         act(m_nest, "Iniciar/pausar encaixe", self.start_or_pause, "Space")
         act(m_nest, "Parar", self.stop_nest, "Esc")
         act(m_nest, "Destravar todas as peças", self.unlock_all)
+        m_nest.addSeparator()
+        act(m_nest, "Marcar placa da tela como cortada (e ir para a próxima)", self.toggle_current_cut, "C")
+        act(m_view, "Mostrar todas as solicitações do lote", lambda: self.filter_request_index(0), "Alt+0")
+        from PySide6.QtGui import QShortcut
+        self._req_shortcuts = []
+        for k in range(1, 10):            # Alt+1…9: só a solicitação N do lote
+            sc = QShortcut(QKeySequence(f"Alt+{k}"), self)
+            sc.activated.connect(lambda k=k: self.filter_request_index(k))
+            self._req_shortcuts.append(sc)
 
         act(m_view, "Enquadrar tudo", self.canvas.fit_all, "F")
         act(m_view, "Placa anterior", lambda: self.goto_sheet(self.canvas.current_sheet() - 1), "PgUp")
         act(m_view, "Próxima placa", lambda: self.goto_sheet(self.canvas.current_sheet() + 1), "PgDown")
         act(m_view, "Tema claro/escuro", lambda: self.set_dark(not self.dark), "Ctrl+T")
+        self.a_params = act(m_view, "Painel de parâmetros", lambda: None, "Ctrl+P")
+        self.a_params.setCheckable(True)
+        self.a_params.setChecked(settings().value("ui/params_visible", "true") == "true")
+        self.a_params.toggled.connect(self.toggle_params)
+        self.settings_panel.setVisible(self.a_params.isChecked())
+        m_view.addSeparator()
         self.a_labels = act(m_view, "Mostrar nº em cima das peças", lambda: None, "N")
         self.a_labels.setCheckable(True)
         self.a_labels.setChecked(settings().value("ui/labels", "true") == "true")
@@ -523,7 +547,8 @@ class MainWindow(QMainWindow):
         self.preset_combo.blockSignals(True)
         self.preset_combo.clear()
         for p in self.presets:
-            self.preset_combo.addItem(f"{p['name']}  ({p['w']:g}×{p['h']:g})", p)
+            size = f"{p['w']:g}×{p['h']:g}"
+            self.preset_combo.addItem(p["name"] if size in p["name"] else f"{p['name']}  ({size})", p)
         self.preset_combo.addItem("Personalizada…", None)
         self.preset_combo.blockSignals(False)
         self._sync_preset_combo()
@@ -560,6 +585,31 @@ class MainWindow(QMainWindow):
         self.settings_panel.w.blockSignals(False)
         self.settings_panel.h.setValue(data["h"])
         self.on_params_changed()
+        mats = {p.material for p in self.parts if p.material}
+        if len(mats) >= 1:                       # lembra a placa usada para este(s) material(is)
+            st = settings()
+            try:
+                m = json.loads(st.value("presets/by_material", "{}") or "{}")
+            except ValueError:
+                m = {}
+            m[" + ".join(sorted(mats))] = data["name"]
+            st.setValue("presets/by_material", json.dumps(m))
+
+    def _apply_material_preset(self):
+        """Escolhe sozinho a placa usada da última vez para estes materiais."""
+        mats = {p.material for p in self.parts if p.material}
+        if not mats:
+            return
+        try:
+            m = json.loads(settings().value("presets/by_material", "{}") or "{}")
+        except ValueError:
+            return
+        name = m.get(" + ".join(sorted(mats))) or next((m[k] for k in m if k in mats), None)
+        for i, pr in enumerate(self.presets):
+            if pr["name"] == name and self.preset_combo.currentIndex() != i:
+                self.preset_combo.setCurrentIndex(i)
+                self.statusBar().showMessage(f"Placa escolhida pelo material: {name}", 5000)
+                break
 
     def edit_presets(self):
         p = self.settings_panel.params()
@@ -721,6 +771,7 @@ class MainWindow(QMainWindow):
         failed = list(getattr(dlg, "failed_files", []) or [])
         if dlg.batch_result:
             self._load_batch(dlg.batch_result, failed)
+            self._after_intranet_load()
             return
         if dlg.detail is None:
             return
@@ -748,6 +799,15 @@ class MainWindow(QMainWindow):
         elif not self.banner.isVisible():
             self.show_banner(txt, "info")
         self.setWindowTitle(f"{APP_NAME} — Solicitação {d.code} · RM {rm}")
+        self._after_intranet_load()
+
+    def _after_intranet_load(self):
+        """Depois de baixar da intranet: placa do material e (se ligado) já começa a encaixar."""
+        if not self.parts:
+            return
+        self._apply_material_preset()
+        if settings().value("intranet/auto_nest", "true") == "true" and not self.too_big:
+            QTimer.singleShot(300, self.start_nest)
 
     def _load_batch(self, items: list, failed: Optional[list] = None):
         """Várias solicitações encaixadas juntas (cada material com suas placas)."""
@@ -967,13 +1027,8 @@ class MainWindow(QMainWindow):
         if settings().value("autosave/clean", "true") == "true" or not os.path.isfile(self.autosave_path()):
             return
         when = settings().value("autosave/when", "")
-        r = QMessageBox.question(self, "Recuperar trabalho",
-                                 "O Sindri foi fechado sem salvar o último trabalho"
-                                 + (f" ({when})" if when else "") + ".\nRecuperar o encaixe e o checklist de corte?",
-                                 QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
-        settings().setValue("autosave/clean", "true")
-        if r == QMessageBox.Yes:
-            self.recover_autosave()
+        self.show_banner("O último trabalho" + (f" ({when})" if when else "") + " não foi salvo. "
+                         '<a href="recover:">Recuperar</a> · <a href="discard:">Descartar</a>', "warn")
 
     def open_project_dialog(self):
         start = settings().value("ui/last_dir", os.path.expanduser("~"))
@@ -1179,12 +1234,50 @@ class MainWindow(QMainWindow):
         self.parts_panel.set_done(self.done_parts, progress)
         tags = {p.tag for p in self.parts if p.tag}
         done_tags = {t for t in tags if all(p.id in self.done_parts for p in self.parts if p.tag == t)}
+        tag_prog = {}
+        for pl in self.placements:
+            t = self.pmap[pl.part_id].tag
+            if t:
+                c, n = tag_prog.get(t, (0, 0))
+                ok = pl.part_id in self.done_parts or pl.sheet_index in self.cut_sheets
+                tag_prog[t] = (c + ok, n + 1)
         if self.request_info:
-            self.parts_panel.set_request(self.request_info, done_tags)
+            self.parts_panel.set_request(self.request_info, done_tags, tag_prog)
         self.canvas.done_parts = self.done_parts
         if self.canvas.mode == "layout":
             for it in self.canvas.part_items:
                 it.update()
+
+    def toggle_params(self, on: bool):
+        self.settings_panel.setVisible(on)
+        settings().setValue("ui/params_visible", "true" if on else "false")
+
+    def toggle_current_cut(self):
+        """C: marca/desmarca a placa que está no centro da tela; ao marcar, vai para a próxima não cortada."""
+        if self.canvas.mode != "layout" or not self.placements or self.worker is not None:
+            return
+        si = self.canvas.current_sheet()
+        on = si not in self.cut_sheets
+        self.on_sheet_cut(si, on)
+        if on:
+            nums = sheet_numbers(self.pmap, self.placements)
+            order = [s for s, _ in sorted(nums.items(), key=lambda kv: kv[1])]
+            later = [s for s in order[order.index(si) + 1:] if s not in self.cut_sheets] if si in order else []
+            nxt = later[0] if later else next((s for s in order if s not in self.cut_sheets), None)
+            if nxt is not None:
+                self.goto_sheet(nxt)
+
+    def filter_request_index(self, k: int):
+        """Alt+1…9: só a solicitação k do lote; Alt+0: todas."""
+        info = self.request_info or {}
+        if not info.get("batch"):
+            return
+        codes = [str(r.get("code", "")) for r in info.get("requests", [])]
+        if k == 0:
+            self.parts_panel.set_filter("")
+        elif k <= len(codes):
+            tag = codes[k - 1]
+            self.parts_panel.set_filter("" if self.parts_panel.filter_tag == tag else tag)
 
     def on_request_filter(self, tag: str):
         """Mostra no desenho só as peças de uma solicitação (as outras ficam apagadas)."""
@@ -1310,7 +1403,11 @@ class MainWindow(QMainWindow):
         missing = total - placed
         if self.worker is not None:
             paused = self.worker.pause_event.is_set()
-            kind, txt = "run", ("Pausado" if paused else f"Otimizando… geração {self.generation}")
+            since, stop_after = getattr(self, "since_improve", 0.0), getattr(self, "stop_after", 0.0)
+            txt = f"Otimizando… melhorou há {since:.0f} s"
+            if stop_after > 0 and self.generation >= 2:
+                txt += f" · para sozinho em {max(0, stop_after - since):.0f} s"
+            kind, txt = "run", ("Pausado" if paused else txt)
         elif not self.parts:
             kind, txt = "", "Sem arquivo"
         elif self.too_big:
@@ -1329,11 +1426,23 @@ class MainWindow(QMainWindow):
     def _update_buttons(self):
         running = self.worker is not None
         has_parts = bool(self.parts)
-        self.btn_nest.setEnabled(has_parts and not running)
-        self.btn_nest.setText("Encaixar" if not self.placements else "Encaixar de novo")
+        self.btn_nest.setEnabled(has_parts)
+        from .theme import tokens as _tk
+        self.btn_nest.setIcon(icon("stop" if running else "play", "#ffffff", 14, _tk()["muted"]))
+        if running:
+            self.btn_nest.setText("Parar  (Esc)")
+            self.btn_nest.setObjectName("danger")
+            self.btn_nest.setToolTip("Para e mantém a melhor solução encontrada (Esc)")
+        else:
+            self.btn_nest.setText("Encaixar" if not self.placements else "Encaixar de novo")
+            self.btn_nest.setObjectName("primary")
+            self.btn_nest.setToolTip("Organiza as peças automaticamente (Espaço). Peças travadas ficam onde estão.")
+        self.btn_nest.style().unpolish(self.btn_nest)
+        self.btn_nest.style().polish(self.btn_nest)
+        self.btn_pause.setVisible(running)
         self.btn_pause.setEnabled(running)
-        self.btn_stop.setEnabled(running)
-        self.btn_export.setEnabled(bool(self.placements) and not running)
+        self.btn_stop.setVisible(False)
+        self.btn_export.setEnabled(bool(self.placements))
         self.btn_save.setEnabled(has_parts)
         self.parts_panel.btn_clear.setEnabled(has_parts)
         self.a_undo.setEnabled(bool(self.undo_stack) and not running)
@@ -1394,6 +1503,13 @@ class MainWindow(QMainWindow):
         self.dirty = True
 
     # ------------------------------------------------------------------ encaixe
+    def _nest_button(self):
+        """Um botão só: Encaixar quando parado, Parar quando está calculando."""
+        if self.worker is not None:
+            self.stop_nest()
+        else:
+            self.start_nest()
+
     def start_or_pause(self):
         if self.worker is not None:
             self.toggle_pause()
@@ -1443,6 +1559,8 @@ class MainWindow(QMainWindow):
         self.generation = 0
         self.evaluated = 0
         self._layout_shown_once = False
+        if self.banner.property("kind") == "info":
+            self.banner.hide()
         self.worker = NestWorker(self.parts, p, locked, workers=self.workers)
         self.worker.bestFound.connect(self.on_best)
         self.worker.progress.connect(self.on_progress)
@@ -1471,11 +1589,15 @@ class MainWindow(QMainWindow):
         self.n_sheets = max(res.sheets_used, max([pl.sheet_index + 1 for pl in self.placements], default=0))
         self._redraw(keep_view=self._layout_shown_once)
         self._layout_shown_once = True
+        self.btn_export.setEnabled(bool(self.placements))
         self._update_status()
 
     def on_progress(self, info: dict):
         self.generation = info.get("generation", 0)
         self.evaluated = info.get("evaluated", 0)
+        self.since_improve = info.get("since_improve", 0.0)
+        self.stop_after = info.get("stop_after", 0.0)
+        self._auto_stopped = info.get("auto_stopped", False)
         self._update_status()
 
     def on_failed(self, msg: str):
@@ -1494,6 +1616,11 @@ class MainWindow(QMainWindow):
         self._update_status()
         missing = sum(p.quantity for p in self.parts) - len(self.placements)
         msg = "Encaixe concluído." if missing <= 0 else f"Encaixe concluído — {missing} peça(s) não couberam."
+        if getattr(self, "_auto_stopped", False):
+            msg = "Encaixe pronto (parou sozinho, sem melhorar mais)." if missing <= 0 else msg
+        self._auto_stopped = False
+        if self.placements and missing <= 0:
+            msg += " Ctrl+E exporta."
         self.statusBar().showMessage(msg + " Ao cortar, marque as placas e as peças feitas na lista de Peças.",
                                      12000)
 
@@ -1693,53 +1820,58 @@ class MainWindow(QMainWindow):
         m.exec(pos)
 
     # ------------------------------------------------------------------ exportação
-    def export(self):
-        if not self.placements or self.worker is not None:
+    def export_with_options(self):
+        self.export(ask=True)
+
+    def export(self, ask: bool = False):
+        """Exporta direto com as opções da última vez (Ctrl+E). Ctrl+Shift+E abre a janela de opções."""
+        if self.worker is not None:                 # exportar durante o encaixe: para e usa a melhor solução
+            self.stop_nest(wait=True)
+        if not self.placements:
             return
         p = self.settings_panel.params()
+        # problemas numa única confirmação (só aparece se houver algum)
+        problems = []
         if self._mark_collisions():
-            r = QMessageBox.warning(self, "Peças em conflito",
-                                    "Há peças sobrepostas ou fora da placa (em vermelho).\n"
-                                    "Exportar mesmo assim?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if r != QMessageBox.Yes:
-                return
+            problems.append("Há peças sobrepostas ou fora da placa (em vermelho).")
         else:
             QApplication.setOverrideCursor(Qt.WaitCursor)
             try:
                 issues = validate_layout(self.pmap, self.placements, p)
             finally:
                 QApplication.restoreOverrideCursor()
-            if issues:
-                r = QMessageBox.warning(self, "Verificação final",
-                                        "A verificação com a geometria exata encontrou problemas:\n\n" +
-                                        "\n".join("• " + i for i in issues[:10]) + "\n\nExportar mesmo assim?",
-                                        QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-                if r != QMessageBox.Yes:
-                    return
+            problems += ["Verificação final: " + i for i in issues[:8]]
         missing = sum(pt.quantity for pt in self.parts) - len(self.placements)
         if missing > 0:
-            r = QMessageBox.question(self, "Peças sem lugar",
-                                     f"{missing} peça(s) não estão no encaixe. Exportar assim mesmo?",
-                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+            problems.append(f"{missing} peça(s) não estão no encaixe (ficam de fora do arquivo).")
+        if problems:
+            r = QMessageBox.warning(self, "Exportar mesmo assim?", "\n\n".join("• " + x for x in problems),
+                                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
             if r != QMessageBox.Yes:
                 return
-        folder = settings().value("export/last_dir", os.path.dirname(self.files[0]) if self.files else os.getcwd())
+        st = settings()
+        folder = st.value("export/last_dir", "") or ""
         base = self.request_label or os.path.splitext(os.path.basename(self.project_path or self.files[0]))[0]
-        dlg = ExportDialog(folder, base, len({pl.sheet_index for pl in self.placements}), self)
-        if not dlg.exec():
-            return
-        o = dlg.options()
-        targets = [os.path.join(o["folder"], f"{o['base']}_todas_placas.dxf"),
-                   os.path.join(o["folder"], f"{o['base']}_relatorio.pdf")]
-        exist = [t for t in targets if os.path.exists(t)]
-        if exist:
-            r = QMessageBox.question(self, "Substituir arquivos?",
-                                     "Já existem na pasta:\n\n" + "\n".join(os.path.basename(t) for t in exist) +
-                                     "\n\nSubstituir? (marcações feitas no PDF antigo serão perdidas)",
-                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if r != QMessageBox.Yes:
+        if ask or not folder or not os.path.isdir(folder):
+            dlg = ExportDialog(folder or (os.path.dirname(self.files[0]) if self.files else os.getcwd()), base,
+                               len({pl.sheet_index for pl in self.placements}), self)
+            if not dlg.exec():
                 return
-        settings().setValue("export/last_dir", o["folder"])
+            o = dlg.options()
+        else:
+            o = {"folder": folder, "base": base, "version": st.value("export/version", "R2000"),
+                 "outline": st.value("export/outline2", "true") == "true",
+                 "inner": st.value("export/inner", "true") == "true",
+                 "path": st.value("export/path", "true") == "true",
+                 "open_rdworks": st.value("export/open_rdworks", "true") == "true"}
+        # nomes livres: em vez de perguntar, acrescenta _2, _3…
+        base, k = o["base"], 2
+        while any(os.path.exists(os.path.join(o["folder"], f"{base}{suf}"))
+                  for suf in ("_todas_placas.dxf", "_relatorio.pdf")):
+            base = f"{o['base']}_{k}"
+            k += 1
+        o["base"] = base
+        st.setValue("export/last_dir", o["folder"])
         self._compact_sheets()
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
@@ -1751,27 +1883,40 @@ class MainWindow(QMainWindow):
             export_pdf(pdf, o["base"], self.pmap, res, p, header=self._report_header(),
                        requests=self._report_requests())
             files.append(pdf)
-            hist = _str_list(settings().value("export/history", []))
-            settings().setValue("export/history", (hist + [f for f in files if f not in hist])[-500:])
+            hist = _str_list(st.value("export/history", []))
+            st.setValue("export/history", (hist + [f for f in files if f not in hist])[-500:])
         except Exception as e:
             QApplication.restoreOverrideCursor()
             QMessageBox.critical(self, "Erro ao exportar", f"Não foi possível salvar os arquivos:\n{e}")
             return
         QApplication.restoreOverrideCursor()
+        self._redraw(keep_view=True)
         opened = self._open_in_rdworks(files) if o.get("open_rdworks") else ""
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Information)
-        box.setWindowTitle("Exportado")
-        box.setText(f"{len(files)} arquivo(s) salvos em:\n{o['folder']}" + (f"\n\n{opened}" if opened else ""))
-        box.setDetailedText("\n".join(os.path.basename(f) for f in files))
+        from urllib.parse import quote
+        links = (f' · <a href="open:{quote(o["folder"])}">Abrir pasta</a>'
+                 f' · <a href="open:{quote(pdf)}">Abrir relatório</a>'
+                 ' · <a href="opts:">Opções de exportação…</a>')
+        txt = f"<b>Exportado:</b> {os.path.basename(files[0])} + relatório" + links
+        if opened:
+            txt += "<br>" + opened.replace("\n", "<br>")
         if o["outline"]:
-            box.setInformativeText("IMPORTANTE: no RDWorks, na camada cinza (contorno e nº das placas), coloque "
-                                   "saída = NÃO para o laser não passar por ela.")
-        open_btn = box.addButton("Abrir pasta", QMessageBox.ActionRole)
-        box.addButton("OK", QMessageBox.AcceptRole)
-        box.exec()
-        if box.clickedButton() == open_btn:
-            QDesktopServices.openUrl(QUrl.fromLocalFile(o["folder"]))
+            txt += "<br><b>RDWorks:</b> na camada cinza (contorno e nº das placas) coloque <b>saída = NÃO</b>."
+        self.show_banner(txt, "ok")
+        self.statusBar().showMessage(f"Exportado em {o['folder']}", 8000)
+        self.schedule_autosave()
+
+    def _banner_link(self, href: str):
+        from urllib.parse import unquote
+        if href.startswith("open:"):
+            QDesktopServices.openUrl(QUrl.fromLocalFile(unquote(href[5:])))
+        elif href == "opts:":
+            self.export(ask=True)
+        elif href == "recover:":
+            self.banner.hide()
+            self.recover_autosave()
+        elif href == "discard:":
+            self.banner.hide()
+            settings().setValue("autosave/clean", "true")
 
     def _open_in_rdworks(self, files: list[str]) -> str:
         """Abre o DXF exportado no RDWorks. Devolve uma frase para a mensagem final."""
@@ -1808,15 +1953,24 @@ class MainWindow(QMainWindow):
     def show_shortcuts(self):
         QMessageBox.information(self, "Atalhos de teclado", (
             "Ctrl+O\tAbrir DXF\n"
+            "Ctrl+Shift+O\tAdicionar DXF\n"
+            "Ctrl+I\tIntranet FIAP\n"
             "Ctrl+S\tSalvar projeto\n"
-            "Espaço\tIniciar / pausar encaixe\n"
+            "Espaço\tEncaixar / pausar\n"
             "Esc\tParar encaixe\n"
+            "Ctrl+E\tExportar (direto, opções da última vez)\n"
+            "Ctrl+Shift+E\tExportar com opções\n"
+            "C\tMarcar placa da tela como cortada → próxima\n"
+            "Alt+1…9 / Alt+0\tSó a solicitação N do lote / todas\n"
+            "N\tMostrar/ocultar nº nas peças\n"
+            "Ctrl+P\tMostrar/ocultar parâmetros\n"
+            "Ctrl+T\tTema claro/escuro\n"
+            "Ctrl+A\tSelecionar todas as peças\n"
             "R\tGirar peça selecionada\n"
             "M\tEspelhar peça selecionada\n"
             "L\tTravar/destravar posição\n"
             "Del\tRemover peça\n"
             "Ctrl+Z / Ctrl+Y\tDesfazer / refazer\n"
-            "Ctrl+E\tExportar para RDWorks\n"
             "F\tEnquadrar tudo\n"
             "PgUp / PgDn\tPlaca anterior / próxima\n\n"
             "Mouse: roda = zoom · botão do meio (ou Alt+arrastar) = mover a vista ·\n"

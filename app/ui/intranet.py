@@ -13,7 +13,7 @@ import os
 from typing import Optional
 
 from PySide6.QtCore import QStandardPaths, Qt, QTimer, QUrl
-from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QDialog, QFileDialog,
+from PySide6.QtWidgets import (QCheckBox, QAbstractItemView, QApplication, QComboBox, QDialog, QFileDialog,
                                QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
                                QMessageBox, QPushButton, QScrollArea, QSplitter, QStackedWidget,
                                QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout, QWidget)
@@ -143,7 +143,11 @@ class IntranetDialog(QDialog):
         self.type_filter = QComboBox()
         self.type_filter.addItems(["Corte Laser", "Todos os tipos", "Impressão 3D"])
         self.type_filter.setToolTip("Mostrar só um tipo de solicitação")
+        tsaved = settings().value("intranet/type_filter", "Corte Laser")
+        if self.type_filter.findText(tsaved) >= 0:
+            self.type_filter.setCurrentText(tsaved)
         self.type_filter.currentIndexChanged.connect(self._fill_list)
+        self.type_filter.currentTextChanged.connect(lambda t: settings().setValue("intranet/type_filter", t))
         self.status_filter = QComboBox()
         self.status_filter.addItem("Aguardando")
         self.status_filter.setToolTip("Status da solicitação (abas do site: Aguardando, Em execução…)")
@@ -167,6 +171,12 @@ class IntranetDialog(QDialog):
         for c in (0, 2, 3):
             hh.setSectionResizeMode(c, QHeaderView.ResizeToContents)
         self.list.cellClicked.connect(self._cell_clicked)
+        self.list.cellDoubleClicked.connect(lambda r, c: self._cell_clicked(r, 1))
+        self.list.installEventFilter(self)
+        from PySide6.QtGui import QKeySequence, QShortcut
+        QShortcut(QKeySequence("Ctrl+F"), self, activated=lambda: (self.search.setFocus(), self.search.selectAll()))
+        QShortcut(QKeySequence("Ctrl+Return"), self, activated=self.send_shown)
+        self.search.setPlaceholderText("Buscar por nome, RM ou nº…  (Ctrl+F)")
         self.list.itemChanged.connect(self._item_checked)
         hh.setSectionsClickable(True)
         hh.sectionClicked.connect(self._header_clicked)
@@ -268,7 +278,13 @@ class IntranetDialog(QDialog):
         bfold = QPushButton("Pasta…")
         bfold.setToolTip("Onde os arquivos enviados para a placa são guardados")
         bfold.clicked.connect(self._choose_folder)
+        self.auto_nest = QCheckBox("Encaixar automaticamente ao enviar")
+        self.auto_nest.setToolTip("Depois de baixar, o Sindri escolhe a placa usada da última vez para o material "
+                                  "e já começa o encaixe.")
+        self.auto_nest.setChecked(settings().value("intranet/auto_nest", "true") == "true")
+        self.auto_nest.toggled.connect(lambda v: settings().setValue("intranet/auto_nest", "true" if v else "false"))
         foot.addWidget(self.folder_lbl, 1)
+        foot.addWidget(self.auto_nest)
         foot.addWidget(bfold)
         root.addLayout(foot)
         self._update_folder_label()
@@ -382,6 +398,8 @@ class IntranetDialog(QDialog):
             self._set_state(f"Conectado · {len(rows)} solicitações", "ok")
 
     def _status_changed(self, *_):
+        if self.status_filter.currentData():
+            settings().setValue("intranet/status_filter", self.status_filter.currentData())
         self._fill_list()
         self._start_crawl()
 
@@ -449,7 +467,7 @@ class IntranetDialog(QDialog):
 
     def _update_status_options(self):
         """Recria a lista de status com as abas encontradas, mantendo a escolha atual."""
-        cur = self.status_filter.currentData() or "Aguardando"
+        cur = self.status_filter.currentData() or settings().value("intranet/status_filter", "Aguardando")
         opts = status_options(self._rows) + [ALL_STATUS]
         self.status_filter.blockSignals(True)
         self.status_filter.clear()
@@ -520,6 +538,31 @@ class IntranetDialog(QDialog):
             self._sort_desc = not self._sort_desc
             self._set_date_header()
             self._fill_list()
+
+    def eventFilter(self, obj, ev):
+        """Teclado na fila: Enter = visualizar · Espaço = marcar/desmarcar · Ctrl+Enter = enviar."""
+        from PySide6.QtCore import QEvent
+        if obj is self.list and ev.type() == QEvent.KeyPress:
+            r = self.list.currentRow()
+            if ev.key() in (Qt.Key_Return, Qt.Key_Enter):
+                if ev.modifiers() & Qt.ControlModifier:
+                    self.send_shown()
+                elif r >= 0:
+                    self._cell_clicked(r, 1)
+                return True
+            if ev.key() == Qt.Key_Space and r >= 0 and self.list.item(r, 0):
+                it = self.list.item(r, 0)
+                it.setCheckState(Qt.Unchecked if it.checkState() == Qt.Checked else Qt.Checked)
+                return True
+        return super().eventFilter(obj, ev)
+
+    def send_shown(self):
+        """Ctrl+Enter: envia o lote marcado (lendo-o se preciso) ou a solicitação aberta (tudo)."""
+        if self._checked and not self.batch:
+            self.view_batch()
+            return
+        if self.batch or self.detail is not None:
+            self.send(ALL_MATERIALS)
 
     def _cell_clicked(self, row: int, col: int):
         """Clicar na linha visualiza; clicar na 1ª coluna (caixinha + nº) só marca/desmarca."""

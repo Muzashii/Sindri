@@ -29,17 +29,24 @@ MATERIAL_COLORS = ["#2563eb", "#ea580c", "#16a34a", "#9333ea", "#db2777", "#0891
 
 
 def material_color(material: str) -> QColor:
-    """Cor fixa por material (3mm azul, 6mm laranja…), igual em toda a interface."""
+    """Cor fixa por material, igual em toda a interface. MDF: 3mm azul, 6mm laranja…
+    Outros materiais (acrílico, compensado…) ganham cores próprias, nunca as do MDF."""
     import re
     if not material:
         return QColor(_current["muted"])
-    m = re.search(r"(\d+(?:[.,]\d+)?)\s*mm", material.lower())
-    fixed = {"3": 0, "6": 1, "2": 2, "4": 3, "5": 4, "10": 5, "1": 6}
-    if m and m.group(1) in fixed:
-        idx = fixed[m.group(1)]
-    else:
-        idx = sum(map(ord, material)) % len(MATERIAL_COLORS)
-    return QColor(MATERIAL_COLORS[idx])
+    low = material.lower()
+    m = re.search(r"(\d+(?:[.,]\d+)?)\s*mm", low)
+    thick = m.group(1).replace(",", ".") if m else ""
+    if "mdf" in low or not re.search(r"[a-zà-ú]{3,}", re.sub(r"\d+\s*mm", "", low)):
+        fixed = {"3": 0, "6": 1, "2": 2, "4": 3, "5": 4, "10": 5, "1": 6, "9": 6, "15": 3}
+        if thick in fixed:
+            return QColor(MATERIAL_COLORS[fixed[thick]])
+    others = ["#0d9488", "#be185d", "#7c3aed", "#65a30d", "#b45309", "#0369a1", "#a21caf", "#4d7c0f"]
+    if "acr" in low:                       # acrílico: família rosa/roxa por espessura
+        fam = {"2": "#db2777", "3": "#be185d", "4": "#a21caf", "5": "#7c3aed", "6": "#6d28d9"}
+        if thick in fam:
+            return QColor(fam[thick])
+    return QColor(others[sum(map(ord, low)) % len(others)])
 
 
 def tokens() -> dict:
@@ -187,6 +194,8 @@ QToolButton#DoneButton { border: 1px solid %(border)s; border-radius: 6px; paddi
 QToolButton#DoneButton:checked { background: #16a34a; color: white; border-color: #16a34a; font-weight: 700; }
 QFrame#SheetsBox { background: %(surface2)s; border: 1px solid %(border)s; border-radius: 9px; }
 QLabel#SheetsTitle { font-weight: 700; }
+QPushButton#danger { background: #dc2626; color: white; border: 1px solid #b91c1c; font-weight: 700; }
+QPushButton#danger:hover { background: #b91c1c; }
 QPushButton#ReqRow { text-align: left; padding: 5px 8px; border: 1px solid %(border)s; border-radius: 7px;
     background: %(surface)s; font-weight: 500; }
 QPushButton#ReqRow:hover { background: %(accent_soft)s; }
@@ -206,6 +215,7 @@ QLabel#Thumb { background: %(surface)s; border: 1px solid %(border)s; border-rad
 QFrame#Banner { border-radius: 8px; }
 QFrame#Banner[kind="info"] { background: %(accent_soft)s; border: 1px solid %(accent)s; }
 QFrame#Banner[kind="warn"] { background: %(warn_soft)s; border: 1px solid %(warn)s; }
+QFrame#Banner[kind="ok"] { background: %(done_bg)s; border: 1px solid #16a34a; }
 QLabel#BannerText { color: %(text)s; }
 
 QTabBar { background: transparent; }
