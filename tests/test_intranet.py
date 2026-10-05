@@ -46,6 +46,48 @@ def test_quantidade_da_tabela_multiplica_pecas(tmp_path):
     assert pr.parts[0].quantity == 3 and pr.label == "8759_MDF"
 
 
+def _mock_server():
+    """Servidor local que imita a intranet: arquivos + paginação por POST (10 por página)."""
+    import threading
+    from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+    from urllib.parse import parse_qs
+    folder = os.path.dirname(fx("intranet_mock.html"))
+    pages = {2: [("8701", "15/09/2026 09:00:00")], 3: [("8702", "20/09/2026 18:30:00")]}
+
+    class H(SimpleHTTPRequestHandler):
+        def __init__(self, *a, **k):
+            super().__init__(*a, directory=folder, **k)
+
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            q = parse_qs(self.rfile.read(int(self.headers.get("Content-Length", 0))).decode())
+            n = int(q.get("pagina", ["1"])[0])
+            if n == 1:
+                body = open(os.path.join(folder, "intranet_mock.html"), encoding="utf-8").read()
+                body = body.split('id="tab_1-1">', 1)[1].split('<div class="tab-pane" id="tab_2-2">', 1)[0]
+                body = body.rsplit("</div>", 1)[0]
+            else:
+                body = "<table><tbody>" + "".join(
+                    f'<tr><td>{c}</td><td>561111</td><td>Aluno Pagina {n}</td><td>Corte Laser</td><td>{d}</td>'
+                    f'<td>Aguardando</td><td></td><td><a data-codigo="{c}" class="js-visualisa-solicitacao" '
+                    f'onclick="abreSolicitacao({c})">ver</a></td></tr>' for c, d in pages.get(n, [])) + \
+                    f'</tbody></table><input type="hidden" id="paginaAtual" value="{n}"><ul class="pagination">' + \
+                    "".join(f'<li><a data-qtdlinhas="21" data-codigostatus="1" data-pagina="{i}">{i}</a></li>'
+                            for i in (1, 2, 3)) + "</ul>"
+            data = body.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
 def test_dialogo_baixa_da_pagina_simulada(tmp_path):
     """Navegador embutido abre a página (simulada), lê a lista, abre a solicitação e baixa os DXF."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -60,7 +102,8 @@ def test_dialogo_baixa_da_pagina_simulada(tmp_path):
     app = QApplication.instance() or QApplication([])
     QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, str(tmp_path / "cfg"))
     from app.ui.intranet import IntranetDialog
-    url = QUrl.fromLocalFile(fx("intranet_mock.html")).toString()
+    srv = _mock_server()
+    url = f"http://127.0.0.1:{srv.server_address[1]}/intranet_mock.html"
     d = IntranetDialog(None, start_url=url, base_folder=str(tmp_path / "solic"))
     d.show()
 
@@ -75,17 +118,21 @@ def test_dialogo_baixa_da_pagina_simulada(tmp_path):
 
     if not pump(lambda: len(d._rows) >= 3, 40):
         pytest.skip("QtWebEngine não renderiza neste ambiente")
-    # a 2ª página da aba Aguardando é lida sozinha (clicando na paginação)
-    assert pump(lambda: len(d._rows) == 4 and not d._crawl.isActive(), 40)
-    assert d.list.rowCount() == 2                      # padrão: Aguardando + Corte Laser (8759 e 8701)
-    assert {d.list.item(i, 0).text() for i in range(2)} == {"8759", "8701"}
+    # as páginas 2 e 3 da aba Aguardando são lidas sozinhas (clique + requisição repetida)
+    assert pump(lambda: len(d._rows) == 5 and not d._crawl.isActive(), 40), d._rows
+    # padrão: Aguardando + Corte Laser, mais recente primeiro
+    assert [d.list.item(i, 0).text() for i in range(d.list.rowCount())] == ["8759", "8702", "8701"]
+    d._header_clicked(3)
+    assert [d.list.item(i, 0).text() for i in range(d.list.rowCount())] == ["8701", "8702", "8759"]
+    d._header_clicked(3)
+    assert pump(lambda: d.page.url().toString().endswith("intranet_mock.html"), 5)
     assert [d.status_filter.itemData(i) for i in range(d.status_filter.count())] == \
         ["Aguardando", "Em execução", "Todos os status"]
     d.status_filter.setCurrentIndex(1)
     assert d.list.rowCount() == 1 and d.list.item(0, 0).text() == "8700"
     d.status_filter.setCurrentIndex(0)
     d.type_filter.setCurrentText("Todos os tipos")
-    assert d.list.rowCount() == 3
+    assert d.list.rowCount() == 4
     d.search.setText("outro")
     assert d.list.rowCount() == 1
     d.search.setText("")
@@ -104,6 +151,7 @@ def test_dialogo_baixa_da_pagina_simulada(tmp_path):
         assert f.local_path and os.path.getsize(f.local_path) > 1000
     assert all(f.local_path is None for f in mats["MDF 3mm"])
     d.deleteLater()
+    srv.shutdown()
 
 
 def test_materiais_nunca_dividem_placa(tmp_path):
@@ -156,3 +204,9 @@ def test_status_pelas_abas():
     assert rows[0]["situacao"] == "Aguardando" and rows[1]["situacao"] == "Em execução"
     assert status_options(rows) == ["Aguardando", "Em execução", "Aguardando retirado", "Finalizado",
                                     "Resultado pesquisa"]
+
+
+def test_ordem_por_data():
+    from app.core.intranet import date_key
+    assert date_key("04/10/2026 13:45:58") > date_key("04/10/2026 09:00:00") > date_key("30/09/2026")
+    assert date_key("") == (0,)

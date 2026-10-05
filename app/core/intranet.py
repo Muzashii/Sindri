@@ -70,93 +70,204 @@ JS_LIST = r"""
 })()
 """
 
-# A tabela de cada aba mostra 10 por página; as outras páginas só vêm quando se clica no número
-# (<a data-codigostatus="1" data-pagina="2" data-qtdlinhas="20">). Este script percorre as páginas
-# clicando nelas, como a pessoa faria, e guarda as linhas em window.__sindri. Abas enormes
-# (Finalizado, Cancelados) ficam só nas primeiras páginas.
+# A tabela de cada aba mostra 10 por página; as outras páginas vêm do servidor quando se clica no
+# número (<a data-codigostatus="1" data-pagina="2" data-qtdlinhas="20">). Este script lê TODAS as
+# páginas da aba pedida:
+#   1. clica na página 2 como a pessoa faria e registra a requisição que o site faz (XHR/fetch);
+#   2. repete essa mesma requisição trocando só o número da página (3, 4, ...), lendo as linhas
+#      da resposta sem mexer na tela;
+#   3. se não der para repetir, continua clicando página por página.
+# Tudo vai para window.__sindri (linhas, progresso e um registro para diagnóstico).
 JS_CRAWL = r"""
-(function(maxRows, bigPages){
+(function(wanted, maxPages){
   if (window.__sindri && window.__sindri.running) return 'running';
-  var st = window.__sindri = {running: true, done: false, rows: [], progress: '', error: ''};
+  var st = window.__sindri = {running: true, done: false, rows: [], progress: '', error: '', log: [], status: wanted};
+  function log(m){ st.log.push(String(m).slice(0, 400)); }
+  function norm(t){ return (t || '').replace(/\s+/g, ' ').trim().toLowerCase(); }
   function tabLabel(pane){
     if(!pane || !pane.id) return '';
     var a = document.querySelector('a[href="#'+pane.id+'"], [data-target="#'+pane.id+'"]');
     return a ? a.textContent.replace(/\s+/g,' ').trim() : '';
   }
-  function rowsOf(pane){
+  function rowsIn(root, paneId, label){
     var out = [];
-    pane.querySelectorAll('a.js-visualisa-solicitacao').forEach(function(a){
+    root.querySelectorAll('a.js-visualisa-solicitacao').forEach(function(a){
       var tr = a.closest('tr'); if(!tr) return;
       var c = Array.prototype.map.call(tr.querySelectorAll('td'), function(td){ return td.textContent.trim(); });
       out.push({codigo: a.getAttribute('data-codigo') || c[0], rm: c[1]||'', nome: c[2]||'', tipo: c[3]||'',
-                data: c[4]||'', status: c[5]||'', responsavel: c[6]||'', aba: pane.id, abaNome: tabLabel(pane)});
+                data: c[4]||'', status: c[5]||'', responsavel: c[6]||'', aba: paneId, abaNome: label});
     });
     return out;
   }
-  function codes(pane){ return rowsOf(pane).map(function(r){ return r.codigo; }).join(','); }
+  function codes(pane){ return rowsIn(pane, '', '').map(function(r){ return r.codigo; }).join(','); }
   function curPage(pane){ var i = pane.querySelector('input[id=paginaAtual]'); return i ? parseInt(i.value, 10) || 1 : 1; }
-  function anchors(code){ return Array.prototype.slice.call(document.querySelectorAll('a[data-codigostatus="'+code+'"]')); }
   function sleep(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
-  async function goTo(code, paneId, n){
-    var pane = document.getElementById(paneId);
-    if (pane && curPage(pane) === n) return pane;
-    var as = anchors(code);
-    var a = as.filter(function(x){ return x.getAttribute('data-pagina') === String(n) && /^\d+$/.test(x.textContent.trim()); })[0]
-         || as.filter(function(x){ return x.getAttribute('data-pagina') === String(n); })[0];
-    if (!a) return null;
-    var before = pane ? codes(pane) : '';
-    a.click();
-    for (var t = 0; t < 80; t++) {            // até ~12 s por página
-      await sleep(150);
-      pane = document.getElementById(paneId);
-      if (pane && (curPage(pane) === n || (codes(pane) !== before && codes(pane) !== ''))) {
-        await sleep(100);
-        return document.getElementById(paneId);
+
+  // ---- registra as requisições que o próprio site faz
+  if (!window.__sindriHooked) {
+    window.__sindriHooked = true;
+    window.__sindriReqs = [];
+    var XO = XMLHttpRequest.prototype.open, XS = XMLHttpRequest.prototype.send, XH = XMLHttpRequest.prototype.setRequestHeader;
+    XMLHttpRequest.prototype.open = function(m, u){ this.__s = {kind: 'xhr', method: m, url: String(u), headers: {}}; return XO.apply(this, arguments); };
+    XMLHttpRequest.prototype.setRequestHeader = function(k, v){ if (this.__s) this.__s.headers[k] = v; return XH.apply(this, arguments); };
+    XMLHttpRequest.prototype.send = function(b){ if (this.__s && !this.__s.sindri) { this.__s.body = (typeof b === 'string') ? b : null; window.__sindriReqs.push(this.__s); } return XS.apply(this, arguments); };
+    if (window.fetch) {
+      var F = window.fetch;
+      window.fetch = function(input, init){
+        try { if (!(init && init.sindri)) window.__sindriReqs.push({kind: 'fetch', method: (init && init.method) || 'GET',
+              url: String(input && input.url || input), headers: (init && init.headers) || {},
+              body: (init && typeof init.body === 'string') ? init.body : null}); } catch(e) {}
+        return F.apply(this, arguments);
+      };
+    }
+  }
+
+  function withPage(req, n){
+    // troca o número da página na URL ou no corpo (parâmetro com "pag" no nome)
+    var done = false;
+    function fixQuery(q){
+      return q.replace(/(^|[&?])([^=&?]*pag[^=&]*)=(\d+)/ig, function(m, sep, k){ done = true; return sep + k + '=' + n; });
+    }
+    var url = req.url, body = req.body;
+    var qi = url.indexOf('?');
+    if (qi >= 0) url = url.slice(0, qi) + fixQuery(url.slice(qi));
+    if (body) {
+      if (/^\s*[\[{]/.test(body)) {
+        body = body.replace(/("[^"]*pag[^"]*"\s*:\s*"?)(\d+)/ig, function(m, k){ done = true; return k + n; });
+      } else {
+        body = fixQuery(body);
       }
     }
-    return null;
+    if (!done) {          // rota do tipo /Pagina/2
+      url = url.replace(/(pag[a-z]*[\/=])(\d+)/i, function(m, k){ done = true; return k + n; });
+    }
+    return done ? {method: req.method, url: url, body: body, headers: req.headers} : null;
   }
+
+  async function fetchPage(tpl, n, paneId, label){
+    var r = withPage(tpl, n); if (!r) return null;
+    var h = {}; for (var k in (r.headers || {})) h[k] = r.headers[k];
+    if (r.body && !h['Content-Type'] && !h['content-type'])
+      h['Content-Type'] = /^\s*[\[{]/.test(r.body) ? 'application/json; charset=UTF-8' : 'application/x-www-form-urlencoded; charset=UTF-8';
+    if (!h['X-Requested-With']) h['X-Requested-With'] = 'XMLHttpRequest';
+    var resp = await fetch(r.url, {method: r.method || 'GET', headers: h, body: (r.method || 'GET').toUpperCase() === 'GET' ? undefined : r.body,
+                                   credentials: 'include', sindri: true});
+    var text = await resp.text();
+    var html = text;
+    if (/^\s*[\[{"]/.test(text)) {           // resposta JSON com HTML dentro
+      try {
+        var j = JSON.parse(text), parts = [];
+        (function walk(v){ if (typeof v === 'string') { if (v.indexOf('<') >= 0) parts.push(v); }
+                           else if (v && typeof v === 'object') for (var k in v) walk(v[k]); })(j);
+        html = parts.join('\n');
+      } catch(e) {}
+    }
+    var doc = new DOMParser().parseFromString('<table>' + html + '</table>', 'text/html');
+    var rows = rowsIn(doc, paneId, label);
+    if (!rows.length) {
+      doc = new DOMParser().parseFromString(html, 'text/html');
+      rows = rowsIn(doc.getElementById(paneId) || doc, paneId, label);
+    }
+    log('p' + n + ' ' + resp.status + ' ' + rows.length + ' linhas');
+    return rows;
+  }
+
+  async function clickTo(code, paneId, n){
+    var pane = document.getElementById(paneId);
+    var as = Array.prototype.slice.call(document.querySelectorAll('a[data-codigostatus="' + code + '"]'));
+    var a = as.filter(function(x){ return x.getAttribute('data-pagina') === String(n) && /^\d+$/.test(x.textContent.trim()); })[0]
+         || as.filter(function(x){ return x.getAttribute('data-pagina') === String(n); })[0];
+    if (!a) { log('sem link p' + n); return null; }
+    var before = pane ? codes(pane) : '';
+    var nreq = window.__sindriReqs.length;
+    a.click();
+    for (var t = 0; t < 100; t++) {          // até ~15 s
+      await sleep(150);
+      if (t === 10 && window.__sindriReqs.length === nreq && window.jQuery) { log('click sem requisição; tentando jQuery'); window.jQuery(a).trigger('click'); }
+      pane = document.getElementById(paneId);
+      var c = pane ? codes(pane) : '';
+      if (pane && c && c !== before) { await sleep(150); return {pane: document.getElementById(paneId), req: window.__sindriReqs[nreq] || null}; }
+      if (t > 20 && pane && curPage(pane) === n && window.__sindriReqs.length > nreq) { await sleep(300); return {pane: document.getElementById(paneId), req: window.__sindriReqs[nreq]}; }
+    }
+    log('p' + n + ': nada mudou na tela; requisições=' + (window.__sindriReqs.length - nreq));
+    return {pane: null, req: window.__sindriReqs[nreq] || null};
+  }
+
   (async function(){
     try {
-      var seen = [], jobs = [];
+      // aba pedida
+      var job = null;
       document.querySelectorAll('a[data-codigostatus]').forEach(function(a){
-        var code = a.getAttribute('data-codigostatus');
-        if (seen.indexOf(code) >= 0) return;
+        if (job) return;
         var pane = a.closest('.tab-pane'); if (!pane || !pane.id) return;
-        seen.push(code);
+        if (norm(tabLabel(pane)) !== norm(wanted)) return;
         var total = parseInt(a.getAttribute('data-qtdlinhas'), 10) || 0;
-        var per = Math.max(10, rowsOf(pane).length);
-        var pages = Math.max(1, Math.ceil(total / per));
-        if (total > maxRows) pages = Math.min(pages, bigPages);
-        jobs.push({code: code, pane: pane.id, pages: pages, label: tabLabel(pane)});
+        job = {code: a.getAttribute('data-codigostatus'), pane: pane.id, label: tabLabel(pane), total: total};
       });
-      for (var j = 0; j < jobs.length; j++) {
-        var job = jobs[j];
-        if (job.pages <= 1) continue;
-        for (var n = 1; n <= job.pages; n++) {
-          st.progress = (job.label || 'aba') + ' ' + n + '/' + job.pages;
-          var pane = await goTo(job.code, job.pane, n);
-          if (!pane) break;
-          st.rows = st.rows.concat(rowsOf(pane));
+      if (!job) { log('aba sem paginação: ' + wanted); return; }
+      var pane0 = document.getElementById(job.pane);
+      var per = Math.max(10, rowsIn(pane0, '', '').length);
+      var pages = Math.max(1, Math.ceil(job.total / per));
+      log('aba ' + job.label + ' status=' + job.code + ' total=' + job.total + ' paginas=' + pages);
+      if (pages > maxPages) { log('limitado a ' + maxPages + ' paginas'); pages = maxPages; }
+      if (pages <= 1) return;
+      if (curPage(pane0) === 1) st.rows = st.rows.concat(rowsIn(pane0, job.pane, job.label));
+      // página 2 por clique (descobre a requisição do site)
+      st.progress = job.label + ' 2/' + pages;
+      var res = await clickTo(job.code, job.pane, 2);
+      var tpl = res && res.req;
+      if (tpl) log('req: ' + tpl.method + ' ' + tpl.url + ' | ' + (tpl.body || ''));
+      var start = 3;
+      if (res && res.pane) st.rows = st.rows.concat(rowsIn(res.pane, job.pane, job.label));
+      else if (tpl && withPage(tpl, 2)) start = 2;
+      else { log('não consegui ler a página 2'); return; }
+      var useFetch = !!(tpl && withPage(tpl, 3));
+      if (!useFetch) log('requisição sem número de página reconhecível; seguindo por cliques');
+      for (var n = start; n <= pages; n++) {
+        st.progress = job.label + ' ' + n + '/' + pages;
+        var rows = null;
+        if (useFetch) {
+          try { rows = await fetchPage(tpl, n, job.pane, job.label); } catch(e) { log('fetch p' + n + ': ' + e); }
+          if (rows && !rows.length && n <= pages) { log('resposta vazia; seguindo por cliques'); useFetch = false; rows = null; }
         }
-        await goTo(job.code, job.pane, 1);   // deixa o site como estava
+        if (!rows) {
+          var r2 = await clickTo(job.code, job.pane, n);
+          if (!r2 || !r2.pane) break;
+          rows = rowsIn(r2.pane, job.pane, job.label);
+        }
+        st.rows = st.rows.concat(rows);
       }
-    } catch (e) { st.error = String(e); }
-    st.running = false; st.done = true; st.progress = '';
+      if (curPage(document.getElementById(job.pane)) !== 1) await clickTo(job.code, job.pane, 1);   // deixa o site como estava
+    } catch (e) { st.error = String(e); log('erro: ' + e); }
+    finally { st.running = false; st.done = true; st.progress = ''; }
   })();
   return 'started';
-})(%d, %d)
+})(%s, %d)
 """
 
 JS_CRAWL_STATE = r"""
 (function(){ var s = window.__sindri; if (!s) return null;
-  return JSON.stringify({done: s.done, progress: s.progress, error: s.error, rows: s.rows}); })()
+  return JSON.stringify({done: s.done, progress: s.progress, error: s.error, rows: s.rows, log: s.log, status: s.status}); })()
 """
 
 JS_CRAWL_RESET = "(function(){ if (window.__sindri && !window.__sindri.running) window.__sindri = null; })()"
 
-CRAWL_MAX_ROWS = 300      # abas com até isso são lidas inteiras
-CRAWL_BIG_PAGES = 5       # abas maiores (Finalizado, Cancelados): só as 5 primeiras páginas
+CRAWL_MAX_PAGES = 60      # 600 solicitações por aba (Finalizado tem milhares)
+
+
+def crawl_script(status: str, max_pages: int = CRAWL_MAX_PAGES) -> str:
+    import json as _json
+    return JS_CRAWL % (_json.dumps(status), int(max_pages))
+
+
+def date_key(text: str) -> tuple:
+    """'04/10/2026 13:45:58' -> (2026, 10, 4, 13, 45, 58) para ordenar por data de envio."""
+    m = re.match(r"\s*(\d{1,2})/(\d{1,2})/(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?", text or "")
+    if not m:
+        return (0,)
+    d, mo, y, h, mi, se = m.groups()
+    return (int(y), int(mo), int(d), int(h or 0), int(mi or 0), int(se or 0))
+
 
 ALL_STATUS = "Todos os status"
 

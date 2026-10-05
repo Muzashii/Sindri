@@ -6,26 +6,25 @@
 <tr><td>8748</td><td>569605</td><td>Outro Aluno</td><td>Impressão 3D</td><td>30/09/2026 13:45:58</td><td>Aguardando</td><td></td>
 <td><a data-codigo="8748" class="js-visualisa-solicitacao" onclick="abreSolicitacao(8748)">ver</a></td></tr>
 </tbody></table><input type="hidden" id="paginaAtual" value="1">
-<ul class="pagination"><li><a data-qtdlinhas="12" data-codigostatus="1" data-pagina="1">1</a></li>
-<li><a data-qtdlinhas="12" data-codigostatus="1" data-pagina="2">2</a></li></ul></div>
+<ul class="pagination"><li><a data-qtdlinhas="21" data-codigostatus="1" data-pagina="1">1</a></li>
+<li><a data-qtdlinhas="21" data-codigostatus="1" data-pagina="2">2</a></li>
+<li><a data-qtdlinhas="21" data-codigostatus="1" data-pagina="3">3</a></li></ul></div>
 <div class="tab-pane" id="tab_2-2"><table><tbody>
 <tr><td>8700</td><td>560000</td><td>Aluno Executando</td><td>Corte Laser</td><td>20/09/2026 10:00:00</td><td>Em execução</td><td></td>
 <td><a data-codigo="8700" class="js-visualisa-solicitacao" onclick="abreSolicitacao(8700)">ver</a></td></tr>
 </tbody></table></div></div>
 <div id="modal"></div>
 <script>
-var PAGE1 = null;
+// paginação como no site: clique -> requisição ao servidor -> troca o conteúdo da aba
 document.addEventListener('click', function(ev){
   var a = ev.target.closest && ev.target.closest('.pagination a'); if(!a) return;
-  var pane = a.closest('.tab-pane'); if(!PAGE1) PAGE1 = pane.innerHTML;
-  var n = a.getAttribute('data-pagina');
-  setTimeout(function(){
-    if (n === '1') { pane.innerHTML = PAGE1; return; }
-    pane.innerHTML = '<table><tbody><tr><td>8701</td><td>561111</td><td>Aluno Pagina Dois</td><td>Corte Laser</td><td>15/09/2026 09:00:00</td><td>Aguardando</td><td></td>' +
-      '<td><a data-codigo="8701" class="js-visualisa-solicitacao" onclick="abreSolicitacao(8701)">ver</a></td></tr></tbody></table>' +
-      '<input type="hidden" id="paginaAtual" value="2"><ul class="pagination"><li><a data-qtdlinhas="12" data-codigostatus="1" data-pagina="1">1</a></li>' +
-      '<li><a data-qtdlinhas="12" data-codigostatus="1" data-pagina="2">2</a></li></ul>';
-  }, 300);
+  var pane = a.closest('.tab-pane');
+  var x = new XMLHttpRequest();
+  x.open('POST', '/Pager');
+  x.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+  x.onload = function(){ pane.innerHTML = x.responseText; };
+  x.send('codigoStatus=' + a.getAttribute('data-codigostatus') + '&pagina=' + a.getAttribute('data-pagina') +
+         '&qtdLinhas=' + a.getAttribute('data-qtdlinhas'));
 });
 function abreSolicitacao(n){
   document.getElementById('modal').innerHTML = '';

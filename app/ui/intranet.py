@@ -18,8 +18,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QDial
                                QMessageBox, QPushButton, QScrollArea, QSplitter, QStackedWidget,
                                QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout, QWidget)
 
-from ..core.intranet import (ALL_STATUS, CRAWL_BIG_PAGES, CRAWL_MAX_ROWS, JS_CRAWL, JS_CRAWL_RESET,
-                             JS_CRAWL_STATE, merge_rows, status_options, INTRANET_URL, JS_DETAIL, JS_LIST, JS_OPEN, RequestDetail,
+from ..core.intranet import (ALL_STATUS, JS_CRAWL_RESET, JS_CRAWL_STATE, crawl_script, date_key,
+                             merge_rows, status_options, INTRANET_URL, JS_DETAIL, JS_LIST, JS_OPEN, RequestDetail,
                              default_base_folder, parse_detail, should_go_to_requests, target_path)
 from . import theme
 from .dialogs import settings
@@ -141,7 +141,7 @@ class IntranetDialog(QDialog):
         self.status_filter.addItem("Aguardando")
         self.status_filter.setToolTip("Status da solicitação (abas do site: Aguardando, Em execução…)")
         self.status_filter.setMinimumWidth(150)
-        self.status_filter.currentIndexChanged.connect(self._fill_list)
+        self.status_filter.currentIndexChanged.connect(self._status_changed)
         ll.addWidget(self.search)
         frow.addWidget(self.status_filter, 1)
         frow.addWidget(self.type_filter, 1)
@@ -160,6 +160,9 @@ class IntranetDialog(QDialog):
         for c in (0, 2, 3):
             hh.setSectionResizeMode(c, QHeaderView.ResizeToContents)
         self.list.itemSelectionChanged.connect(self._row_selected)
+        hh.setSectionsClickable(True)
+        hh.sectionClicked.connect(self._header_clicked)
+        self._set_date_header()
         ll.addWidget(self.list, 1)
         nrow = QHBoxLayout()
         self.code = QLineEdit()
@@ -244,7 +247,10 @@ class IntranetDialog(QDialog):
         self._crawl.setInterval(400)
         self._crawl.timeout.connect(self._poll_crawl)
         self._base_rows: list[dict] = []
-        self._crawl_rows: list[dict] = []
+        self._crawl_rows: dict[str, list[dict]] = {}     # status -> linhas lidas das outras páginas
+        self._crawled: set[str] = set()
+        self._crawl_status = ""
+        self._sort_desc = True
         self._dl_timer = QTimer(self)
         self._dl_timer.setSingleShot(True)
         self._dl_timer.timeout.connect(self._download_timeout)
@@ -281,7 +287,8 @@ class IntranetDialog(QDialog):
     def reload_page(self):
         self._set_state("Atualizando…", "run")
         self._crawl.stop()
-        self._crawl_rows = []
+        self._crawl_rows = {}
+        self._crawled = set()
         if self._logged:
             self.view.reload()
         else:
@@ -320,23 +327,38 @@ class IntranetDialog(QDialog):
         self._auto_redirects = 0
         self._base_rows = list(data.get("solicitacoes", []))
         self._merge_and_show()
-        if not self._crawl.isActive():
-            # as outras páginas de cada aba (o site mostra 10 por vez)
-            self.page.runJavaScript(JS_CRAWL_RESET)
-            self.page.runJavaScript(JS_CRAWL % (CRAWL_MAX_ROWS, CRAWL_BIG_PAGES))
-            self._crawl.start()
+        self._start_crawl()
+
+    def _all_crawl_rows(self) -> list[dict]:
+        return [r for rows in self._crawl_rows.values() for r in rows]
 
     def _merge_and_show(self, reading: str = ""):
-        rows = merge_rows(self._base_rows + self._crawl_rows)
+        rows = merge_rows(self._base_rows + self._all_crawl_rows())
         changed = [r["codigo"] for r in rows] != [r["codigo"] for r in self._rows]
         self._rows = rows
         if changed or not reading:
             self._update_status_options()
             self._fill_list()
         if reading:
-            self._set_state(f"Conectado · {len(rows)} solicitações · lendo páginas ({reading})…", "run")
+            self._set_state(f"Conectado · lendo todas as páginas de {reading}…", "run")
         else:
             self._set_state(f"Conectado · {len(rows)} solicitações", "ok")
+
+    def _status_changed(self, *_):
+        self._fill_list()
+        self._start_crawl()
+
+    def _start_crawl(self):
+        """Lê todas as páginas da aba escolhida (o site mostra só 10 por vez)."""
+        status = self.status_filter.currentData() or ""
+        if not self._logged or self._crawl.isActive() or not status or status == ALL_STATUS \
+                or status in self._crawled:
+            return
+        self._crawled.add(status)
+        self._crawl_status = status
+        self.page.runJavaScript(JS_CRAWL_RESET, 0)
+        self.page.runJavaScript(crawl_script(status), 0)
+        self._crawl.start()
 
     def _poll_crawl(self):
         self.page.runJavaScript(JS_CRAWL_STATE, 0, self._got_crawl)
@@ -348,17 +370,37 @@ class IntranetDialog(QDialog):
             data = None
         if not data:
             self._crawl.stop()
+            self._merge_and_show()
             return
-        self._crawl_rows = list(data.get("rows") or [])
+        status = data.get("status") or self._crawl_status
+        self._crawl_rows[status] = list(data.get("rows") or [])
         if data.get("done"):
             self._crawl.stop()
+            self._write_log(status, data)
             self._merge_and_show()
+            QTimer.singleShot(0, self._start_crawl)       # status trocado durante a leitura
         else:
-            self._merge_and_show(data.get("progress") or "…")
+            self._merge_and_show(data.get("progress") or status)
+
+    def _write_log(self, status: str, data: dict):
+        """Registro da leitura das páginas (ajuda a diagnosticar se o site mudar)."""
+        lines = [f"== {status}: {len(data.get('rows') or [])} linhas lidas"]
+        if data.get("error"):
+            lines.append(f"erro: {data['error']}")
+        lines += list(data.get("log") or [])
+        self._logs = getattr(self, "_logs", {})
+        self._logs[status] = "\n".join(lines)
+        try:
+            folder = os.path.dirname(self.base_folder) or self.base_folder
+            os.makedirs(folder, exist_ok=True)
+            with open(os.path.join(folder, "intranet_log.txt"), "w", encoding="utf-8") as fh:
+                fh.write("\n\n".join(self._logs.values()) + "\n")
+        except OSError:
+            pass
 
     def _update_status_options(self):
         """Recria a lista de status com as abas encontradas, mantendo a escolha atual."""
-        cur = self.status_filter.currentText() or "Aguardando"
+        cur = self.status_filter.currentData() or "Aguardando"
         opts = status_options(self._rows) + [ALL_STATUS]
         self.status_filter.blockSignals(True)
         self.status_filter.clear()
@@ -380,7 +422,8 @@ class IntranetDialog(QDialog):
         self.list.blockSignals(True)
         self.list.setRowCount(0)
         shown = 0
-        for r in self._rows:
+        rows = sorted(self._rows, key=lambda r: date_key(r.get("data", "")), reverse=self._sort_desc)
+        for r in rows:
             if tf != "Todos os tipos" and r.get("tipo", "") != tf:
                 continue
             if sf != ALL_STATUS and r.get("situacao", "") != sf and not q:
@@ -404,6 +447,19 @@ class IntranetDialog(QDialog):
         self.list.blockSignals(False)
         self.list.verticalScrollBar().setValue(scroll)
         self.count_lbl.setText(f"{shown} de {len(self._rows)} solicitação(ões)" if self._rows else "")
+
+    def _set_date_header(self):
+        arrow = "▼" if getattr(self, "_sort_desc", True) else "▲"
+        it = self.list.horizontalHeaderItem(3)
+        if it:
+            it.setText(f"Data {arrow}")
+            it.setToolTip("Ordenado pela data de envio — clique para inverter")
+
+    def _header_clicked(self, col: int):
+        if col == 3:
+            self._sort_desc = not self._sort_desc
+            self._set_date_header()
+            self._fill_list()
 
     def _row_selected(self):
         r = self.list.currentRow()
