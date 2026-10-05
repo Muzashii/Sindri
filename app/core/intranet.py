@@ -431,3 +431,34 @@ def request_summary(detail: "RequestDetail", materials: list[str]) -> dict:
 def file_multipliers(files: list[RequestFile]) -> dict[str, int]:
     """Caminho local -> quantidade pedida na tabela (cópias de tudo que há no arquivo)."""
     return {os.path.abspath(f.local_path): f.quantity for f in files if f.local_path}
+
+
+def file_tags(details_files: list[tuple["RequestDetail", list[RequestFile]]]) -> dict[str, str]:
+    """Caminho local -> nº da solicitação (para saber de quem é cada peça num lote)."""
+    return {os.path.abspath(f.local_path): str(d.code) for d, fs in details_files for f in fs if f.local_path}
+
+
+def batch_label(codes: list) -> str:
+    """Nome base dos arquivos exportados de um lote: lote_8759-8760-8761 (ou lote_8759_mais4)."""
+    codes = [str(c) for c in codes]
+    if len(codes) <= 4:
+        return "lote_" + "-".join(codes)
+    return f"lote_{codes[0]}_mais{len(codes) - 1}"
+
+
+def batch_summary(details_files: list[tuple["RequestDetail", list[RequestFile]]]) -> dict:
+    """Cartão/projeto de um lote: um resumo por solicitação + materiais de todas."""
+    reqs, mats = [], []
+    for d, fs in details_files:
+        ms = []
+        for f in fs:
+            m = f.material or "Sem material"
+            if m not in ms:
+                ms.append(m)
+            if m not in mats:
+                mats.append(m)
+        reqs.append(request_summary(d, ms))
+    codes = [r["code"] for r in reqs]
+    return {"code": " + ".join(str(c) for c in codes), "codes": codes, "batch": True,
+            "rm": ", ".join(r["rm"] for r in reqs if r["rm"]), "nome": f"{len(reqs)} solicitações",
+            "materials": mats, "requests": reqs}

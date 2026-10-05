@@ -49,7 +49,11 @@ Botão **Intranet FIAP** (ou `Ctrl+I`): abre a página de Solicitações Maker n
 3. Clique em **Enviar tudo para a placa** (ou em um material só). Só então os DXF são baixados, para
    `Documentos\Sindri\Solicitações\<nº> - <aluno>\<material>\`. As quantidades da tabela da intranet já entram nas peças.
 4. A tela principal mostra um cartão com **nº da solicitação, RM, aluno, projeto e professor**.
-5. **Materiais nunca dividem placa**: cada material (ex.: MDF 3mm em azul, MDF 6mm em laranja) ganha suas
+5. **Várias solicitações juntas**: marque a caixinha ao lado do nº de cada solicitação (clicar no cabeçalho "Nº"
+   marca todas as visíveis) e clique em **Juntar na placa**. O Sindri mostra o lote (sem baixar nada) e, ao enviar,
+   encaixa as peças de todas juntas. O nome de cada peça começa com o nº da solicitação, peças de pedidos
+   diferentes nunca são agrupadas, e o relatório lista cada solicitação. Os arquivos saem como `lote_8759-8760_…`.
+6. **Materiais nunca dividem placa**: cada material (ex.: MDF 3mm em azul, MDF 6mm em laranja) ganha suas
    próprias placas, com a cor no contorno e na etiqueta. Arrastar uma peça para a placa de outro material deixa
    ela vermelha. A exportação gera `8759_RM500123_MDF3mm_placa01.dxf`, `8759_RM500123_MDF6mm_placa01.dxf`…
 

@@ -81,6 +81,12 @@ class IntranetDialog(QDialog):
         self._pending: dict[str, object] = {}
         self._downloads = []
         self._sending: Optional[str] = None
+        self._checked: list[str] = []              # solicitações marcadas para juntar (ordem do clique)
+        self._cache: dict[int, RequestDetail] = {}  # detalhes já lidos
+        self.batch: list[RequestDetail] = []         # lote em exibição/envio
+        self.batch_result: Optional[list] = None     # [(detalhe, [arquivos baixados])]
+        self._fetch_queue: list[int] = []
+        self.file_rows: dict[str, QLabel] = {}
         t = theme.tokens()
 
         root = QVBoxLayout(self)
@@ -160,10 +166,36 @@ class IntranetDialog(QDialog):
         for c in (0, 2, 3):
             hh.setSectionResizeMode(c, QHeaderView.ResizeToContents)
         self.list.itemSelectionChanged.connect(self._row_selected)
+        self.list.itemChanged.connect(self._item_checked)
         hh.setSectionsClickable(True)
         hh.sectionClicked.connect(self._header_clicked)
         self._set_date_header()
         ll.addWidget(self.list, 1)
+        # barra do lote (aparece quando há solicitações marcadas)
+        self.batch_bar = QFrame()
+        self.batch_bar.setObjectName("RequestCard")
+        bl = QHBoxLayout(self.batch_bar)
+        bl.setContentsMargins(10, 6, 6, 6)
+        self.batch_lbl = QLabel("")
+        self.batch_lbl.setStyleSheet("font-weight: 700;")
+        self.btn_batch_clear = QPushButton("Limpar")
+        self.btn_batch_clear.setToolTip("Desmarcar todas")
+        self.btn_batch_clear.clicked.connect(self.clear_checks)
+        self.btn_batch = QPushButton("Juntar na placa")
+        self.btn_batch.setObjectName("primary")
+        self.btn_batch.setIcon(icon("layers", "#ffffff", 14))
+        self.btn_batch.setToolTip("Mostra as solicitações marcadas juntas para enviar todas de uma vez")
+        self.btn_batch.clicked.connect(self.view_batch)
+        bl.addWidget(self.batch_lbl, 1)
+        bl.addWidget(self.btn_batch_clear)
+        bl.addWidget(self.btn_batch)
+        self.batch_bar.hide()
+        ll.addWidget(self.batch_bar)
+        tip = QLabel("Marque a caixinha ao lado do nº para juntar várias solicitações nas mesmas placas.")
+        tip.setObjectName("Muted")
+        tip.setWordWrap(True)
+        self.batch_tip = tip
+        ll.addWidget(tip)
         nrow = QHBoxLayout()
         self.code = QLineEdit()
         self.code.setPlaceholderText("Nº da solicitação")
@@ -240,6 +272,9 @@ class IntranetDialog(QDialog):
         root.addLayout(foot)
         self._update_folder_label()
 
+        self._fetch = QTimer(self)
+        self._fetch.setInterval(300)
+        self._fetch.timeout.connect(self._fetch_poll)
         self._poll = QTimer(self)
         self._poll.setInterval(300)
         self._poll.timeout.connect(self._poll_detail)
@@ -440,6 +475,8 @@ class IntranetDialog(QDialog):
                     f = it.font()
                     f.setBold(True)
                     it.setFont(f)
+                    it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+                    it.setCheckState(Qt.Checked if str(v) in self._checked else Qt.Unchecked)
                 self.list.setItem(i, c, it)
             if r["codigo"] == cur:
                 self.list.selectRow(i)
@@ -456,6 +493,15 @@ class IntranetDialog(QDialog):
             it.setToolTip("Ordenado pela data de envio — clique para inverter")
 
     def _header_clicked(self, col: int):
+        if col == 0:
+            vis = [self.list.item(i, 0).text() for i in range(self.list.rowCount())]
+            if vis and all(c in self._checked for c in vis):
+                self._checked = [c for c in self._checked if c not in vis]
+            else:
+                self._checked += [c for c in vis if c not in self._checked]
+            self._fill_list()
+            self._update_batch_bar()
+            return
         if col == 3:
             self._sort_desc = not self._sort_desc
             self._set_date_header()
@@ -472,7 +518,7 @@ class IntranetDialog(QDialog):
         txt = self.code.text().strip()
         if not txt.isdigit():
             return
-        if self._sending:
+        if self._sending or self._fetch_queue:
             return
         self._req_seq += 1
         self._code = int(txt)
@@ -510,6 +556,8 @@ class IntranetDialog(QDialog):
         except Exception as e:
             self._set_state(f"Não consegui ler a solicitação: {e}", "warn")
             return
+        self._cache[self.detail.code] = self.detail
+        self.batch = []
         self._show_detail()
         self._set_state(f"Solicitação {self.detail.code} · pronta para enviar", "ok")
 
@@ -605,16 +653,24 @@ class IntranetDialog(QDialog):
             st = QLabel("" if f.is_dxf else "não é DXF")
             st.setObjectName("Muted")
             fl.addWidget(st)
-            self.file_rows[f.name] = st
+            self.file_rows[self._fkey(d, f)] = st
             self.dbody.addWidget(fr)
+        self._add_send_buttons(d.materials())
+        self.dbody.addStretch(1)
+        self.dstack.setCurrentIndex(1)
 
-        mats = d.materials()
+    @staticmethod
+    def _fkey(d: RequestDetail, f) -> str:
+        return f"{d.code}/{f.name}"
+
+    def _add_send_buttons(self, mats: dict, batch: bool = False):
         act = QFrame()
         al = QVBoxLayout(act)
         al.setContentsMargins(0, 6, 0, 0)
         al.setSpacing(6)
         if not mats:
-            w = QLabel("Esta solicitação não tem arquivos DXF para corte a laser.")
+            w = QLabel("Nenhum arquivo DXF para corte a laser." if batch else
+                       "Esta solicitação não tem arquivos DXF para corte a laser.")
             w.setObjectName("Muted")
             al.addWidget(w)
         else:
@@ -638,43 +694,53 @@ class IntranetDialog(QDialog):
                     b.setStyleSheet(f"border-left: 5px solid {col};")
                 b.clicked.connect(lambda _=False, mm=m: self.send(mm))
                 al.addWidget(b)
-            hint = QLabel("Os arquivos são baixados agora, ao enviar.")
+            hint = QLabel("Os arquivos são baixados agora, ao enviar." + (
+                " As peças de todas as solicitações são encaixadas juntas (cada material em placas próprias) "
+                "e o nome de cada peça começa com o nº da solicitação." if batch else ""))
             hint.setObjectName("Muted")
+            hint.setWordWrap(True)
             al.addWidget(hint)
         self.send_buttons = [w for w in act.findChildren(QPushButton)]
         self.dbody.addWidget(act)
-        self.dbody.addStretch(1)
-        self.dstack.setCurrentIndex(1)
 
     # ------------------------------------------------------------------ enviar (baixar + importar)
     def send(self, material: str):
-        d = self.detail
-        if d is None or self._sending:
+        items = self.batch if self.batch else ([self.detail] if self.detail is not None else [])
+        if not items or self._sending:
             return
-        mats = d.materials()
-        files = [f for m, fs in mats.items() for f in fs if material == ALL_MATERIALS or m == material]
-        if not files:
+        plan = []
+        for d in items:
+            fs = [f for m, ffs in d.materials().items() for f in ffs if material == ALL_MATERIALS or m == material]
+            for f in d.files:
+                f.local_path = None
+            if fs:
+                plan.append((d, fs))
+        if not plan:
             return
         self._sending = material
+        self._plan = plan
         for b in getattr(self, "send_buttons", []):
             b.setEnabled(False)
-        self._set_state(f"Baixando {len(files)} arquivo(s)…", "run")
+        n = sum(len(fs) for _, fs in plan)
+        self._set_state(f"Baixando {n} arquivo(s)…", "run")
         self._pending = {}
         self._dl_ok = 0
-        for f in files:
-            f.local_path = target_path(self.base_folder, d, f)
-            os.makedirs(os.path.dirname(f.local_path), exist_ok=True)
-            if os.path.exists(f.local_path):
-                try:
-                    os.remove(f.local_path)
-                except OSError:
-                    pass
-            fname = os.path.basename(f.local_path)
-            self._pending[fname] = f
-            if f.name in self.file_rows:
-                self.file_rows[f.name].setText("baixando…")
-            self.page.download(QUrl(f.url), fname)
-        self._dl_timer.start(DOWNLOAD_TIMEOUT_S * 1000)
+        for d, fs in plan:
+            for f in fs:
+                f.local_path = target_path(self.base_folder, d, f)
+                os.makedirs(os.path.dirname(f.local_path), exist_ok=True)
+                if os.path.exists(f.local_path):
+                    try:
+                        os.remove(f.local_path)
+                    except OSError:
+                        pass
+                key = f"{d.code}__{os.path.basename(f.local_path)}"
+                self._pending[key] = (d, f)
+                lab = self.file_rows.get(self._fkey(d, f))
+                if lab:
+                    lab.setText("baixando…")
+                self.page.download(QUrl(f.url), key)
+        self._dl_timer.start(DOWNLOAD_TIMEOUT_S * 1000 + 3000 * max(0, n - 3))
 
     def _match(self, req):
         """Liga o download ao arquivo pedido: pelo nome sugerido ou, se não der, pela URL."""
@@ -682,7 +748,7 @@ class IntranetDialog(QDialog):
         if name in self._pending:
             return name
         url = req.url().toString()
-        for k, f in self._pending.items():
+        for k, (_, f) in self._pending.items():
             if QUrl(f.url).toString() == url or os.path.basename(url) == os.path.basename(f.url):
                 return k
         return None
@@ -691,7 +757,7 @@ class IntranetDialog(QDialog):
         key = self._match(req) if self._sending else None
         if key is None:
             return  # download feito pelo usuário na página: comportamento padrão
-        f = self._pending[key]
+        _, f = self._pending[key]
         req.setDownloadDirectory(os.path.dirname(f.local_path))
         req.setDownloadFileName(os.path.basename(f.local_path))
         req.isFinishedChanged.connect(lambda r=req, k=key: self._download_finished(r, k))
@@ -700,12 +766,14 @@ class IntranetDialog(QDialog):
 
     def _download_finished(self, req, key):
         from PySide6.QtWebEngineCore import QWebEngineDownloadRequest
-        f = self._pending.pop(key, None)
-        if f is None:
+        item = self._pending.pop(key, None)
+        if item is None:
             return
+        d, f = item
         ok = req.state() == QWebEngineDownloadRequest.DownloadCompleted and os.path.isfile(f.local_path)
-        if f.name in self.file_rows:
-            self.file_rows[f.name].setText("✓ baixado" if ok else "erro")
+        lab = self.file_rows.get(self._fkey(d, f))
+        if lab:
+            lab.setText("✓ baixado" if ok else "erro")
         if ok:
             self._dl_ok += 1
         else:
@@ -717,10 +785,11 @@ class IntranetDialog(QDialog):
     def _download_timeout(self):
         if not self._pending:
             return
-        for f in self._pending.values():
+        for d, f in self._pending.values():
             f.local_path = None
-            if f.name in self.file_rows:
-                self.file_rows[f.name].setText("sem resposta")
+            lab = self.file_rows.get(self._fkey(d, f))
+            if lab:
+                lab.setText("sem resposta")
         self._pending = {}
         self._finish_send()
 
@@ -734,11 +803,153 @@ class IntranetDialog(QDialog):
             self.btn_page.setChecked(True)
             return
         self.chosen_material = material
+        self.batch_result = [(d, [f for f in fs if f.local_path]) for d, fs in self._plan] if self.batch else None
         self.accept()
+
+    # ------------------------------------------------------------------ lote (várias solicitações)
+    def _item_checked(self, item):
+        if item.column() != 0:
+            return
+        code = item.text()
+        on = item.checkState() == Qt.Checked
+        if on and code not in self._checked:
+            self._checked.append(code)
+        elif not on and code in self._checked:
+            self._checked.remove(code)
+        self._update_batch_bar()
+
+    def _update_batch_bar(self):
+        n = len(self._checked)
+        self.batch_bar.setVisible(n > 0)
+        self.batch_tip.setVisible(n == 0)
+        self.batch_lbl.setText(f"{n} marcada(s)")
+        self.btn_batch.setEnabled(n >= 1 and not self._fetch.isActive())
+        self.btn_batch.setText(f"Juntar {n} na placa" if n > 1 else "Juntar na placa")
+
+    def clear_checks(self):
+        self._checked = []
+        self._fill_list()
+        self._update_batch_bar()
+
+    def view_batch(self):
+        """Lê os detalhes de todas as marcadas (sem baixar nada) e mostra o lote."""
+        if self._sending or self._fetch.isActive() or not self._checked:
+            return
+        self._poll.stop()
+        self._req_seq += 1                         # cancela uma visualização em andamento
+        self._fetch_queue = [int(c) for c in self._checked if c.isdigit()]
+        self._fetch_done: list[RequestDetail] = []
+        self._fetch_total = len(self._fetch_queue)
+        self._fetch_next()
+
+    def _fetch_next(self):
+        while self._fetch_queue and self._fetch_queue[0] in self._cache:
+            self._fetch_done.append(self._cache[self._fetch_queue.pop(0)])
+        if not self._fetch_queue:
+            self._fetch.stop()
+            self.batch = list(self._fetch_done)
+            self.detail = None
+            self._update_batch_bar()
+            self._show_batch()
+            return
+        code = self._fetch_queue[0]
+        self._set_state(f"Lendo solicitação {code} ({len(self._fetch_done) + 1}/{self._fetch_total})…", "run")
+        self._fetch_left = 60
+        self.page.runJavaScript(JS_OPEN % code, 0, self._fetch_opened)
+
+    def _fetch_opened(self, res):
+        if res != "ok":
+            self._fetch_queue = []
+            self._set_state("A intranet ainda não está pronta — faça login e abra Solicitações Maker", "warn")
+            self._update_batch_bar()
+            return
+        self._fetch.start()
+        self._update_batch_bar()
+
+    def _fetch_poll(self):
+        if not self._fetch_queue:
+            self._fetch.stop()
+            return
+        self._fetch_left -= 1
+        code = self._fetch_queue[0]
+        if self._fetch_left < 0:
+            self._fetch.stop()
+            self._fetch_queue = []
+            self._set_state(f"A solicitação {code} não abriu a tempo. Tente de novo.", "warn")
+            self._update_batch_bar()
+            return
+        self.page.runJavaScript(JS_DETAIL % code, 0, lambda raw, c=code: self._fetch_got(raw, c))
+
+    def _fetch_got(self, raw, code):
+        if not raw or not self._fetch_queue or self._fetch_queue[0] != code:
+            return
+        try:
+            d = parse_detail(json.loads(raw))
+        except Exception:
+            return
+        self._fetch.stop()
+        self._cache[d.code] = d
+        self._fetch_queue.pop(0)
+        self._fetch_done.append(d)
+        self._fetch_next()
+
+    def _show_batch(self):
+        t = theme.tokens()
+        self._clear_detail()
+        self.file_rows = {}
+        top = QHBoxLayout()
+        tt = QLabel(f"Lote · {len(self.batch)} solicitações")
+        tt.setStyleSheet("font-size: 17pt; font-weight: 800;")
+        top.addWidget(tt)
+        top.addStretch(1)
+        self.dbody.addLayout(top)
+        mats: dict[str, list] = {}
+        for d in self.batch:
+            card = QFrame()
+            card.setObjectName("RequestCard")
+            cl = QVBoxLayout(card)
+            cl.setContentsMargins(14, 10, 14, 10)
+            cl.setSpacing(4)
+            h = QHBoxLayout()
+            n = QLabel(f"<b>{d.code}</b>  ·  {d.student or '—'}")
+            n.setStyleSheet("font-size: 11pt;")
+            n.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            h.addWidget(n, 1)
+            r = QLabel(f"RM {d.rm or '—'}")
+            r.setObjectName("Muted")
+            h.addWidget(r)
+            cl.addLayout(h)
+            dm = d.materials()
+            if not dm:
+                w = QLabel("sem arquivos DXF")
+                w.setObjectName("Muted")
+                cl.addWidget(w)
+            for m, fs in dm.items():
+                mats.setdefault(m, []).extend(fs)
+                for f in fs:
+                    fr = QHBoxLayout()
+                    nm = QLabel(f.name)
+                    nm.setWordWrap(True)
+                    fr.addWidget(nm, 1)
+                    fr.addWidget(_chip(m, theme.material_color(m).name()))
+                    q = QLabel(f"× {f.quantity}")
+                    q.setStyleSheet("font-weight: 800;")
+                    fr.addWidget(q)
+                    st = QLabel("")
+                    st.setObjectName("Muted")
+                    fr.addWidget(st)
+                    self.file_rows[self._fkey(d, f)] = st
+                    cl.addLayout(fr)
+            self.dbody.addWidget(card)
+        self._add_send_buttons(mats, batch=True)
+        self.dbody.addStretch(1)
+        self.dstack.setCurrentIndex(1)
+        self._set_state(f"Lote com {len(self.batch)} solicitações · pronto para enviar", "ok")
 
     # ------------------------------------------------------------------
     def _disconnect(self):
         self._poll.stop()
+        self._fetch.stop()
         self._crawl.stop()
         self._dl_timer.stop()
         if getattr(self, "_dl_connected", False):

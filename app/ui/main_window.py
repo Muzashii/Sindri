@@ -67,6 +67,7 @@ class MainWindow(QMainWindow):
         self.dark = settings().value("ui/dark", "false") == "true"
         self.file_multipliers: dict[str, int] = {}
         self.file_materials: dict[str, str] = {}
+        self.file_tags: dict[str, str] = {}
         self.request_label: Optional[str] = None
         self.request_info: Optional[dict] = None
         self.generation = 0
@@ -313,6 +314,13 @@ class MainWindow(QMainWindow):
         i = self.request_info
         if not i:
             return []
+        if i.get("batch"):
+            lines = [f"Lote com {len(i.get('requests', []))} solicitações · Materiais: "
+                     f"{', '.join(i.get('materials', []))}"]
+            for r in i.get("requests", []):
+                lines.append(f"  nº {r.get('code', '')} · RM {r.get('rm', '')} · {r.get('nome', '')}"
+                             + (f" · {r['projeto']}" if r.get("projeto") else ""))
+            return lines
         return [f"Solicitação nº {i.get('code', '')} · RM {i.get('rm', '')} · {i.get('nome', '')}",
                 "  ·  ".join(x for x in (f"Projeto: {i['projeto']}" if i.get("projeto") else "",
                                          f"Professor: {i['professor']}" if i.get("professor") else "",
@@ -541,7 +549,7 @@ class MainWindow(QMainWindow):
 
     def load_files(self, paths: list[str], add: bool = False, multipliers: Optional[dict] = None,
                    request_label: Optional[str] = None, materials: Optional[dict] = None,
-                   request_info: Optional[dict] = None) -> bool:
+                   request_info: Optional[dict] = None, tags: Optional[dict] = None) -> bool:
         if self.worker is not None:
             self.stop_nest(wait=True)
         if not self.confirm_discard(add):
@@ -550,6 +558,7 @@ class MainWindow(QMainWindow):
             self.settings_panel.reset_file_options()   # arquivo novo: unidade automática, todas as camadas
             self.file_multipliers = {}
             self.file_materials = {}
+            self.file_tags = {}
             self.request_label = request_label
             self.request_info = request_info
             self.parts_panel.set_request(request_info)
@@ -557,6 +566,8 @@ class MainWindow(QMainWindow):
             self.file_multipliers.update(multipliers)
         if materials:
             self.file_materials.update(materials)
+        if tags:
+            self.file_tags.update(tags)
         files = list(self.files) + [p for p in paths if p not in self.files] if add else list(paths)
         self._import(files, keep_quantities=add)
         return True
@@ -566,7 +577,8 @@ class MainWindow(QMainWindow):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             rep = import_files(files, p.join_tolerance, p.curve_tolerance, **p.import_kwargs(),
-                               multipliers=self.file_multipliers, file_materials=self.file_materials)
+                               multipliers=self.file_multipliers, file_materials=self.file_materials,
+                               file_tags=self.file_tags)
         except Exception as e:
             QApplication.restoreOverrideCursor()
             QMessageBox.critical(self, "Erro ao abrir", f"Não foi possível ler os arquivos.\n\n{e}")
@@ -648,7 +660,13 @@ class MainWindow(QMainWindow):
             dlg = IntranetDialog(self)
             self._intranet_dlg = dlg
         dlg.chosen_material = None
-        if not dlg.exec() or not dlg.chosen_material or dlg.detail is None:
+        dlg.batch_result = None
+        if not dlg.exec() or not dlg.chosen_material:
+            return
+        if dlg.batch_result:
+            self._load_batch(dlg.batch_result)
+            return
+        if dlg.detail is None:
             return
         d, choice = dlg.detail, dlg.chosen_material
         mats = d.materials()
@@ -672,6 +690,26 @@ class MainWindow(QMainWindow):
             self.show_banner(txt, "info")
         self.setWindowTitle(f"{APP_NAME} — Solicitação {d.code} · RM {rm}")
 
+    def _load_batch(self, items: list):
+        """Várias solicitações encaixadas juntas (cada material com suas placas)."""
+        from ..core.intranet import batch_label, batch_summary, file_materials, file_multipliers, file_tags
+        items = [(d, [f for f in fs if f.local_path and os.path.isfile(f.local_path)]) for d, fs in items]
+        items = [(d, fs) for d, fs in items if fs]
+        if not items:
+            return
+        files = [f for _, fs in items for f in fs]
+        info = batch_summary(items)
+        if not self.load_files([f.local_path for f in files], multipliers=file_multipliers(files),
+                               request_label=batch_label([d.code for d, _ in items]),
+                               materials=file_materials(files), request_info=info, tags=file_tags(items)):
+            return
+        codes = ", ".join(str(d.code) for d, _ in items)
+        self.show_banner(f"Lote com <b>{len(items)}</b> solicitações ({codes}) — "
+                         + ", ".join(f"<b>{m}</b>" for m in info["materials"])
+                         + ". As peças estão juntas nas placas; o nome de cada peça começa com o nº da "
+                           "solicitação.", "info")
+        self.setWindowTitle(f"{APP_NAME} — Lote {codes}")
+
     def clear_all(self, ask: bool = True):
         """Remove todos os arquivos, peças e o encaixe (volta para a tela inicial)."""
         if not self.parts and not self.files:
@@ -689,6 +727,7 @@ class MainWindow(QMainWindow):
         self.files, self.report, self.parts, self.pmap = [], None, [], {}
         self.file_multipliers, self.request_label = {}, None
         self.file_materials, self.request_info = {}, None
+        self.file_tags = {}
         self.parts_panel.set_request(None)
         self.placements, self.n_sheets, self.unplaced = [], 0, []
         self.too_big = set()
@@ -753,7 +792,7 @@ class MainWindow(QMainWindow):
         try:
             save_project(path, self.files, self.settings_panel.params(), self.parts, res,
                          multipliers=self.file_multipliers, label=self.request_label,
-                         materials=self.file_materials, request=self.request_info)
+                         materials=self.file_materials, request=self.request_info, tags=self.file_tags)
         except OSError as e:
             QMessageBox.critical(self, "Erro ao salvar", f"Não foi possível salvar o projeto:\n{e}")
             return
@@ -792,6 +831,7 @@ class MainWindow(QMainWindow):
         self.files = proj.files
         self.file_multipliers = dict(proj.multipliers)
         self.file_materials = dict(proj.materials)
+        self.file_tags = dict(getattr(proj, "tags", {}) or {})
         self.request_label = proj.label
         self.request_info = proj.request
         self.parts_panel.set_request(proj.request)

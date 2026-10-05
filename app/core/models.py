@@ -57,6 +57,7 @@ class Part:
     warnings: list[str] = field(default_factory=list)
     is_open: bool = False              # peça formada por contorno(s) aberto(s)
     material: str = ""                 # ex.: "MDF 3mm" — peças de materiais diferentes nunca dividem placa
+    tag: str = ""                      # nº da solicitação (lote com várias): identifica de quem é a peça
 
     @property
     def area(self) -> float:

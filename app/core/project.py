@@ -29,12 +29,13 @@ class Project:
     label: Optional[str] = None
     materials: dict = field(default_factory=dict)
     request: Optional[dict] = None
+    tags: dict = field(default_factory=dict)
 
 
 def save_project(path: str, files: list[str], params: NestParams, parts: list[Part],
                  result: Optional[NestResult], multipliers: Optional[dict] = None,
                  label: Optional[str] = None, materials: Optional[dict] = None,
-                 request: Optional[dict] = None) -> None:
+                 request: Optional[dict] = None, tags: Optional[dict] = None) -> None:
     base = os.path.dirname(os.path.abspath(path))
     data = {
         "format": FORMAT,
@@ -50,6 +51,7 @@ def save_project(path: str, files: list[str], params: NestParams, parts: list[Pa
         "label": label,
         "materials": [[os.path.relpath(os.path.abspath(k), base), v] for k, v in (materials or {}).items()],
         "request": request,
+        "tags": [[os.path.relpath(os.path.abspath(k), base), v] for k, v in (tags or {}).items()],
     }
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -89,8 +91,14 @@ def load_project(path: str) -> Project:
         for f in files:
             if os.path.abspath(f) == p or os.path.basename(f) == os.path.basename(p):
                 materials[os.path.abspath(f)] = v
+    tags = {}
+    for rel, v in data.get("tags", []) or []:
+        p = os.path.abspath(os.path.join(base, rel))
+        for f in files:
+            if os.path.abspath(f) == p:
+                tags[os.path.abspath(f)] = v
     report = import_files(files, params.join_tolerance, params.curve_tolerance, **params.import_kwargs(),
-                          multipliers=multipliers, file_materials=materials)
+                          multipliers=multipliers, file_materials=materials, file_tags=tags)
     saved = data.get("parts", {})
     for p in report.parts:
         s = saved.get(p.id)
@@ -109,4 +117,4 @@ def load_project(path: str) -> Project:
             warnings.append("O resultado salvo não corresponde às peças atuais e foi descartado.")
             result = None
     return Project(files, params, report.parts, result, report, sorted(set(warnings)), multipliers,
-                   data.get("label"), materials, data.get("request"))
+                   data.get("label"), materials, data.get("request"), tags)

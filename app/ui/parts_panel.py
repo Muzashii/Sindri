@@ -196,6 +196,21 @@ class PartsPanel(QWidget):
         if not info:
             self.req_card.hide()
             return
+        if info.get("batch"):
+            reqs = info.get("requests", [])
+            self.req_title.setText(f"Lote · {len(reqs)} solicitações")
+            self.req_line1.setText("\n".join(f"{r.get('code', '')}  ·  RM {r.get('rm', '—')}  ·  {r.get('nome', '')}"
+                                             for r in reqs))
+            self.req_line2.hide()
+            for m in info.get("materials", []):
+                chip = QLabel(m)
+                chip.setObjectName("MatChip")
+                chip.setStyleSheet(f"background: {theme.material_color(m).name()};")
+                self.req_mats.addWidget(chip)
+            self.req_mats.addStretch(1)
+            self.req_card.setToolTip("")
+            self.req_card.show()
+            return
         self.req_title.setText(f"Solicitação nº {info.get('code', '')}")
         self.req_line1.setText(f"RM {info.get('rm', '—')}  ·  {info.get('nome', '')}")
         extra = []

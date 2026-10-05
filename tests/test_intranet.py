@@ -154,6 +154,68 @@ def test_dialogo_baixa_da_pagina_simulada(tmp_path):
     srv.shutdown()
 
 
+def test_lote_varias_solicitacoes(tmp_path):
+    """Marcar várias solicitações, ver o lote e enviar todas juntas."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    try:
+        import PySide6.QtWebEngineWidgets  # noqa: F401
+    except Exception:
+        pytest.skip("QtWebEngine indisponível")
+    from PySide6.QtCore import QSettings, Qt
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, str(tmp_path / "cfg"))
+    from app.ui.intranet import ALL_MATERIALS, IntranetDialog
+    srv = _mock_server()
+    d = IntranetDialog(None, start_url=f"http://127.0.0.1:{srv.server_address[1]}/intranet_mock.html",
+                       base_folder=str(tmp_path / "solic"))
+    d.show()
+
+    def pump(cond, limit=30):
+        t = time.time()
+        while time.time() - t < limit:
+            app.processEvents()
+            if cond():
+                return True
+            time.sleep(0.02)
+        return False
+
+    if not pump(lambda: len(d._rows) >= 3, 40):
+        pytest.skip("QtWebEngine não renderiza neste ambiente")
+    assert pump(lambda: len(d._rows) == 5 and not d._crawl.isActive(), 40)
+    assert not d.batch_bar.isVisibleTo(d)
+    for i in range(d.list.rowCount()):
+        if d.list.item(i, 0).text() in ("8759", "8702"):
+            d.list.item(i, 0).setCheckState(Qt.Checked)
+    assert d._checked == ["8759", "8702"] or d._checked == ["8702", "8759"]
+    assert d.batch_bar.isVisibleTo(d) and "2" in d.btn_batch.text()
+    d.view_batch()
+    assert pump(lambda: len(d.batch) == 2, 40)
+    assert not os.path.exists(str(tmp_path / "solic"))          # ver o lote não baixa nada
+    d.send(ALL_MATERIALS)
+    assert pump(lambda: d.result() == 1, 60)
+    assert len(d.batch_result) == 2
+    for det, fs in d.batch_result:
+        assert len(fs) == 3 and all(os.path.getsize(f.local_path) > 1000 for f in fs)
+    # pastas separadas por solicitação, mesmo com arquivos de mesmo nome
+    paths = {f.local_path for _, fs in d.batch_result for f in fs}
+    assert len(paths) == 6
+    # peças de solicitações diferentes não se misturam e levam o nº no nome
+    from app.core.intranet import batch_label, batch_summary, file_materials, file_multipliers, file_tags
+    files = [f for _, fs in d.batch_result for f in fs]
+    rep = import_files([f.local_path for f in files], multipliers=file_multipliers(files),
+                       file_materials=file_materials(files), file_tags=file_tags(d.batch_result))
+    tags = {p.tag for p in rep.parts}
+    assert tags == {"8759", "8702"}
+    assert all(p.name.startswith(p.tag + " · ") for p in rep.parts)
+    info = batch_summary(d.batch_result)
+    assert info["batch"] and len(info["requests"]) == 2 and set(info["materials"]) == {"MDF 3mm", "MDF 6mm"}
+    assert batch_label([8759, 8702]) == "lote_8759-8702"
+    assert batch_label([1, 2, 3, 4, 5]) == "lote_1_mais4"
+    d.deleteLater()
+    srv.shutdown()
+
+
 def test_materiais_nunca_dividem_placa(tmp_path):
     from app.core.optimizer import nest
     from app.core.validate import validate_layout
@@ -217,3 +279,16 @@ def test_ordem_por_data():
     from app.core.intranet import date_key
     assert date_key("04/10/2026 13:45:58") > date_key("04/10/2026 09:00:00") > date_key("30/09/2026")
     assert date_key("") == (0,)
+
+
+def test_projeto_guarda_lote(tmp_path):
+    a, b = fx("furos.dxf"), fx("simples.dxf")
+    tags = {os.path.abspath(a): "8759", os.path.abspath(b): "8760"}
+    rep = import_files([a, b], file_tags=tags)
+    assert {p.tag for p in rep.parts} == {"8759", "8760"}
+    proj = str(tmp_path / "lote.sindri")
+    save_project(proj, [a, b], NestParams(), rep.parts, None, label="lote_8759-8760", tags=tags,
+                 request={"batch": True, "requests": [{"code": 8759}, {"code": 8760}]})
+    pr = load_project(proj)
+    assert pr.tags == tags and {p.tag for p in pr.parts} == {"8759", "8760"}
+    assert pr.request["batch"] and pr.label == "lote_8759-8760"

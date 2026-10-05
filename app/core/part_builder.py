@@ -242,6 +242,7 @@ class _RawPart:
     warnings: list[str]
     source_file: str
     material: str = ""
+    tag: str = ""
 
 
 def build_parts_from_prims(prims: list[Prim], source_file: str, join_tol: float,
@@ -449,7 +450,8 @@ def _linework(rp: _RawPart, tol: float) -> GeometryCollection:
 
 def _same_part(a: _RawPart, b: _RawPart, la, lb, tol: float) -> Optional[float]:
     """Se b é igual a a por rotação+translação, devolve o ângulo (graus) de b->a."""
-    if a.is_open != b.is_open or len(a.holes) != len(b.holes) or a.material != b.material:
+    if a.is_open != b.is_open or len(a.holes) != len(b.holes) or a.material != b.material \
+            or a.tag != b.tag:
         return None
     if abs(a.outer.area - b.outer.area) > max(0.5, 0.005 * a.outer.area):
         return None
@@ -507,7 +509,7 @@ def make_part(rp: _RawPart, pid: str, name: str, qty: int) -> Part:
     return Part(id=pid, name=name, source_file=rp.source_file, outer=outer, holes=holes,
                 prims=prims, outer_prim_idx=list(rp.outer_prim_idx), quantity=qty,
                 file_quantity=qty, warnings=list(rp.warnings), is_open=rp.is_open,
-                material=rp.material)
+                material=rp.material, tag=rp.tag)
 
 
 def import_files(paths: list[str], join_tol: float = 0.05, curve_tol: float = 0.1,
@@ -515,7 +517,8 @@ def import_files(paths: list[str], join_tol: float = 0.05, curve_tol: float = 0.
                  units_override: Optional[int] = None, ignore_text: bool = False,
                  excluded_layers: Optional[set] = None,
                  multipliers: Optional[dict] = None,
-                 file_materials: Optional[dict] = None) -> ImportReport:
+                 file_materials: Optional[dict] = None,
+                 file_tags: Optional[dict] = None) -> ImportReport:
     """Importa vários DXF e devolve as peças agrupadas."""
     warnings: list[str] = []
     all_raw: list[_RawPart] = []
@@ -549,6 +552,10 @@ def import_files(paths: list[str], join_tol: float = 0.05, curve_tol: float = 0.
             mat = file_materials.get(os.path.abspath(rf.path), "")
             for rp in parts:
                 rp.material = mat
+        if file_tags:
+            tag = str(file_tags.get(os.path.abspath(rf.path), "") or "")
+            for rp in parts:
+                rp.tag = tag
         mult = 1
         if multipliers:
             mult = max(1, int(multipliers.get(os.path.abspath(rf.path), 1)))
@@ -564,13 +571,15 @@ def import_files(paths: list[str], join_tol: float = 0.05, curve_tol: float = 0.
             x_offset += (maxx - minx) + 20.0
 
     # ordem estável: maiores primeiro, depois posição
-    all_raw.sort(key=lambda r: (r.material, -round(r.outer.area, 3), round(r.outer.centroid.x, 3),
+    all_raw.sort(key=lambda r: (r.material, r.tag, -round(r.outer.area, 3), round(r.outer.centroid.x, 3),
                                 round(r.outer.centroid.y, 3)))
     grouped = group_identical(all_raw, curve_tol)
     parts = []
     for i, (rp, qty) in enumerate(grouped):
         w, h = rp.outer.bounds[2] - rp.outer.bounds[0], rp.outer.bounds[3] - rp.outer.bounds[1]
         name = f"Peça {i + 1} ({w:.0f}×{h:.0f})"
+        if rp.tag:
+            name = f"{rp.tag} · {name}"
         parts.append(make_part(rp, f"P{i + 1:03d}", name, qty))
     return ImportReport(parts=parts, preview=preview, warnings=warnings, files=files_ok,
                         unit_notes=unit_notes, extra={"suspicious_units": suspicious, "layers": layers})
