@@ -1377,8 +1377,9 @@ class MainWindow(QMainWindow):
         self._compact_sheets()
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
+            # para abrir no RDWorks sempre geramos o arquivo com todas as placas organizadas
             files = export_sheets(self.parts, self.placements, p, o["folder"], o["base"], o["version"],
-                                  combined=o["combined"], sheet_outline=o["outline"],
+                                  combined=o["combined"] or bool(o.get("open_rdworks")), sheet_outline=o["outline"],
                                   inner_first=o["inner"], sort_path=o["path"])
             if o["report"]:
                 res = NestResult(self.placements, self.n_sheets, self._utilization(), 0.0, self.unplaced)
@@ -1432,9 +1433,6 @@ class MainWindow(QMainWindow):
             return f"Não foi possível abrir o RDWorks: {e}"
         msg = (f"Abrindo {os.path.basename(path)} no RDWorks "
                "(o Windows pode pedir permissão — o RDWorks roda como administrador).")
-        n_sheets = sum(1 for f in files if f.lower().endswith(".dxf") and "_placa" in os.path.basename(f).lower())
-        if not path.lower().endswith("_todas_placas.dxf") and n_sheets > 1:
-            msg += f" As outras {n_sheets - 1} placa(s) estão na pasta."
         msg += ("\nSe ele abrir vazio: Arquivo › Importar (Ctrl+I), Ctrl+V e Enter "
                 "— o caminho do arquivo já está copiado.")
         return msg

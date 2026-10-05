@@ -86,10 +86,12 @@ def find_rdworks(saved: Optional[str] = None, extra: Iterable[str] = ()) -> Opti
 
 
 def files_to_open(files: list[str]) -> list[str]:
-    """Qual DXF abrir: o arquivo com todas as placas (se gerado), senão a primeira placa."""
+    """Qual DXF abrir: o arquivo com todas as placas de todos os materiais (o de nome mais curto,
+    sem a etiqueta do material), senão a primeira placa."""
     dxfs = [f for f in files if f.lower().endswith(".dxf")]
-    combined = [f for f in dxfs if f.lower().endswith("_todas_placas.dxf")]
-    return combined or dxfs[:1]
+    combined = sorted((f for f in dxfs if f.lower().endswith("_todas_placas.dxf")),
+                      key=lambda f: len(os.path.basename(f)))
+    return combined[:1] or dxfs[:1]
 
 
 def _shell_execute(exe: str, path: str) -> None:

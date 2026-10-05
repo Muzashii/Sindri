@@ -132,8 +132,8 @@ class ExportDialog(QDialog):
         self.report = QCheckBox("Gerar relatório (PDF + imagem PNG de cada placa)")
         self.report.setChecked(st.value("export/report", "true") == "true")
         self.open_rd = QCheckBox("Abrir no RDWorks depois de exportar")
-        self.open_rd.setToolTip("Abre o RDWorks com o arquivo exportado (com várias placas, o arquivo "
-                                "'todas as placas' se marcado acima, senão a placa 1).")
+        self.open_rd.setToolTip("Abre o RDWorks com um arquivo contendo todas as placas organizadas lado a "
+                                "lado (todos os materiais; os arquivos de cada placa também são salvos).")
         self.open_rd.setChecked(st.value("export/open_rdworks", "true") == "true")
         for c in (self.combined, self.outline, self.inner, self.path, self.report, self.open_rd):
             lay.addWidget(c)

@@ -248,4 +248,21 @@ def export_sheets(parts: list[Part] | dict[str, Part], placements: list[Placemen
             path = os.path.join(out_dir, f"{base_name}{tag}_todas_placas.dxf")
             _finish(doc, path)
             files.append(path)
+        if len(groups) > 1:
+            # um arquivo só com TODAS as placas de todos os materiais, lado a lado
+            # (materiais separados por um espaço maior), para abrir de uma vez no RDWorks
+            doc = _new_doc(version)
+            msp = doc.modelspace()
+            dx = 0.0
+            for g, (mat, sis) in enumerate(groups):
+                if g:
+                    dx += 3 * gap
+                for si in sis:
+                    if sheet_outline:
+                        _plate(msp, params, dx)
+                    emit(msp, [pl for pl in placements if pl.sheet_index == si], dx)
+                    dx += params.sheet_width + gap
+            path = os.path.join(out_dir, f"{base_name}_todas_placas.dxf")
+            _finish(doc, path)
+            files.append(path)
     return files

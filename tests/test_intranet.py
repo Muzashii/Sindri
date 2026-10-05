@@ -174,6 +174,13 @@ def test_materiais_nunca_dividem_placa(tmp_path):
     out = export_sheets(rep.parts, res.placements, params, str(tmp_path), "8759_RM500123", "R2000")
     names = sorted(os.path.basename(f) for f in out)
     assert names == ["8759_RM500123_MDF3mm_placa01.dxf", "8759_RM500123_MDF6mm_placa01.dxf"]
+    # arquivo único com todas as placas de todos os materiais (o que abre no RDWorks)
+    out2 = export_sheets(rep.parts, res.placements, params, str(tmp_path / "c"), "x", "R2000", combined=True)
+    import ezdxf
+    allp = [f for f in out2 if os.path.basename(f) == "x_todas_placas.dxf"]
+    assert len(allp) == 1
+    xs = [e.dxf.center.x for e in ezdxf.readfile(allp[0]).modelspace().query("CIRCLE")]
+    assert max(xs) > params.sheet_width        # a placa de 6mm vem ao lado da de 3mm
     # arrastar uma peça de 6mm para a placa de 3mm é marcado como erro
     cc = CollisionChecker(rep.parts, params)
     pls = [type(p)(**p.to_json()) for p in res.placements]
