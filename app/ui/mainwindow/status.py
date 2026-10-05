@@ -31,8 +31,9 @@ class StatusMixin:
         self.canvas.filter_tag = self.parts_panel.filter_tag
         self.canvas.show_layout(self.pmap, self.placements, self.settings_panel.params(), n, keep_view)
         self.canvas.set_editable(self.worker is None)
-        self._refresh_cut_panel()
-        self._mark_collisions()
+        if self.worker is None:              # enquanto calcula, o encaixe não tem colisões e o checklist recomeça
+            self._refresh_cut_panel()
+            self._mark_collisions()
         self._update_sheet_label()
 
     def _mark_collisions(self) -> int:
@@ -148,4 +149,6 @@ class StatusMixin:
         for b in (self.btn_rot, self.btn_lock, self.btn_del):
             b.setEnabled(editing)
         self.stack.setCurrentIndex(1 if self.parts else 0)
+        self.parts_panel.set_editing(not running)
+        self.settings_panel.setEnabled(not running)
         self._update_sheet_label()

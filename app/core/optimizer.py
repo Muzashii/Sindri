@@ -255,7 +255,7 @@ class GeneticNester:
         limit_ni = self.params.max_generations_without_improvement
 
         executor = None
-        if self.workers and self.workers > 1:
+        if self.workers and self.workers >= 1:
             ctx = mp.get_context("spawn")
             executor = ProcessPoolExecutor(max_workers=self.workers, mp_context=ctx,
                                            initializer=_worker_init,

@@ -83,6 +83,7 @@ def render_sheet(painter: QPainter, target: QRectF, parts: dict[str, Part], plac
                  label_mode: str = "tag"):
     """Desenha a placa. Peças pintadas com a cor da solicitação e o nº escrito em cima."""
     w, h = params.sheet_width, params.sheet_height
+    placements = [pl for pl in placements if pl.sheet_index == sheet]
     s = min(target.width() / w, target.height() / h)
     ox = target.left() + (target.width() - w * s) / 2
     oy = target.top() + (target.height() + h * s) / 2
@@ -136,21 +137,22 @@ def render_sheet(painter: QPainter, target: QRectF, parts: dict[str, Part], plac
     painter.setBrush(Qt.NoBrush)
 
 
-def sheet_stats(parts: dict[str, Part], placements: list[Placement], params: NestParams, sheet: int):
-    pls = [p for p in placements if p.sheet_index == sheet]
-    area = sum(parts[p.part_id].outer.area - sum(h.area for h in parts[p.part_id].holes) for p in pls)
-    return len(pls), area / (params.sheet_width * params.sheet_height)
+def sheet_stats(parts: dict[str, Part], placements: list[Placement], params: NestParams, sheet: int,
+                index=None):
+    from ..core.sheets import SheetIndex
+    idx = index or SheetIndex(parts, placements)
+    return idx.count(sheet), idx.net_area(sheet) / (params.sheet_width * params.sheet_height)
 
 
-def sheet_titles(parts, placements) -> list[tuple[int, int, str, str]]:
+def sheet_titles(parts, placements, index=None) -> list[tuple[int, int, str, str]]:
     """[(índice da placa, nº geral 1..N, título, material)] na ordem do arquivo 'todas as placas'."""
-    from ..core.dxf_export import sheet_groups
-    out, n = [], 0
-    groups = sheet_groups(parts, placements)
-    total = sum(len(sis) for _, sis in groups)
-    for mat, sis in groups:
+    from ..core.sheets import SheetIndex
+    idx = index or SheetIndex(parts, placements)
+    out = []
+    total = len(idx.number)
+    for mat, sis in idx.groups:
         for k, si in enumerate(sis):
-            n += 1
+            n = idx.number[si]
             t = f"Placa {n} — {mat} · {k + 1} de {len(sis)}" if mat else f"Placa {n} de {total}"
             out.append((si, n, t, mat))
     return out
@@ -242,7 +244,7 @@ def _add_clickable_boxes(path: str, boxes: list[tuple[int, QRectF, str]], paint_
         y1, y0 = ph - (m + r.top() * k), ph - (m + r.bottom() * k)
         sz = x1 - x0
 
-        def form(data: bytes):
+        def form(data: bytes, sz=sz):
             st = DecodedStreamObject()
             st.set_data(data)
             st.update({NameObject("/Type"): NameObject("/XObject"), NameObject("/Subtype"): NameObject("/Form"),
@@ -274,7 +276,8 @@ def _add_clickable_boxes(path: str, boxes: list[tuple[int, QRectF, str]], paint_
     tmp = path + ".tmp"
     with open(tmp, "wb") as fh:
         w.write(fh)
-    os.replace(tmp, path)
+    from ..core.fileutil import replace_file
+    replace_file(tmp, path)
     return True
 
 
@@ -284,7 +287,12 @@ def export_pdf(path: str, title: str, parts: dict[str, Part], result: NestResult
     owners = owners_for(parts, pls, requests)
     batch = any(k for k in owners)
     label_mode = "tag" if len([k for k in owners if k]) > 1 else "num"
-    titles = sheet_titles(parts, pls)
+    from ..core.sheets import SheetIndex
+    idx = SheetIndex(parts, pls)
+    titles = sheet_titles(parts, pls, idx)
+    by_tag: dict[str, list] = {}
+    for pl in pls:
+        by_tag.setdefault(parts[pl.part_id].tag, []).append(pl)
     d = _Doc(path, title)
     p = d.p
     row = 46.0                                  # altura de linha das tabelas (px a 150 dpi ≈ 7,8 mm)
@@ -324,7 +332,7 @@ def export_pdf(path: str, title: str, parts: dict[str, Part], result: NestResult
     table_head("Checklist de corte — marque cada placa ao terminar", cols)
     for si, n, stitle, mat in titles:
         d.need(row, lambda: table_head("Checklist de corte (continuação)", cols))
-        cnt, util = sheet_stats(parts, pls, params, si)
+        cnt, util = sheet_stats(parts, pls, params, si, idx)
         d.font(10)
         d.checkbox(40, d.y + (row - cb) / 2, cb, f"placa{n}")
         d.font(10, True)
@@ -334,10 +342,7 @@ def export_pdf(path: str, title: str, parts: dict[str, Part], result: NestResult
         d.text(668, d.y, 102, row, str(cnt))
         d.text(778, d.y, 122, row, f"{100 * util:.0f}%")
         x = 908.0
-        keys = []
-        for pl in pls:
-            if pl.sheet_index == si and parts[pl.part_id].tag not in keys:
-                keys.append(parts[pl.part_id].tag)
+        keys = idx.tags_of_sheet.get(si, [])
         d.font(9, True)
         for k in sorted(keys):
             o = owners.get(k)
@@ -365,9 +370,9 @@ def export_pdf(path: str, title: str, parts: dict[str, Part], result: NestResult
         table_head("Solicitações — separe as peças pela cor e marque ao entregar", cols2)
         for k, o in owners.items():
             d.need(row, lambda: table_head("Solicitações (continuação)", cols2))
-            n_pcs = sum(1 for pl in pls if parts[pl.part_id].tag == k)
-            where = sorted({n for si, n, _, _ in titles for pl in pls
-                            if pl.sheet_index == si and parts[pl.part_id].tag == k})
+            mine = by_tag.get(k, [])
+            n_pcs = len(mine)
+            where = sorted({idx.number[pl.sheet_index] for pl in mine})
             d.checkbox(40, d.y + (row - cb) / 2, cb, f"entregue{o.title}")
             d.swatch(122, d.y + 10, row - 20, o.color)
             d.font(10, True)
@@ -384,7 +389,7 @@ def export_pdf(path: str, title: str, parts: dict[str, Part], result: NestResult
     legend_w = 420.0
     for si, n, stitle, mat in titles:
         d.new_page()
-        cnt, util = sheet_stats(parts, pls, params, si)
+        cnt, util = sheet_stats(parts, pls, params, si, idx)
         d.font(16, True)
         d.text(0, 0, d.W - 260, 48, f"{stitle}")
         d.font(10)
@@ -401,11 +406,10 @@ def export_pdf(path: str, title: str, parts: dict[str, Part], result: NestResult
         d.text(lx, ly, legend_w, 34, "Nesta placa")
         ly += 40
         counts: dict[str, dict[str, int]] = {}
-        for pl in pls:
-            if pl.sheet_index == si:
-                pt = parts[pl.part_id]
-                counts.setdefault(pt.tag, {})
-                counts[pt.tag][pt.id] = counts[pt.tag].get(pt.id, 0) + 1
+        for pl in idx.by_sheet.get(si, ()):
+            pt = parts[pl.part_id]
+            counts.setdefault(pt.tag, {})
+            counts[pt.tag][pt.id] = counts[pt.tag].get(pt.id, 0) + 1
         for k in sorted(counts, key=lambda k: (k == "", k)):
             o = owners[k]
             if ly > d.H - 60:
@@ -455,10 +459,8 @@ def export_pdf(path: str, title: str, parts: dict[str, Part], result: NestResult
         d.text(56, d.y + 6, d.W - 60, row - 6, f"{o.title}   {o.who}" + (f"   ·   {o.extra}" if o.extra else ""))
         d.y += row
         placed: dict[str, list[int]] = {}
-        for si, n, _, _ in titles:
-            for pl in pls:
-                if pl.sheet_index == si and parts[pl.part_id].tag == k:
-                    placed.setdefault(pl.part_id, []).append(n)
+        for pl in sorted(by_tag.get(k, []), key=lambda q: idx.number[q.sheet_index]):
+            placed.setdefault(pl.part_id, []).append(idx.number[pl.sheet_index])
         for pid in sorted(placed, key=lambda x: int("".join(c for c in x if c.isdigit()) or 0)):
             d.need(row, lambda: parts_head(True))
             pt = parts[pid]

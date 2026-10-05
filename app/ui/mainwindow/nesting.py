@@ -4,11 +4,11 @@ from __future__ import annotations
 import copy
 import json
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QMessageBox
 
 from ...core.collision import CollisionChecker
 from ...core.models import NestResult
-from ...core.optimizer import shapes_from_parts
 from ...core.placement import Decoder
 from ...workers.nest_worker import NestWorker
 from ..dialogs import settings
@@ -73,9 +73,11 @@ class NestingMixin:
         self._layout_shown_once = False
         if self.banner.property("kind") == "info":
             self.banner.hide()
-        self.worker = NestWorker(self.parts, p, locked, workers=self.workers)
-        self.worker.bestFound.connect(self.on_best)
-        self.worker.progress.connect(self.on_progress)
+        # o cálculo usa uma cópia das peças (a tela pode mudar enquanto ele roda)
+        self.worker = NestWorker(copy.deepcopy(self.parts), p, copy.deepcopy(locked), workers=self.workers)
+        w = self.worker
+        self.worker.bestFound.connect(lambda r, w=w: self.on_best(r) if w is self.worker else None)
+        self.worker.progress.connect(lambda i, w=w: self.on_progress(i) if w is self.worker else None)
         self.worker.failed.connect(self.on_failed)
         self.worker.finished.connect(lambda w=self.worker: self.on_finished(w))
         self.worker.start()
@@ -99,10 +101,19 @@ class NestingMixin:
         else:
             self.cut_sheets.clear()      # encaixe novo: as placas mudam (entregas continuam valendo)
         self.n_sheets = max(res.sheets_used, max([pl.sheet_index + 1 for pl in self.placements], default=0))
-        self._redraw(keep_view=self._layout_shown_once)
-        self._layout_shown_once = True
+        # agrupa os redesenhos (no máximo ~5 por segundo enquanto calcula)
+        if not hasattr(self, "_best_timer"):
+            self._best_timer = QTimer(self)
+            self._best_timer.setSingleShot(True)
+            self._best_timer.timeout.connect(self._show_best)
+        if not self._best_timer.isActive():
+            self._best_timer.start(0 if not self._layout_shown_once else 200)
         self.btn_export.setEnabled(bool(self.placements))
         self._update_status()
+
+    def _show_best(self):
+        self._redraw(keep_view=self._layout_shown_once)
+        self._layout_shown_once = True
 
     def on_progress(self, info: dict):
         self.generation = info.get("generation", 0)
@@ -122,6 +133,9 @@ class NestingMixin:
             return                        # sinal atrasado de um encaixe antigo
         self.worker = None
         self.dirty = True
+        if getattr(self, "_best_timer", None) is not None:
+            self._best_timer.stop()
+        self._redraw(keep_view=True)          # versão final, com colisões e checklist
         self.canvas.set_editable(True)
         self.schedule_autosave()
         self._update_buttons()
@@ -168,12 +182,20 @@ class NestingMixin:
         self.checker = CollisionChecker(self.parts, p) if self.parts else None
         self.too_big = set()
         if self.parts:
-            dec = Decoder(shapes_from_parts(self.parts, p), p)
+            dec = Decoder(self.checker.cache.shapes, p, cache=self.checker.cache)
             mo = (False, True) if p.allow_mirror else (False,)
             for pt in self.parts:
                 rots = [0.0] if pt.rotation_locked else p.rotations()
                 if not dec.fits_sheet(pt.id, rots, mo):
                     self.too_big.add(pt.id)
+
+    def _params_debounced(self):
+        """Cada passo de um campo numérico espera 150 ms antes de recalcular tudo."""
+        if not hasattr(self, "_params_timer"):
+            self._params_timer = QTimer(self)
+            self._params_timer.setSingleShot(True)
+            self._params_timer.timeout.connect(self.on_params_changed)
+        self._params_timer.start(150)
 
     def on_params_changed(self):
         new = self.settings_panel.params()
@@ -186,8 +208,10 @@ class NestingMixin:
             self._import(self.files, keep_quantities=True)
             return
         if self.parts:
+            old_big = set(self.too_big)
             self._rebuild_checker()
-            self.parts_panel.set_parts(self.parts, self.too_big)
+            if self.too_big != old_big:
+                self.parts_panel.set_parts(self.parts, self.too_big)
             if self.placements:
                 self._redraw(keep_view=(old.sheet_width == new.sheet_width and old.sheet_height == new.sheet_height))
                 if self.worker is None:

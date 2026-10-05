@@ -29,10 +29,5 @@ def part_label(p: Part, many_owners: bool) -> str:
 
 def sheet_numbers(parts: dict, placements) -> dict[int, int]:
     """índice interno da placa -> nº mostrado (mesma ordem do arquivo 'todas as placas' e do relatório)."""
-    from ..core.dxf_export import sheet_groups
-    out, n = {}, 0
-    for _mat, sis in sheet_groups(parts, placements):
-        for si in sis:
-            n += 1
-            out[si] = n
-    return out
+    from ..core.sheets import SheetIndex
+    return SheetIndex(parts, placements).number

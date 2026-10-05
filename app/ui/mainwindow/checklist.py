@@ -1,36 +1,23 @@
 """Checklist de corte: placas cortadas, peças feitas e filtro por solicitação."""
 from __future__ import annotations
 
-from ..owners import sheet_numbers
+from ...core.sheets import SheetIndex, checklist_progress
 
 
 class ChecklistMixin:
+    def sheet_index(self) -> SheetIndex:
+        return SheetIndex(self.pmap, self.placements)
+
     def _refresh_cut_panel(self):
         """Atualiza, na aba Peças, as caixinhas das placas e as peças feitas (e a cor no desenho)."""
-        from ...core.dxf_export import sheet_material
-        sheets = []
-        if self.placements:
-            nums = sheet_numbers(self.pmap, self.placements)
-            for si, n in sorted(nums.items(), key=lambda kv: kv[1]):
-                sheets.append({"si": si, "n": n, "material": sheet_material(self.pmap, self.placements, si),
-                               "count": sum(1 for pl in self.placements if pl.sheet_index == si)})
+        idx = self.sheet_index()
+        sheets = [{"si": si, "n": idx.number[si], "material": idx.material[si], "count": idx.count(si)}
+                  for si in idx.ordered]
         self.parts_panel.set_sheets(sheets, self.cut_sheets)
-        progress = {}
-        for pl in self.placements:
-            c, t = progress.get(pl.part_id, (0, 0))
-            progress[pl.part_id] = (c + (pl.sheet_index in self.cut_sheets), t + 1)
-        self.parts_panel.set_done(self.done_parts, progress)
-        tags = {p.tag for p in self.parts if p.tag}
-        done_tags = {t for t in tags if all(p.id in self.done_parts for p in self.parts if p.tag == t)}
-        tag_prog = {}
-        for pl in self.placements:
-            t = self.pmap[pl.part_id].tag
-            if t:
-                c, n = tag_prog.get(t, (0, 0))
-                ok = pl.part_id in self.done_parts or pl.sheet_index in self.cut_sheets
-                tag_prog[t] = (c + ok, n + 1)
+        per_part, per_tag, done_tags = checklist_progress(idx, self.parts, self.cut_sheets, self.done_parts)
+        self.parts_panel.set_done(self.done_parts, per_part)
         if self.request_info:
-            self.parts_panel.set_request(self.request_info, done_tags, tag_prog)
+            self.parts_panel.set_request(self.request_info, done_tags, per_tag)
         self.canvas.done_parts = self.done_parts
         if self.canvas.mode == "layout":
             for it in self.canvas.part_items:
@@ -44,8 +31,7 @@ class ChecklistMixin:
         on = si not in self.cut_sheets
         self.on_sheet_cut(si, on)
         if on:
-            nums = sheet_numbers(self.pmap, self.placements)
-            order = [s for s, _ in sorted(nums.items(), key=lambda kv: kv[1])]
+            order = self.sheet_index().ordered
             later = [s for s in order[order.index(si) + 1:] if s not in self.cut_sheets] if si in order else []
             nxt = later[0] if later else next((s for s in order if s not in self.cut_sheets), None)
             if nxt is not None:
@@ -71,14 +57,15 @@ class ChecklistMixin:
             return
         if self.placements and self.tabs.currentIndex() != 1:
             self.tabs.setCurrentIndex(1)
-        sheets = sorted({pl.sheet_index for pl in self.placements if self.pmap[pl.part_id].tag == tag})
-        nums = sheet_numbers(self.pmap, self.placements)
-        n = sum(1 for pl in self.placements if self.pmap[pl.part_id].tag == tag)
+        idx = self.sheet_index()
+        mine = [pl for pl in self.placements if self.pmap[pl.part_id].tag == tag]
+        sheets = sorted({pl.sheet_index for pl in mine}, key=lambda s: idx.number.get(s, s))
         if sheets:
             self.goto_sheet(sheets[0])
             self.statusBar().showMessage(
-                f"Solicitação {tag}: {n} peça(s) na(s) placa(s) {', '.join(str(nums.get(s, s + 1)) for s in sheets)}. "
-                "Clique de novo nela para ver todas.", 10000)
+                f"Solicitação {tag}: {len(mine)} peça(s) na(s) placa(s) "
+                f"{', '.join(str(idx.number.get(s, s + 1)) for s in sheets)}. Clique de novo nela para ver todas.",
+                10000)
         else:
             self.statusBar().showMessage(f"Solicitação {tag}: nenhuma peça encaixada ainda.", 6000)
 
@@ -93,10 +80,9 @@ class ChecklistMixin:
     def on_sheet_cut(self, si: int, on: bool):
         """Placa cortada: as peças que só aparecem em placas cortadas ficam como feitas."""
         (self.cut_sheets.add if on else self.cut_sheets.discard)(si)
-        on_sheet = {pl.part_id for pl in self.placements if pl.sheet_index == si}
-        for pid in on_sheet:
-            sheets_of = {pl.sheet_index for pl in self.placements if pl.part_id == pid}
-            if on and sheets_of <= self.cut_sheets:
+        idx = self.sheet_index()
+        for pid in {pl.part_id for pl in idx.by_sheet.get(si, ())}:
+            if on and idx.sheets_of_part.get(pid, set()) <= self.cut_sheets:
                 self.done_parts.add(pid)
             elif not on:
                 self.done_parts.discard(pid)
@@ -105,8 +91,7 @@ class ChecklistMixin:
             self.canvas.set_cut(self.cut_sheets)
         self._refresh_cut_panel()
         self.schedule_autosave()
-        nums = sheet_numbers(self.pmap, self.placements)
-        if on and len(self.cut_sheets) >= len(nums):
+        if on and len(self.cut_sheets) >= len(idx.number):
             self.statusBar().showMessage("Todas as placas cortadas! 🎉", 8000)
 
     def reset_checklist(self):

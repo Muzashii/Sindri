@@ -68,7 +68,8 @@ def apply_theme(app: QApplication, dark: bool) -> None:
     _dark = dark
     _current = dict(DARK if dark else LIGHT)
     t = _current
-    app.setStyle("Fusion")
+    if app.style().objectName().lower() != "fusion":    # trocar o estilo é caro: só na 1ª vez
+        app.setStyle("Fusion")
     f = QFont("Segoe UI")
     f.setPointSize(9)
     app.setFont(f)

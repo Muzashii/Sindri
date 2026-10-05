@@ -161,6 +161,10 @@ class FilesMixin:
         finally:
             if QApplication.overrideCursor():
                 QApplication.restoreOverrideCursor()
+        if files and not rep.files:
+            QMessageBox.critical(self, "Erro ao abrir", "Não foi possível ler os arquivos.\n\n"
+                                 + "\n".join(rep.warnings[:8]))
+            return False
         old_q = {(pt.id, round(pt.area, 1)): pt.quantity for pt in self.parts} if keep_quantities else {}
         clear_graphics_cache()
         self.report = rep
@@ -327,9 +331,19 @@ class FilesMixin:
             self.dirty = False
             self.clear_all(ask=False)        # as peças abertas vêm de arquivos que serão apagados
         size = total_size(files)
-        failed = []
+        failed, no_trash = [], []
         for f in files:
             if not QFile.moveToTrash(f):
+                no_trash.append(f)
+        if no_trash:        # pendrive / rede: sem Lixeira -> só apaga de vez se a pessoa confirmar
+            r = QMessageBox.question(self, "Sem Lixeira",
+                                     f"{len(no_trash)} arquivo(s) estão num local sem Lixeira (pendrive ou rede).\n"
+                                     "Apagar DEFINITIVAMENTE esses arquivos?",
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            for f in no_trash:
+                if r != QMessageBox.Yes:
+                    failed.append(f)
+                    continue
                 try:
                     os.remove(f)
                 except OSError:

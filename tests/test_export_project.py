@@ -138,3 +138,16 @@ def test_exporta_variados_r12_e_r2000(tmp_path):
         assert (types["MTEXT"] == 1) if v == "R2000" else (types["TEXT"] >= 3)
         rep = import_files(out)
         assert sum(p.quantity for p in rep.parts) == sum(p.quantity for p in parts)
+
+
+def test_r12_com_contorno_e_numero(tmp_path):
+    import ezdxf
+    from app.core.dxf_export import export_all_sheets
+    from app.core.models import NestParams
+    from app.core.optimizer import nest
+    from app.core.part_builder import import_files
+    rep = import_files([fx("simples.dxf")])
+    p = NestParams()
+    res = nest(rep.parts, p, time_limit=3, max_generations=1, workers=0, seed=1)
+    f = export_all_sheets(rep.parts, res.placements, p, str(tmp_path), "r12", "R12", sheet_outline=True)
+    assert ezdxf.readfile(f).modelspace().query("LINE[layer=='PLACA']")

@@ -485,11 +485,25 @@ def _same_part(a: _RawPart, b: _RawPart, la, lb, tol: float) -> Optional[float]:
 def group_identical(raw: list[_RawPart], curve_tol: float) -> list[tuple[_RawPart, int]]:
     groups: list[list] = []  # [template, count, linework]
     for rp in raw:
+        # cópias do mesmo objeto (arquivo multiplicado pela quantidade): mesmo grupo, sem comparar
+        same = next((g for g in groups if g[0] is rp), None)
+        if same is not None:
+            same[1] += 1
+            continue
         size = math.sqrt(max(rp.outer.area, 1e-9))
         tol = max(0.2, 3 * curve_tol, 0.002 * size)
-        lw = _linework(rp, curve_tol)
+        lw = None
         for g in groups:
-            if _same_part(g[0], rp, g[2], lw, tol) is not None:
+            a = g[0]
+            # testes baratos antes de calcular os contornos (que custam caro)
+            if a.is_open != rp.is_open or len(a.holes) != len(rp.holes) or a.material != rp.material \
+                    or a.tag != rp.tag or abs(a.outer.area - rp.outer.area) > max(0.5, 0.005 * a.outer.area):
+                continue
+            if lw is None:
+                lw = _linework(rp, curve_tol)
+            if g[2] is None:
+                g[2] = _linework(a, curve_tol)
+            if _same_part(a, rp, g[2], lw, tol) is not None:
                 g[1] += 1
                 break
         else:

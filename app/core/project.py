@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Optional
 
+from .fileutil import replace_file
 from .models import ImportReport, NestParams, NestResult, Part
 from .part_builder import import_files
 
@@ -69,7 +70,7 @@ def save_project(path: str, files: list[str], params: NestParams, parts: list[Pa
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=1)
-    os.replace(tmp, path)
+    replace_file(tmp, path)
 
 
 def load_project(path: str) -> Project:

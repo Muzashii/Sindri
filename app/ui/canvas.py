@@ -409,22 +409,19 @@ class NestCanvas(QGraphicsView):
         self.mode = "layout"
         self.params = params
         n = max(1, n_sheets)
-        from ..core.dxf_export import sheet_material
-        from .owners import sheet_numbers
-        nums = sheet_numbers(parts, placements)
+        from ..core.sheets import SheetIndex
+        idx = SheetIndex(parts, placements)
         for i in range(n):
-            mat = sheet_material(parts, placements, i)
+            mat = idx.material.get(i, "")
             done = i in self.cut_sheets
             s = SheetItem(params, i, self.dark, mat, done)
             self.scene().addItem(s)
             self.sheet_items.append(s)
-            pls = [pl for pl in placements if pl.sheet_index == i]
-            area = sum(parts[pl.part_id].outer.area - sum(h.area for h in parts[pl.part_id].holes)
-                       for pl in pls if pl.part_id in parts)
-            util = area / (params.sheet_width * params.sheet_height)
-            txt = f"Placa {nums.get(i, i + 1)}"
-            sub_txt = (f"{len(pls)} {'peça' if len(pls) == 1 else 'peças'} · {100 * util:.1f}%".replace(".", ",")
-                       if pls else "vazia")
+            cnt = idx.count(i)
+            util = idx.net_area(i) / (params.sheet_width * params.sheet_height)
+            txt = f"Placa {idx.number.get(i, i + 1)}"
+            sub_txt = (f"{cnt} {'peça' if cnt == 1 else 'peças'} · {100 * util:.1f}%".replace(".", ",")
+                       if cnt else "vazia")
             label = SheetLabel(txt, sub_txt, mat, done, params.sheet_width)
             label.setPos(sheet_offset(params, i), params.sheet_height)
             label.index = i

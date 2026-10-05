@@ -180,7 +180,7 @@ class UIBuildMixin:
 
         # ---------------- parâmetros
         self.settings_panel = SettingsPanel()
-        self.settings_panel.paramsChanged.connect(self.on_params_changed)
+        self.settings_panel.paramsChanged.connect(self._params_debounced)
         self.settings_panel.reimportNeeded.connect(self.reimport)
 
         split = QSplitter(Qt.Horizontal)

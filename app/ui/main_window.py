@@ -7,7 +7,7 @@ import json
 from typing import Optional
 
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox
+from PySide6.QtWidgets import QMainWindow, QMessageBox
 
 from ..core.collision import CollisionChecker
 from ..core.models import ImportReport, NestParams, Part, Placement
@@ -95,11 +95,15 @@ class MainWindow(UIBuildMixin, FilesMixin, ProjectMixin, NestingMixin, EditingMi
                 if self.dirty:
                     e.ignore()
                     return
-        settings().setValue("ui/last_params", json.dumps(self.settings_panel.params().to_json()))
+        self._save_params()                           # parâmetros + "fechou normalmente"
+        if getattr(self, "_autosave_timer", None) is not None:
+            self._autosave_timer.stop()
         dlg = getattr(self, "_intranet_dlg", None)
         if dlg is not None:  # a página do navegador precisa sair antes do perfil
+            from PySide6.QtCore import QCoreApplication, QEvent
+            dlg.view.setPage(None)
             dlg.page.deleteLater()
             dlg.deleteLater()
             self._intranet_dlg = None
-            QApplication.processEvents()
+            QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
         e.accept()

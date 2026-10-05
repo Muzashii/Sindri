@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from functools import lru_cache
 
 from PySide6.QtCore import QByteArray, QRectF, Qt
 from PySide6.QtGui import QIcon, QPainter, QPixmap
@@ -44,6 +45,7 @@ def svg(name: str, color: str, stroke: float = 2.0) -> str:
             f'stroke-width="{stroke}" stroke-linecap="round" stroke-linejoin="round">{body}</svg>')
 
 
+@lru_cache(maxsize=1024)
 def pixmap(name: str, color: str, size: int = 18, stroke: float = 2.0) -> QPixmap:
     scale = 2
     pm = QPixmap(size * scale, size * scale)
@@ -56,6 +58,7 @@ def pixmap(name: str, color: str, size: int = 18, stroke: float = 2.0) -> QPixma
     return pm
 
 
+@lru_cache(maxsize=1024)
 def icon(name: str, color: str, size: int = 18, disabled_color: str | None = None) -> QIcon:
     ic = QIcon()
     ic.addPixmap(pixmap(name, color, size), QIcon.Normal)

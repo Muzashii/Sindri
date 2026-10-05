@@ -31,7 +31,6 @@ def test_fluxo_completo(app, tmp_path, monkeypatch):
     QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, str(tmp_path / "cfg"))
     QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(tmp_path / "cfg"))
     from app.ui.main_window import MainWindow
-    from app.ui import main_window as mw
     monkeypatch.setattr(QMessageBox, "exec", lambda self: 0)
     monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.Yes))
     monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: QMessageBox.Yes))

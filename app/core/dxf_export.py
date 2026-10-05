@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 import os
+from functools import lru_cache
 
 import ezdxf
 from ezdxf import bbox as ezbbox
@@ -46,7 +47,16 @@ def order_placements(parts: dict[str, Part], placements: list[Placement]) -> lis
 _ACI_TABLE = None
 
 
+@lru_cache(maxsize=4096)
+def _nearest_aci(rgb: tuple) -> int:
+    return _nearest_aci_impl(rgb)
+
+
 def nearest_aci(rgb) -> int:
+    return _nearest_aci(tuple(rgb))
+
+
+def _nearest_aci_impl(rgb) -> int:
     """Cor ACI mais próxima de um RGB (R12/R2000 não guardam cor RGB; o RDWorks usa a cor)."""
     global _ACI_TABLE
     if _ACI_TABLE is None:
@@ -209,7 +219,11 @@ def _stroke_text(msp, text: str, x: float, y: float, height: float, layer: str, 
     for ch in text.upper():
         for line in _STROKES.get(ch, []):
             pts = [(cx + px * sx, y + py * sy) for px, py in line]
-            msp.add_lwpolyline(pts, dxfattribs=at)
+            if msp.doc.dxfversion == "AC1009":        # R12 não tem LWPOLYLINE
+                for a, b in zip(pts, pts[1:]):
+                    msp.add_line(a, b, dxfattribs=at)
+            else:
+                msp.add_lwpolyline(pts, dxfattribs=at)
         cx += sx + height * 0.3
 
 
@@ -220,22 +234,14 @@ def material_tag(material: str) -> str:
 
 
 def sheet_material(pmap: dict, placements: list[Placement], sheet: int) -> str:
-    mats = [pmap[pl.part_id].material for pl in placements if pl.sheet_index == sheet and pl.part_id in pmap]
-    return max(set(mats), key=mats.count) if mats else ""
+    from .sheets import SheetIndex
+    return SheetIndex(pmap, placements).material.get(sheet, "")
 
 
 def sheet_groups(pmap: dict, placements: list[Placement]) -> list[tuple[str, list[int]]]:
     """[(material, [índices das placas])] na ordem das placas."""
-    out: list[tuple[str, list[int]]] = []
-    for si in sorted({pl.sheet_index for pl in placements}):
-        m = sheet_material(pmap, placements, si)
-        if out and out[-1][0] == m:
-            out[-1][1].append(si)
-        elif any(g[0] == m for g in out):
-            next(g for g in out if g[0] == m)[1].append(si)
-        else:
-            out.append((m, [si]))
-    return out
+    from .sheets import SheetIndex
+    return SheetIndex(pmap, placements).groups
 
 
 def export_sheets(parts: list[Part] | dict[str, Part], placements: list[Placement], params: NestParams,
@@ -296,11 +302,13 @@ def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Plac
     doc = _new_doc(version)
     msp = doc.modelspace()
     dx = 0.0
-    for g, (mat, sis) in enumerate(sheet_groups(pmap, placements)):
+    from .sheets import SheetIndex
+    idx = SheetIndex(pmap, placements)
+    for g, (mat, sis) in enumerate(idx.groups):
         if g:
             dx += 3 * gap
         for si in sis:
-            n_sheet = sum(len(x) for _, x in sheet_groups(pmap, placements)[:g]) + sis.index(si) + 1
+            n_sheet = idx.number[si]
             if sheet_outline:
                 _plate(msp, params, dx)
                 # nº da placa acima dela, na mesma camada cinza do contorno (desativar no RDWorks)

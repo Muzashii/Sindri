@@ -134,6 +134,8 @@ class PartRow(QFrame):
                                      "Clique para marcar a peça inteira como feita.")
 
     def set_progress(self, cut: int, total: int):
+        if getattr(self, "_progress", None) == (cut, total):
+            return
         self._progress = (cut, total)
         self._done_icon()
 
@@ -151,6 +153,8 @@ class PartRow(QFrame):
             w.style().polish(w)
 
     def set_done(self, v: bool):
+        if self.property("done") == v and self.done_btn.isChecked() == v:
+            return                                   # nada mudou: evita repintar a linha
         if self.done_btn.isChecked() != v:
             self.done_btn.blockSignals(True)
             self.done_btn.setChecked(v)
@@ -318,6 +322,14 @@ class PartsPanel(QWidget):
             it = self.list.item(i)
             if it is not None:
                 it.setHidden(bool(self.filter_tag) and r.part.tag != self.filter_tag)
+
+    def set_editing(self, on: bool):
+        """Quantidades e trava de rotação só podem mudar com o encaixe parado."""
+        for r in self.rows:
+            r.spin.setEnabled(on)
+            r.lock.setEnabled(on)
+        self.btn_kits.setEnabled(on and bool(self.parts))
+        self.btn_reset.setEnabled(on and bool(self.parts))
 
     def set_done(self, done: set, progress: dict | None = None):
         self._done = set(done)

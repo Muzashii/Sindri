@@ -21,6 +21,7 @@ class CollisionChecker:
         self.cache = NFPCache(shapes, params.spacing, params.curve_tolerance, params.part_in_part,
                               params.detail)
         self._solids: dict[tuple, Polygon] = {}
+        self._placed: dict[tuple, Polygon] = {}
         half = params.spacing / 2.0
         m = params.margin
         self.usable = box(m - half - 0.01, m - half - 0.01,
@@ -40,15 +41,26 @@ class CollisionChecker:
         return g
 
     def placed(self, pl: Placement) -> Polygon:
-        return affinity.translate(self.solid(pl.part_id, pl.rotation, pl.mirrored), pl.x, pl.y)
+        key = (pl.part_id, round(pl.rotation % 360.0, 4), bool(pl.mirrored), round(pl.x, 4), round(pl.y, 4))
+        g = self._placed.get(key)
+        if g is None:
+            if len(self._placed) > 20000:          # limite de memória: recomeça o cache
+                self._placed.clear()
+            g = affinity.translate(self.solid(pl.part_id, pl.rotation, pl.mirrored), pl.x, pl.y)
+            self._placed[key] = g
+        return g
 
-    def colliding(self, placements: list[Placement]) -> set[int]:
-        """Índices das peças que colidem com outra ou saem da área útil."""
+    def colliding(self, placements: list[Placement], sheets: set[int] | None = None) -> set[int]:
+        """Índices das peças que colidem com outra ou saem da área útil.
+        ``sheets``: confere só essas placas (ao arrastar, só as placas envolvidas)."""
         bad: set[int] = set()
         by_sheet: dict[int, list[int]] = {}
-        geoms = [self.placed(pl) for pl in placements]
+        geoms: dict[int, Polygon] = {}
         for i, pl in enumerate(placements):
+            if sheets is not None and pl.sheet_index not in sheets:
+                continue
             by_sheet.setdefault(pl.sheet_index, []).append(i)
+            geoms[i] = self.placed(pl)
             if not self.usable.covers(geoms[i]):
                 bad.add(i)
         for idxs in by_sheet.values():
@@ -56,7 +68,7 @@ class CollisionChecker:
             mats = [self.material.get(placements[i].part_id, "") for i in idxs]
             if len(set(mats)) > 1:
                 main = max(set(mats), key=mats.count)
-                bad.update(i for i, m in zip(idxs, mats) if m != main)
+                bad.update(i for i, m in zip(idxs, mats, strict=True) if m != main)
             gs = [geoms[i] for i in idxs]
             tree = STRtree(gs)
             for a, i in enumerate(idxs):

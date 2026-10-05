@@ -60,16 +60,22 @@ class EditingMixin:
         if not self.checker:
             return
         pls = []
+        involved: set[int] = set()
         for it in self.canvas.part_items:
-            pl = copy.copy(it.placement)
+            pl = it.placement
             if it.isSelected():
-                s = self.canvas.sheet_at(it.pos().x())
+                involved.add(pl.sheet_index)
+                pl = copy.copy(pl)
+                s = min(self.canvas.sheet_at(it.pos().x()), max(self.n_sheets, 1))   # igual ao soltar
                 pl.sheet_index = s
                 pl.x = it.pos().x() - sheet_offset(self.canvas.params, s)
                 pl.y = it.pos().y()
+                involved.add(s)
             pls.append(pl)
-        bad = self.checker.colliding(pls)
+        bad = self.checker.colliding(pls, involved)          # só as placas envolvidas no arraste
         for i, it in enumerate(self.canvas.part_items):
+            if pls[i].sheet_index not in involved:
+                continue
             c = i in bad
             if c != it.colliding:
                 it.colliding = c
@@ -210,12 +216,12 @@ class EditingMixin:
         locked = all(it.placement.locked for it in items)
         m.addAction("Destravar posição (L)" if locked else "Travar posição (L)", self.toggle_lock_selected)
         sub = m.addMenu("Mover para placa")
-        from ...core.dxf_export import sheet_material
+        idx = self.sheet_index()
         cur = {it.placement.sheet_index for it in items}
         sel_mats = {it.part.material for it in items}
         for i in range(max(1, self.n_sheets)):
-            sm = sheet_material(self.pmap, self.placements, i)
-            act = sub.addAction(f"Placa {i + 1}" + (f" · {sm}" if sm else ""),
+            sm = idx.material.get(i, "")
+            act = sub.addAction(f"Placa {idx.number.get(i, i + 1)}" + (f" · {sm}" if sm else ""),
                                 lambda i=i: self.move_selected_to_sheet(i))
             act.setEnabled(cur != {i} and (not sm or sel_mats <= {sm}))
         sub.addAction("Nova placa", lambda: self.move_selected_to_sheet(self.n_sheets))
@@ -261,6 +267,7 @@ class EditingMixin:
 
     def reset_quantities(self):
         self._push_undo()
+        self.dirty = True
         for p in self.parts:
             p.quantity = p.file_quantity
             self.parts_panel.set_quantity(p.id, p.quantity)
