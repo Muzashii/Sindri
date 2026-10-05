@@ -10,3 +10,6 @@ dist/
 *.spec
 sindri_erro.log
 *.zip
+versao.txt
+_backup_atualizacao/
+*.novo

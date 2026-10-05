@@ -341,6 +341,10 @@ class UIBuildMixin:
             QDesktopServices.openUrl(QUrl.fromLocalFile(unquote(href[5:])))
         elif href == "opts:":
             self.export(ask=True)
+        elif href == "update:":
+            self.install_pending_update()
+        elif href == "later:":
+            self.banner.hide()
         elif href == "recover:":
             self.banner.hide()
             self.recover_autosave()
@@ -424,6 +428,12 @@ class UIBuildMixin:
         self.canvas.show_labels = self.a_labels.isChecked()
 
         act(m_help, "Atalhos de teclado", self.show_shortcuts, "F1")
+        act(m_help, "Procurar atualizações", lambda: self.check_updates(silent=False))
+        a_auto = act(m_help, "Procurar atualizações ao abrir", lambda: None)
+        a_auto.setCheckable(True)
+        from ..prefs import get_bool
+        a_auto.setChecked(get_bool("update/auto_check", True))
+        a_auto.toggled.connect(self.toggle_auto_update)
         act(m_help, "Sobre", self.show_about)
 
     def set_dark(self, dark: bool):

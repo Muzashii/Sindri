@@ -10,6 +10,7 @@ def main() -> int:
     multiprocessing.freeze_support()  # necessário no .exe (PyInstaller) para os processos de cálculo
     if __package__ in (None, ""):
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QApplication
     try:  # o navegador embutido (intranet) precisa ser carregado antes da QApplication
         import PySide6.QtWebEngineWidgets  # noqa: F401
@@ -37,8 +38,8 @@ def main() -> int:
         else:
             win.load_files(files)
     else:
-        from PySide6.QtCore import QTimer
         QTimer.singleShot(400, win.check_autosave_on_start)   # oferece recuperar o último trabalho
+    QTimer.singleShot(1500, win.check_updates)                  # versão nova no GitHub?
     return app.exec()
 
 

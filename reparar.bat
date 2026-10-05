@@ -7,6 +7,11 @@ echo   Sindri - reparar bibliotecas
 echo ==========================================
 echo Pasta: %~dp0
 echo.
+tasklist /fi "imagename eq pythonw.exe" 2>nul | find /i "pythonw.exe" >nul && (
+    echo O Sindri parece estar aberto. Feche o Sindri e rode este arquivo de novo.
+    pause
+    exit /b 1
+)
 if exist "libs\usar_conda.txt" (
     echo Usando o Anaconda: reinstalando as bibliotecas da pasta libs...
     del "libs\usar_conda.txt"

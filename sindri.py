@@ -8,9 +8,19 @@ import sys
 import traceback
 
 
+def _log_dir() -> str:
+    """Pasta gravável para registros (a pasta do programa pode ser somente leitura)."""
+    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    d = os.path.join(base, "Sindri")
+    try:
+        os.makedirs(d, exist_ok=True)
+        return d
+    except OSError:
+        return os.path.dirname(os.path.abspath(sys.executable if getattr(sys, "frozen", False) else __file__))
+
+
 def _log_path() -> str:
-    base = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, "frozen", False) else __file__))
-    return os.path.join(base, "sindri_erro.log")
+    return os.path.join(_log_dir(), "sindri_erro.log")
 
 
 def _report(msg: str) -> None:
@@ -35,10 +45,10 @@ if __name__ == "__main__":
     here = os.path.dirname(os.path.abspath(__file__))
     if here not in sys.path:
         sys.path.insert(0, here)
-    try:
+    try:  # travamentos nativos (Qt/navegador/placa de vídeo) ficam registrados mesmo sem console
         import faulthandler
-        if sys.stderr is not None:
-            faulthandler.enable()
+        _crash = open(os.path.join(_log_dir(), "sindri_travamentos.log"), "a", encoding="utf-8")  # noqa: SIM115
+        faulthandler.enable(file=_crash)
     except Exception:
         pass
     try:

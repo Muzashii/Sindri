@@ -17,6 +17,7 @@ from .mainwindow.checklist import ChecklistMixin
 from .mainwindow.common import APP_NAME
 from .mainwindow.editing import EditingMixin
 from .mainwindow.export import ExportMixin
+from .mainwindow.updates import UpdatesMixin
 from .mainwindow.files import FilesMixin
 from .mainwindow.nesting import NestingMixin
 from .mainwindow.projects import ProjectMixin
@@ -25,7 +26,7 @@ from .mainwindow.ui_build import UIBuildMixin
 
 
 class MainWindow(UIBuildMixin, FilesMixin, ProjectMixin, NestingMixin, EditingMixin, ChecklistMixin,
-                 StatusMixin, ExportMixin, QMainWindow):
+                 StatusMixin, ExportMixin, UpdatesMixin, QMainWindow):
     def __init__(self, workers: Optional[int] = None):
         super().__init__()
         self.setWindowTitle(APP_NAME)
@@ -107,3 +108,6 @@ class MainWindow(UIBuildMixin, FilesMixin, ProjectMixin, NestingMixin, EditingMi
             self._intranet_dlg = None
             QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
         e.accept()
+        if getattr(self, "_restart_after_close", False):
+            from ..core.updater import restart
+            restart()

@@ -111,25 +111,45 @@ Botão **Intranet FIAP** (ou `Ctrl+I`): abre a página de Solicitações Maker n
 
 ## Estrutura
 ```
+sindri.py               lançador (erros em %LOCALAPPDATA%\Sindri\sindri_erro.log)
 app/
-  main.py               inicialização da interface
+  main.py               inicialização da interface (procura atualização no GitHub ao abrir)
   cli.py                linha de comando
-  core/                 núcleo SEM Qt (pode ser trocado por libnest2d/Rust no futuro)
+  core/                 núcleo SEM Qt
     dxf_import.py       leitura, unidades, blocos, cores
     part_builder.py     encadeamento, árvore de contenção, peças idênticas
     geometry.py         discretização, transformações, offset
     nfp.py              No-Fit Polygon / Inner-Fit Polygon com cache
     placement.py        decodificador (posicionamento)
-    optimizer.py        algoritmo genético paralelo
+    optimizer.py        algoritmo genético paralelo (para sozinho sem melhora)
+    sheets.py           índice das placas (numeração, material, andamento do corte)
     validate.py         verificação final com geometria fina
     collision.py        colisão para o ajuste manual
-    dxf_export.py       escrita do DXF final
+    dxf_export.py       escrita do DXF final (todas as placas + nº das placas)
     project.py          salvar/abrir .sindri
+    intranet.py         leitura da intranet FIAP (scripts e organização dos arquivos)
+    rdworks.py          abrir o RDWorks
+    cleanup.py          limpeza de arquivos baixados/exportados
+    updater.py          atualização automática pelo GitHub
     models.py           Part, Placement, NestResult, NestParams
-  ui/                   PySide6: janela, canvas, painéis, diálogos, relatório, tema
+  ui/
+    main_window.py      janela principal (monta as partes abaixo)
+    mainwindow/         partes da janela: ui_build, files, projects, nesting, editing,
+                        checklist, status, export, updates
+    canvas.py           desenho das placas e peças
+    parts_panel.py      lista de peças, placas cortadas e solicitações
+    intranet.py         janela da intranet (navegador embutido)
+    report.py           relatório PDF
+    settings_panel.py, dialogs.py, prefs.py, theme.py, icons.py, owners.py, render.py
   workers/nest_worker.py  thread que coordena o encaixe sem travar a tela
-tests/                  pytest (+ fixtures/make_fixtures.py que gera os DXF de teste)
+tests/                  pytest
 ```
+
+## Atualização automática
+Ao abrir, o Sindri consulta o GitHub (`Muzashii/Sindri`). Se houver versão nova, aparece um aviso com
+**Atualizar agora**: ele baixa o pacote, guarda os arquivos antigos em `_backup_atualizacao`, instala por cima (sem
+tocar em `.venv`/`libs`) e reinicia pelo `executar.bat` (que instala bibliotecas novas, se houver). A versão
+instalada fica em `versao.txt`. Desligar: *Ajuda › Procurar atualizações ao abrir*.
 
 ## Testes
 ```bash

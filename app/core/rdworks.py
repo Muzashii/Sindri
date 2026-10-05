@@ -48,15 +48,22 @@ def _from_registry() -> list[str]:
         prog = read(winreg.HKEY_CLASSES_ROOT, ext)
         if prog:
             cmd = read(winreg.HKEY_CLASSES_ROOT, rf"{prog}\shell\open\command")
-            if cmd:
-                exe = cmd.split('"')[1] if cmd.startswith('"') else cmd.split(" ")[0]
+            exe = exe_from_command(cmd) if cmd else None
+            if exe:
                 found.append(exe)
     for name in EXE_NAMES:
         for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
             v = read(root, rf"Software\Microsoft\Windows\CurrentVersion\App Paths\{name}")
             if v:
-                found.append(v.strip('"'))
+                found.append(os.path.expandvars(str(v)).strip('"'))
     return found
+
+
+def exe_from_command(cmd: str):
+    """'"C:\\Program Files (x86)\\RDWorksV8\\RDWorksV8.exe" "%1"' (com ou sem aspas) -> caminho do .exe."""
+    import re
+    m = re.match(r'\s*"?([^"]+?\.exe)', os.path.expandvars(cmd or ""), re.IGNORECASE)
+    return m.group(1) if m else None
 
 
 def candidates() -> list[str]:
@@ -98,8 +105,19 @@ def _shell_execute(exe: str, path: str) -> None:
     """Abre pelo Windows (ShellExecute): mostra o pedido de permissão (UAC) quando o programa exige
     administrador — o RDWorks exige, e por isso subprocess dá 'WinError 740 ... requer elevação'."""
     import ctypes
-    r = ctypes.windll.shell32.ShellExecuteW(None, "open", exe, f'"{os.path.abspath(path)}"',
-                                            os.path.dirname(exe) or None, 1)
+    from ctypes import wintypes
+    fn = ctypes.windll.shell32.ShellExecuteW
+    fn.restype = ctypes.c_void_p
+    fn.argtypes = [wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.LPCWSTR,
+                   ctypes.c_int]
+    target = os.path.abspath(path)
+    try:                                  # RDWorks é um programa antigo: caminho curto (8.3) evita acentos
+        buf = ctypes.create_unicode_buffer(1024)
+        if ctypes.windll.kernel32.GetShortPathNameW(target, buf, 1024):
+            target = buf.value
+    except Exception:
+        pass
+    r = fn(None, "open", exe, f'"{target}"', os.path.dirname(exe) or None, 1) or 0
     if r <= 32:
         if r == 5:      # acesso negado: o usuário recusou o pedido de permissão
             raise OSError("o pedido de permissão do Windows foi recusado")
