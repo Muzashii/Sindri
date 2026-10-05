@@ -254,12 +254,16 @@ class PartsPanel(QWidget):
         self.parts = list(parts)
         self.list.clear()
         self.rows = []
+        from .owners import owner_colors
+        cols = owner_colors(parts) if len({p.tag for p in parts if p.tag}) > 1 else {}
         for p in parts:
             warns = list(p.warnings)
             if p.id in too_big:
                 warns.append("Maior que a placa em todas as rotações: não será encaixada. "
                              "Aumente a placa, reduza a margem ou confira a unidade do DXF.")
             row = PartRow(p, warns, self.dark, self)
+            if p.tag in cols:
+                row.setStyleSheet(f"QFrame#PartRow {{ border-left: 5px solid {cols[p.tag].name()}; }}")
             it = QListWidgetItem()
             it.setSizeHint(QSize(10, row.sizeHint().height() + 6))
             self.list.addItem(it)

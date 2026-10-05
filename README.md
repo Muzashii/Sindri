@@ -18,6 +18,14 @@ círculos preservados, camadas/cores mantidas e interface em português.
      cima** (numa solicitação só: o nº da peça), e a lista de peças por solicitação para ir marcando. As
      caixinhas funcionam impressas e também clicando no PDF (Edge/Chrome/Acrobat: marque e salve).
 
+**Quem é cada peça e o que já foi cortado (dentro do programa):**
+- No **Encaixe**, cada peça aparece **pintada com a cor da solicitação e com o nº escrito em cima** (numa
+  solicitação só: o nº da peça, o mesmo da lista). `N` liga/desliga os números (menu Exibir).
+- A aba **Corte** (ao lado de *Peças*, `Ctrl+K`) é o checklist: uma linha por placa para marcar ao cortar (a placa
+  fica verde na tela) e uma por solicitação, que avisa "✓ tudo cortado — pode separar" e tem a caixinha
+  *Entregue*. O botão *Ver* leva até a placa. O checklist é salvo junto com o projeto e recomeça quando você
+  encaixa de novo.
+
 Depois do encaixe você pode **arrastar** peças (ficam vermelhas se colidirem), **girar** (`R`), **travar** (`L`) e
 encaixar de novo só o restante, mover entre placas (arraste até a outra placa ou botão direito), remover (`Del`) e
 desfazer/refazer (`Ctrl+Z` / `Ctrl+Y`). O botão **Limpar** (acima da lista de peças, ou `Ctrl+Shift+Del`)

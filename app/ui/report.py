@@ -23,9 +23,7 @@ from shapely.ops import polylabel
 from ..core.models import NestParams, NestResult, Part, Placement
 from .render import part_graphics
 
-# cores das solicitações (distintas do azul/laranja usados para os materiais)
-OWNER_COLORS = ["#0d9488", "#9333ea", "#16a34a", "#db2777", "#ca8a04", "#0891b2", "#a16207",
-                "#65a30d", "#4f46e5", "#dc2626", "#0f766e", "#7c3aed", "#be185d", "#15803d"]
+from .owners import OWNER_COLORS, part_number  # noqa: E402
 RES = 150                      # dpi do PDF
 MARGIN_MM = 12.0
 
@@ -61,12 +59,6 @@ def owners_for(parts: dict[str, Part], placements: list[Placement], requests: li
         if p.tag in out:
             out[p.tag].parts.append(p.id)
     return out
-
-
-def part_number(p: Part) -> str:
-    """'P007' -> '7' (o número curto escrito em cima da peça)."""
-    digits = "".join(ch for ch in p.id if ch.isdigit())
-    return str(int(digits)) if digits else p.id
 
 
 def placed_outline(part: Part, pl: Placement):

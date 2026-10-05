@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (QGraphicsItem, QGraphicsPathItem, QGraphicsScene,
 from ..core.models import NestParams, Part, Placement, Prim
 from ..core.geometry import prim_rgb
 from .render import part_graphics, prim_path
+from .owners import part_label
 from . import theme
 
 RED = QColor(220, 40, 40)
@@ -23,12 +24,13 @@ def sheet_offset(params: NestParams, index: int) -> float:
 
 
 class SheetItem(QGraphicsItem):
-    def __init__(self, params: NestParams, index: int, dark: bool, material: str = ""):
+    def __init__(self, params: NestParams, index: int, dark: bool, material: str = "", done: bool = False):
         super().__init__()
         self.params = params
         self.index = index
         self.dark = dark
         self.material = material
+        self.done = done
         self.setZValue(-10)
         self.setPos(sheet_offset(params, index), 0)
 
@@ -71,14 +73,20 @@ class SheetItem(QGraphicsItem):
         else:
             painter.setPen(QPen(theme.qcolor("sheet_border"), 0))
         painter.drawRect(QRectF(0, 0, w, h))
+        if self.done:
+            painter.fillRect(QRectF(0, 0, w, h), QColor(22, 163, 74, 38))
+            pen = QPen(QColor("#16a34a"), 4)
+            pen.setCosmetic(True)
+            painter.setPen(pen)
+            painter.drawRect(QRectF(0, 0, w, h))
 
 
 class SheetLabel(QGraphicsItem):
     """Etiqueta "Placa N · x peças · y%" acima da placa (tamanho fixo na tela)."""
 
-    def __init__(self, title: str, sub: str, material: str = ""):
+    def __init__(self, title: str, sub: str, material: str = "", done: bool = False):
         super().__init__()
-        self.title, self.sub, self.material = title, sub, material
+        self.title, self.sub, self.material, self.done = title, sub, material, done
         self.setFlag(QGraphicsItem.ItemIgnoresTransformations)
         self.setZValue(5)
         self.f1 = QFont()
@@ -90,7 +98,8 @@ class SheetLabel(QGraphicsItem):
         self.w1 = QFontMetrics(self.f1).horizontalAdvance(title)
         self.w2 = QFontMetrics(self.f2).horizontalAdvance(sub)
         self.w0 = (QFontMetrics(self.f2).horizontalAdvance(material) + 18) if material else 0
-        self.width = self.w0 + self.w1 + self.w2 + 34
+        self.wd = (QFontMetrics(self.f2).horizontalAdvance("✓ cortada") + 18) if done else 0
+        self.width = self.w0 + self.w1 + self.w2 + 34 + (self.wd + 6 if done else 0)
 
     def boundingRect(self) -> QRectF:
         return QRectF(0, -32, self.width, 26)
@@ -117,6 +126,13 @@ class SheetLabel(QGraphicsItem):
         painter.setPen(theme.qcolor("muted"))
         painter.setFont(self.f2)
         painter.drawText(QRectF(x + self.w1 + 10, -32, self.w2 + 4, 24), Qt.AlignVCenter | Qt.AlignLeft, self.sub)
+        if self.done:
+            chip = QRectF(self.width - self.wd - 4, -29, self.wd, 18)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor("#16a34a"))
+            painter.drawRoundedRect(chip, 9, 9)
+            painter.setPen(QColor("white"))
+            painter.drawText(chip, Qt.AlignCenter, "✓ cortada")
 
 
 class PartItem(QGraphicsItem):
@@ -133,6 +149,20 @@ class PartItem(QGraphicsItem):
         self.sync_from_placement()
         tip = f"{part.name}  (#{placement.instance + 1})\nGire com R · trave com L · botão direito: mais opções"
         self.setToolTip(tip)
+        self.label_txt = part_label(part, len(canvas.owner_colors) > 1)
+        self.label_pt = self._label_point()
+
+    def _label_point(self) -> QPointF:
+        from shapely import affinity
+        from shapely.ops import polylabel
+        g = self.part.outer
+        if self.placement.mirrored:
+            g = affinity.scale(g, -1, 1, origin=(0, 0))
+        try:
+            pt = polylabel(g, tolerance=max(0.5, (g.bounds[2] - g.bounds[0]) / 50))
+        except Exception:
+            pt = g.representative_point()
+        return QPointF(pt.x, pt.y)
 
     def sync_from_placement(self):
         pl = self.placement
@@ -154,7 +184,12 @@ class PartItem(QGraphicsItem):
             fill = theme.qcolor("danger")
             fill.setAlpha(120)
         else:
-            fill = theme.qcolor("part_fill")
+            own = self.canvas.owner_colors.get(self.part.tag)
+            if own is not None:
+                fill = QColor(own)
+                fill.setAlpha(150 if dark else 105)
+            else:
+                fill = theme.qcolor("part_fill")
         painter.fillPath(g.fill, QBrush(fill))
         for col, path in g.lines:
             c = col
@@ -175,6 +210,36 @@ class PartItem(QGraphicsItem):
             painter.setPen(pen)
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(g.fill.boundingRect())
+        if self.canvas.show_labels and self.label_txt:
+            self._paint_label(painter)
+
+    def _paint_label(self, painter: QPainter):
+        """Nº da solicitação (ou da peça) em cima da peça, sempre legível (texto sem espelhar)."""
+        t = painter.worldTransform()
+        br = t.mapRect(self.gfx.rect)
+        txt = self.label_txt
+        size = min(br.height() * 0.38, br.width() / max(1.0, 0.66 * len(txt)), 26.0)
+        if size < 7:
+            return
+        c = t.map(self.label_pt)
+        painter.save()
+        painter.resetTransform()
+        f = QFont()
+        f.setBold(True)
+        f.setPixelSize(int(size))
+        painter.setFont(f)
+        from PySide6.QtGui import QFontMetricsF
+        fm = QFontMetricsF(f)
+        w = fm.horizontalAdvance(txt) + 8
+        r = QRectF(c.x() - w / 2, c.y() - fm.height() / 2, w, fm.height())
+        own = self.canvas.owner_colors.get(self.part.tag)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(255, 255, 255, 225))
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.drawRoundedRect(r, 4, 4)
+        painter.setPen(own.darker(150) if own is not None else QColor("#1f2937"))
+        painter.drawText(r, Qt.AlignCenter, txt)
+        painter.restore()
 
     def itemChange(self, change, value):
         if change == QGraphicsItem.ItemPositionHasChanged and not getattr(self, "_syncing", False):
@@ -275,6 +340,10 @@ class NestCanvas(QGraphicsView):
             self.scene().addItem(item)
         self.fit_all()
 
+    owner_colors: dict = {}
+    show_labels: bool = True
+    cut_sheets: set = set()
+
     def show_layout(self, parts: dict[str, Part], placements: list[Placement], params: NestParams,
                     n_sheets: int, keep_view: bool = False):
         old = self.transform() if keep_view else None
@@ -285,20 +354,21 @@ class NestCanvas(QGraphicsView):
         self.params = params
         n = max(1, n_sheets)
         from ..core.dxf_export import sheet_material
-        mat_count: dict = {}
+        from .owners import sheet_numbers
+        nums = sheet_numbers(parts, placements)
         for i in range(n):
             mat = sheet_material(parts, placements, i)
-            s = SheetItem(params, i, self.dark, mat)
+            done = i in self.cut_sheets
+            s = SheetItem(params, i, self.dark, mat, done)
             self.scene().addItem(s)
             self.sheet_items.append(s)
             pls = [pl for pl in placements if pl.sheet_index == i]
             area = sum(parts[pl.part_id].outer.area - sum(h.area for h in parts[pl.part_id].holes)
                        for pl in pls if pl.part_id in parts)
             util = area / (params.sheet_width * params.sheet_height)
-            mat_count[mat] = mat_count.get(mat, 0) + 1
-            txt = f"Placa {mat_count[mat]}" if mat else f"Placa {i + 1}"
+            txt = f"Placa {nums.get(i, i + 1)}"
             sub_txt = (f"{len(pls)} peças · {100 * util:.1f}%".replace(".", ",")) if pls else "vazia"
-            label = SheetLabel(txt, sub_txt, mat)
+            label = SheetLabel(txt, sub_txt, mat, done)
             label.setPos(sheet_offset(params, i), params.sheet_height)
             self.scene().addItem(label)
         for pl in placements:

@@ -116,6 +116,15 @@ def test_fluxo_completo(app, tmp_path, monkeypatch):
     # só dois arquivos: todas as placas + relatório
     assert sorted(f for f in os.listdir(tmp_path) if f.startswith("t_")) == ["t_relatorio.pdf", "t_todas_placas.dxf"]
 
+    # checklist de corte (aba "Corte")
+    first = min(pl.sheet_index for pl in w.placements)
+    w.on_sheet_cut(first, True)
+    assert first in w.cut_sheets and w.left_tabs.tabText(1).startswith("Corte 1/")
+    assert w.cut_panel.sheet_boxes[first].isChecked()
+    assert any(it.done for it in w.canvas.sheet_items if it.index == first)
+    w.reset_checklist()
+    assert not w.cut_sheets and w.left_tabs.tabText(1).startswith("Corte 0/")
+
     w.set_dark(True)
     w.set_dark(False)
 

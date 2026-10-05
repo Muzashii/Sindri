@@ -30,12 +30,14 @@ class Project:
     materials: dict = field(default_factory=dict)
     request: Optional[dict] = None
     tags: dict = field(default_factory=dict)
+    checklist: dict = field(default_factory=dict)
 
 
 def save_project(path: str, files: list[str], params: NestParams, parts: list[Part],
                  result: Optional[NestResult], multipliers: Optional[dict] = None,
                  label: Optional[str] = None, materials: Optional[dict] = None,
-                 request: Optional[dict] = None, tags: Optional[dict] = None) -> None:
+                 request: Optional[dict] = None, tags: Optional[dict] = None,
+                 checklist: Optional[dict] = None) -> None:
     base = os.path.dirname(os.path.abspath(path))
     data = {
         "format": FORMAT,
@@ -51,6 +53,7 @@ def save_project(path: str, files: list[str], params: NestParams, parts: list[Pa
         "label": label,
         "materials": [[os.path.relpath(os.path.abspath(k), base), v] for k, v in (materials or {}).items()],
         "request": request,
+        "checklist": checklist or {},
         "tags": [[os.path.relpath(os.path.abspath(k), base), v] for k, v in (tags or {}).items()],
     }
     tmp = path + ".tmp"
@@ -117,4 +120,4 @@ def load_project(path: str) -> Project:
             warnings.append("O resultado salvo não corresponde às peças atuais e foi descartado.")
             result = None
     return Project(files, params, report.parts, result, report, sorted(set(warnings)), multipliers,
-                   data.get("label"), materials, data.get("request"), tags)
+                   data.get("label"), materials, data.get("request"), tags, data.get("checklist") or {})
