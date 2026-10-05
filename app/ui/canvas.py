@@ -194,7 +194,7 @@ class PartItem(QGraphicsItem):
         if self.colliding:
             fill = theme.qcolor("danger")
             fill.setAlpha(120)
-        elif self.part.id in self.canvas.done_parts:
+        elif self._is_done():
             fill = QColor(148, 163, 184, 150)            # peça feita: cinza
         else:
             own = self.canvas.owner_colors.get(self.part.tag)
@@ -226,11 +226,15 @@ class PartItem(QGraphicsItem):
         if self.canvas.show_labels and self.label_txt:
             self._paint_label(painter)
 
+    def _is_done(self) -> bool:
+        """Feita: o tipo de peça foi marcado como feito ou esta cópia está numa placa já cortada."""
+        return self.part.id in self.canvas.done_parts or self.placement.sheet_index in self.canvas.cut_sheets
+
     def _paint_label(self, painter: QPainter):
         """Nº da solicitação (ou da peça) em cima da peça, sempre legível (texto sem espelhar)."""
         t = painter.worldTransform()
         br = t.mapRect(self.gfx.rect)
-        done = self.part.id in self.canvas.done_parts
+        done = self._is_done()
         txt = ("✓ " + self.label_txt) if done else self.label_txt
         size = min(br.height() * 0.38, br.width() / max(1.0, 0.66 * len(txt)), 26.0)
         if size < 7:
@@ -418,6 +422,8 @@ class NestCanvas(QGraphicsView):
         for lb in self.sheet_labels:
             if lb.done != (lb.index in cut):
                 lb.set_done(lb.index in cut)
+        for it in self.part_items:
+            it.update()
 
     def set_editable(self, editable: bool):
         self.editable = editable

@@ -1170,7 +1170,11 @@ class MainWindow(QMainWindow):
                 sheets.append({"si": si, "n": n, "material": sheet_material(self.pmap, self.placements, si),
                                "count": sum(1 for pl in self.placements if pl.sheet_index == si)})
         self.parts_panel.set_sheets(sheets, self.cut_sheets)
-        self.parts_panel.set_done(self.done_parts)
+        progress = {}
+        for pl in self.placements:
+            c, t = progress.get(pl.part_id, (0, 0))
+            progress[pl.part_id] = (c + (pl.sheet_index in self.cut_sheets), t + 1)
+        self.parts_panel.set_done(self.done_parts, progress)
         tags = {p.tag for p in self.parts if p.tag}
         done_tags = {t for t in tags if all(p.id in self.done_parts for p in self.parts if p.tag == t)}
         if self.request_info:

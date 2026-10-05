@@ -118,6 +118,18 @@ class PartRow(QFrame):
     def _done_icon(self):
         on = self.done_btn.isChecked()
         self.done_btn.setIcon(icon("check", "#ffffff" if on else theme.tokens()["muted"], 14))
+        prog = getattr(self, "_progress", None)
+        if on or not prog or prog[0] == 0:
+            self.done_btn.setText(" Feito")
+            self.done_btn.setToolTip("Marque quando esta peça já tiver sido cortada")
+        else:
+            self.done_btn.setText(f" {prog[0]}/{prog[1]}")
+            self.done_btn.setToolTip(f"{prog[0]} de {prog[1]} cópias já estão em placas cortadas.\n"
+                                     "Clique para marcar a peça inteira como feita.")
+
+    def set_progress(self, cut: int, total: int):
+        self._progress = (cut, total)
+        self._done_icon()
 
     def _done_toggled(self, v: bool):
         self._apply_done(v)
@@ -268,9 +280,11 @@ class PartsPanel(QWidget):
             self.sheet_checks[s["si"]] = cb
             self.sheets_grid.addWidget(cb, i // cols, i % cols)
 
-    def set_done(self, done: set):
+    def set_done(self, done: set, progress: dict | None = None):
         self._done = set(done)
+        self._progress = dict(progress or {})
         for r in self.rows:
+            r.set_progress(*self._progress.get(r.part.id, (0, 0)))
             r.set_done(r.part.id in done)
         n = sum(1 for p in self.parts if p.id in done)
         self._done_count = n
@@ -368,7 +382,9 @@ class PartsPanel(QWidget):
             self.list.blockSignals(False)
             self.rows[cur].set_selected(True)
         done = getattr(self, "_done", set())
+        prog = getattr(self, "_progress", {})
         for r in self.rows:
+            r.set_progress(*prog.get(r.part.id, (0, 0)))
             if r.part.id in done:
                 r.set_done(True)
         self._done_count = sum(1 for p in self.parts if p.id in done)
