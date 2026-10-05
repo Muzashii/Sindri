@@ -131,7 +131,11 @@ class ExportDialog(QDialog):
         self.path.setChecked(st.value("export/path", "true") == "true")
         self.report = QCheckBox("Gerar relatório (PDF + imagem PNG de cada placa)")
         self.report.setChecked(st.value("export/report", "true") == "true")
-        for c in (self.combined, self.outline, self.inner, self.path, self.report):
+        self.open_rd = QCheckBox("Abrir no RDWorks depois de exportar")
+        self.open_rd.setToolTip("Abre o RDWorks com o arquivo exportado (com várias placas, o arquivo "
+                                "'todas as placas' se marcado acima, senão a placa 1).")
+        self.open_rd.setChecked(st.value("export/open_rdworks", "true") == "true")
+        for c in (self.combined, self.outline, self.inner, self.path, self.report, self.open_rd):
             lay.addWidget(c)
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.button(QDialogButtonBox.Ok).setText("Exportar")
@@ -153,6 +157,7 @@ class ExportDialog(QDialog):
         st.setValue("export/inner", "true" if self.inner.isChecked() else "false")
         st.setValue("export/path", "true" if self.path.isChecked() else "false")
         st.setValue("export/report", "true" if self.report.isChecked() else "false")
+        st.setValue("export/open_rdworks", "true" if self.open_rd.isChecked() else "false")
         if not self.base.text().strip():
             self.base.setText("projeto")
         self.accept()
@@ -163,4 +168,4 @@ class ExportDialog(QDialog):
                 "version": self.version.currentData(),
                 "combined": self.combined.isChecked(), "outline": self.outline.isChecked(),
                 "inner": self.inner.isChecked(), "path": self.path.isChecked(),
-                "report": self.report.isChecked()}
+                "report": self.report.isChecked(), "open_rdworks": self.open_rd.isChecked()}

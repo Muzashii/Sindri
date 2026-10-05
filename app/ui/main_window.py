@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QFrame, QHB
 
 from ..core.collision import CollisionChecker
 from ..core.dxf_export import export_sheets
+from ..core.rdworks import files_to_open, find_rdworks, launch
 from ..core.models import ImportReport, NestParams, NestResult, Part, Placement
 from ..core.optimizer import shapes_from_parts
 from ..core.part_builder import import_files
@@ -1390,10 +1391,11 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Erro ao exportar", f"Não foi possível salvar os arquivos:\n{e}")
             return
         QApplication.restoreOverrideCursor()
+        opened = self._open_in_rdworks(files) if o.get("open_rdworks") else ""
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Information)
         box.setWindowTitle("Exportado")
-        box.setText(f"{len(files)} arquivo(s) salvos em:\n{o['folder']}")
+        box.setText(f"{len(files)} arquivo(s) salvos em:\n{o['folder']}" + (f"\n\n{opened}" if opened else ""))
         box.setDetailedText("\n".join(os.path.basename(f) for f in files))
         if o["outline"]:
             box.setInformativeText("Lembrete: desative a camada PLACA (cinza) no RDWorks para não cortá-la.")
@@ -1402,6 +1404,38 @@ class MainWindow(QMainWindow):
         box.exec()
         if box.clickedButton() == open_btn:
             QDesktopServices.openUrl(QUrl.fromLocalFile(o["folder"]))
+
+    def _open_in_rdworks(self, files: list[str]) -> str:
+        """Abre o DXF exportado no RDWorks. Devolve uma frase para a mensagem final."""
+        targets = files_to_open(files)
+        if not targets:
+            return ""
+        st = settings()
+        exe = find_rdworks(st.value("rdworks/exe", "") or None)
+        if not exe:
+            QMessageBox.information(self, "Onde está o RDWorks?",
+                                    "Não encontrei o RDWorks neste computador.\n"
+                                    "Mostre onde está o RDWorksV8.exe (só precisa fazer isso uma vez).")
+            exe, _ = QFileDialog.getOpenFileName(self, "Localizar o RDWorks",
+                                                 os.environ.get("ProgramFiles(x86)", "C:\\"),
+                                                 "Programa (*.exe)")
+            if not exe:
+                return "O RDWorks não foi aberto (programa não localizado)."
+        st.setValue("rdworks/exe", exe)
+        path = targets[0]
+        QApplication.clipboard().setText(os.path.abspath(path))
+        try:
+            launch(exe, path)
+        except OSError as e:
+            st.remove("rdworks/exe")
+            return f"Não foi possível abrir o RDWorks: {e}"
+        msg = f"Abrindo {os.path.basename(path)} no RDWorks."
+        n_sheets = sum(1 for f in files if f.lower().endswith(".dxf") and "_placa" in os.path.basename(f).lower())
+        if not path.lower().endswith("_todas_placas.dxf") and n_sheets > 1:
+            msg += f" As outras {n_sheets - 1} placa(s) estão na pasta."
+        msg += ("\nSe ele abrir vazio: Arquivo › Importar (Ctrl+I), Ctrl+V e Enter "
+                "— o caminho do arquivo já está copiado.")
+        return msg
 
     # ------------------------------------------------------------------ ajuda
     def show_shortcuts(self):

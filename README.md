@@ -11,7 +11,9 @@ círculos preservados, camadas/cores mantidas e interface em português.
 2. Escolha a **placa** no topo e clique em **▶ Encaixar** (`Espaço`). A melhor solução aparece e vai melhorando ao vivo.
    Clique em **⏹ Parar** quando estiver bom.
 3. Clique em **⬇ Exportar para RDWorks** (`Ctrl+E`). Sai um DXF por placa (`projeto_placa01.dxf`, …) e, se quiser, um
-   relatório PDF/PNG.
+   relatório PDF/PNG. Com **Abrir no RDWorks depois de exportar** (padrão), o RDWorks já abre com o arquivo
+   (o de todas as placas, se gerado, senão a placa 1). Na primeira vez, se ele não for encontrado, o Sindri pede
+   para você mostrar o `RDWorksV8.exe`.
 
 Depois do encaixe você pode **arrastar** peças (ficam vermelhas se colidirem), **girar** (`R`), **travar** (`L`) e
 encaixar de novo só o restante, mover entre placas (arraste até a outra placa ou botão direito), remover (`Del`) e
