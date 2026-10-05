@@ -194,6 +194,8 @@ class PartItem(QGraphicsItem):
         if self.colliding:
             fill = theme.qcolor("danger")
             fill.setAlpha(120)
+        elif self.part.id in self.canvas.done_parts:
+            fill = QColor(148, 163, 184, 150)            # peça feita: cinza
         else:
             own = self.canvas.owner_colors.get(self.part.tag)
             if own is not None:
@@ -228,7 +230,8 @@ class PartItem(QGraphicsItem):
         """Nº da solicitação (ou da peça) em cima da peça, sempre legível (texto sem espelhar)."""
         t = painter.worldTransform()
         br = t.mapRect(self.gfx.rect)
-        txt = self.label_txt
+        done = self.part.id in self.canvas.done_parts
+        txt = ("✓ " + self.label_txt) if done else self.label_txt
         size = min(br.height() * 0.38, br.width() / max(1.0, 0.66 * len(txt)), 26.0)
         if size < 7:
             return
@@ -248,7 +251,7 @@ class PartItem(QGraphicsItem):
         painter.setBrush(QColor(255, 255, 255, 225))
         painter.setRenderHint(QPainter.Antialiasing)
         painter.drawRoundedRect(r, 4, 4)
-        painter.setPen(own.darker(150) if own is not None else QColor("#1f2937"))
+        painter.setPen(QColor("#15803d") if done else (own.darker(150) if own is not None else QColor("#1f2937")))
         painter.drawText(r, Qt.AlignCenter, txt)
         painter.restore()
 
@@ -356,6 +359,7 @@ class NestCanvas(QGraphicsView):
     owner_colors: dict = {}
     show_labels: bool = True
     cut_sheets: set = set()
+    done_parts: set = set()
 
     def show_layout(self, parts: dict[str, Part], placements: list[Placement], params: NestParams,
                     n_sheets: int, keep_view: bool = False):

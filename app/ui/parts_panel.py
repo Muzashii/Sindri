@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtWidgets import (QAbstractItemView, QFrame, QHBoxLayout, QLabel, QListWidget,
-                               QListWidgetItem, QPushButton, QSpinBox, QToolButton, QVBoxLayout,
+from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QFrame, QGridLayout, QHBoxLayout, QLabel,
+                               QListWidget, QListWidgetItem, QPushButton, QSpinBox, QToolButton, QVBoxLayout,
                                QWidget)
 
 from ..core.models import Part
@@ -86,7 +86,17 @@ class PartRow(QFrame):
         self.lock.setFixedWidth(70)
         self.panel = panel
         ctl.addWidget(self.lock)
+        self.done_btn = QToolButton()
+        self.done_btn.setObjectName("DoneButton")
+        self.done_btn.setCheckable(True)
+        self.done_btn.setText(" Feito")
+        self.done_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.done_btn.setFixedWidth(70)
+        self.done_btn.setToolTip("Marque quando esta peça já tiver sido cortada")
+        self.done_btn.toggled.connect(self._done_toggled)
+        ctl.addWidget(self.done_btn)
         lay.addLayout(ctl)
+        self._done_icon()
 
         tips = [part.name, f"{_fmt(w)} × {_fmt(h)} mm · área {part.area / 100:.1f} cm²",
                 f"Arquivo: {part.source_file.replace(chr(92), '/').split('/')[-1]}"]
@@ -105,6 +115,30 @@ class PartRow(QFrame):
         self.lock.setText(" Fixa" if v else " Girar")
         self.panel.rotationLockChanged.emit(self.part.id, v)
 
+    def _done_icon(self):
+        on = self.done_btn.isChecked()
+        self.done_btn.setIcon(icon("check", "#ffffff" if on else theme.tokens()["muted"], 14))
+
+    def _done_toggled(self, v: bool):
+        self._apply_done(v)
+        self.panel.doneChanged.emit(self.part.id, v)
+
+    def _apply_done(self, v: bool):
+        self._done_icon()
+        self.setProperty("done", v)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        for w in self.findChildren(QLabel):
+            w.style().unpolish(w)
+            w.style().polish(w)
+
+    def set_done(self, v: bool):
+        if self.done_btn.isChecked() != v:
+            self.done_btn.blockSignals(True)
+            self.done_btn.setChecked(v)
+            self.done_btn.blockSignals(False)
+        self._apply_done(v)
+
     def set_selected(self, sel: bool):
         self.setProperty("selected", sel)
         self.style().unpolish(self)
@@ -115,6 +149,8 @@ class PartsPanel(QWidget):
     quantityChanged = Signal(str, int)
     rotationLockChanged = Signal(str, bool)
     partSelected = Signal(str)
+    doneChanged = Signal(str, bool)       # peça marcada como feita (cortada)
+    sheetToggled = Signal(int, bool)      # placa marcada como cortada
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -156,6 +192,22 @@ class PartsPanel(QWidget):
         rc.addLayout(self.req_mats)
         self.req_card.hide()
         lay.addWidget(self.req_card)
+        # placas cortadas (aparece depois do encaixe)
+        self.sheets_box = QFrame()
+        self.sheets_box.setObjectName("SheetsBox")
+        sb = QVBoxLayout(self.sheets_box)
+        sb.setContentsMargins(10, 8, 10, 8)
+        sb.setSpacing(4)
+        self.sheets_title = QLabel("Placas cortadas")
+        self.sheets_title.setObjectName("SheetsTitle")
+        sb.addWidget(self.sheets_title)
+        self.sheets_grid = QGridLayout()
+        self.sheets_grid.setHorizontalSpacing(10)
+        self.sheets_grid.setVerticalSpacing(2)
+        sb.addLayout(self.sheets_grid)
+        self.sheets_box.hide()
+        lay.addWidget(self.sheets_box)
+        self.sheet_checks: dict[int, QCheckBox] = {}
         self.summary = QLabel("Nenhum arquivo aberto")
         self.summary.setObjectName("Muted")
         self.summary.setWordWrap(True)
@@ -187,11 +239,50 @@ class PartsPanel(QWidget):
         self.dark = False
         self._update_empty()
 
-    def set_request(self, info: dict | None):
+    def set_sheets(self, sheets: list[dict], cut: set):
+        """Caixinhas 'Placa 1 · MDF 3mm' para marcar as placas já cortadas."""
+        while self.sheets_grid.count():
+            w = self.sheets_grid.takeAt(0).widget()
+            if w:
+                w.hide()
+                w.setParent(None)
+                w.deleteLater()
+        self.sheet_checks = {}
+        self.sheets_box.setVisible(bool(sheets))
+        if not sheets:
+            return
+        done = sum(1 for s in sheets if s["si"] in cut)
+        self.sheets_title.setText(f"Placas cortadas  ·  {done} de {len(sheets)}")
+        cols = 2 if len(sheets) > 1 else 1
+        for i, s in enumerate(sheets):
+            mat = s.get("material") or ""
+            short = mat.replace("MDF ", "") if mat else ""
+            cb = QCheckBox(f"Placa {s['n']}" + (f" · {short}" if short else ""))
+            cb.setToolTip(f"Placa {s['n']}" + (f" · {mat}" if mat else "") + f" · {s['count']} peças\n"
+                          "Marque quando terminar de cortar: as peças que só estão em placas cortadas "
+                          "ficam como feitas.")
+            cb.setChecked(s["si"] in cut)
+            if s["si"] in cut:
+                cb.setStyleSheet("color: #16a34a; font-weight: 700;")
+            cb.toggled.connect(lambda on, si=s["si"]: self.sheetToggled.emit(si, on))
+            self.sheet_checks[s["si"]] = cb
+            self.sheets_grid.addWidget(cb, i // cols, i % cols)
+
+    def set_done(self, done: set):
+        self._done = set(done)
+        for r in self.rows:
+            r.set_done(r.part.id in done)
+        n = sum(1 for p in self.parts if p.id in done)
+        self._done_count = n
+        self.update_summary()
+
+    def set_request(self, info: dict | None, done_tags: set | None = None):
         """Cartão com nº da solicitação, RM, aluno e projeto (arquivos vindos da intranet)."""
         while self.req_mats.count():
             w = self.req_mats.takeAt(0).widget()
             if w:
+                w.hide()
+                w.setParent(None)
                 w.deleteLater()
         if not info:
             self.req_card.hide()
@@ -199,8 +290,10 @@ class PartsPanel(QWidget):
         if info.get("batch"):
             reqs = info.get("requests", [])
             self.req_title.setText(f"Lote · {len(reqs)} solicitações")
-            self.req_line1.setText("\n".join(f"{r.get('code', '')}  ·  RM {r.get('rm', '—')}  ·  {r.get('nome', '')}"
-                                             for r in reqs))
+            dt = done_tags or set()
+            self.req_line1.setText("\n".join(
+                ("✓ " if str(r.get("code", "")) in dt else "") +
+                f"{r.get('code', '')}  ·  RM {r.get('rm', '—')}  ·  {r.get('nome', '')}" for r in reqs))
             self.req_line2.hide()
             for m in info.get("materials", []):
                 chip = QLabel(m)
@@ -274,6 +367,11 @@ class PartsPanel(QWidget):
             self.list.setCurrentRow(cur)
             self.list.blockSignals(False)
             self.rows[cur].set_selected(True)
+        done = getattr(self, "_done", set())
+        for r in self.rows:
+            if r.part.id in done:
+                r.set_done(True)
+        self._done_count = sum(1 for p in self.parts if p.id in done)
         self._update_empty()
         self.update_summary(too_big=too_big)
         self.refresh_icons()
@@ -294,6 +392,9 @@ class PartsPanel(QWidget):
         nwarn = sum(1 for p in self.parts if p.warnings) + len(too_big or ())
         if nwarn:
             txt += f" · ⚠ {nwarn} com aviso"
+        nd = getattr(self, "_done_count", 0)
+        if nd:
+            txt += f" · ✓ {nd} de {len(self.parts)} feita(s)"
         self.summary.setText(txt)
 
     def select_part(self, pid: str):

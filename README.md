@@ -20,10 +20,11 @@ círculos preservados, camadas/cores mantidas e interface em português.
 
 **Quem é cada peça e o que já foi cortado (dentro do programa):**
 - No **Encaixe**, cada peça aparece **pintada com a cor da solicitação e com o nº escrito em cima** (numa
-  solicitação só: o nº da peça, o mesmo da lista). `N` liga/desliga os números (menu Exibir).
-- A aba **Corte** (ao lado de *Peças*, `Ctrl+K`) é o checklist: uma linha por placa para marcar ao cortar (a placa
-  fica verde na tela) e uma por solicitação, que avisa "✓ tudo cortado — pode separar" e tem a caixinha
-  *Entregue*. O botão *Ver* leva até a placa. O checklist é salvo junto com o projeto.
+  solicitação só: o nº da peça). `N` liga/desliga os números (menu Exibir).
+- Na lista de **Peças**, cada peça tem o botão **Feito**: marcada, a linha fica verde e a peça fica cinza com ✓ no
+  desenho. Acima da lista, **Placas cortadas** tem uma caixinha por placa; marcar uma placa marca como feitas as
+  peças que só estão em placas cortadas. Num lote, a solicitação ganha ✓ no cartão quando todas as peças dela
+  estão feitas. Tudo é salvo junto com o projeto.
 - **Encaixar de novo com placas já cortadas** pergunta: *Só o que falta* (as placas cortadas ficam como estão e
   não recebem peças novas; o resto é reorganizado) ou *Tudo de novo*.
 - **Salvamento automático**: o encaixe e o checklist são guardados sozinhos em `Documentos\Sindri\

@@ -26,7 +26,6 @@ from ..workers.nest_worker import NestWorker
 from .canvas import NestCanvas, sheet_offset
 from .dialogs import CleanupDialog, ExportDialog, PresetsDialog, load_presets, save_presets, settings
 from .parts_panel import PartsPanel
-from .cut_panel import CutPanel
 from .owners import owner_colors, sheet_numbers
 from .render import clear_graphics_cache
 from .report import export_pdf
@@ -93,7 +92,8 @@ class MainWindow(QMainWindow):
         self.file_materials: dict[str, str] = {}
         self.file_tags: dict[str, str] = {}
         self.cut_sheets: set[int] = set()        # placas já cortadas (checklist)
-        self.delivered: set[str] = set()         # solicitações entregues
+        self.delivered: set[str] = set()         # (projetos antigos)
+        self.done_parts: set[str] = set()        # peças marcadas como feitas (cortadas)
         self.request_label: Optional[str] = None
         self.request_info: Optional[dict] = None
         self.generation = 0
@@ -232,17 +232,6 @@ class MainWindow(QMainWindow):
         head.addWidget(self.sheet_label)
         head.addWidget(self.btn_next)
         head.addWidget(self.btn_fit)
-        head.addWidget(self._vsep())
-        # marcar placas cortadas direto daqui (o mesmo checklist da aba "Corte")
-        self.btn_cut = QToolButton()
-        self.btn_cut.setObjectName("CutButton")
-        self.btn_cut.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        self.btn_cut.setPopupMode(QToolButton.InstantPopup)
-        self.btn_cut.setToolTip("Marque aqui as placas que já foram cortadas (Ctrl+K abre o checklist completo)")
-        self.cut_menu = QMenu(self.btn_cut)
-        self.cut_menu.aboutToShow.connect(self._fill_cut_menu)
-        self.btn_cut.setMenu(self.cut_menu)
-        head.addWidget(self.btn_cut)
         cl.addLayout(head)
 
         self.banner = QFrame()
@@ -281,19 +270,9 @@ class MainWindow(QMainWindow):
         self.settings_panel.reimportNeeded.connect(self.reimport)
 
         split = QSplitter(Qt.Horizontal)
-        # coluna da esquerda: abas Peças / Corte
-        self.cut_panel = CutPanel()
-        self.cut_panel.sheetToggled.connect(self.on_sheet_cut)
-        self.cut_panel.deliveredToggled.connect(self.on_delivered)
-        self.cut_panel.sheetClicked.connect(self._show_sheet)
-        self.cut_panel.resetRequested.connect(self.reset_checklist)
-        self.left_tabs = QTabWidget()
-        self.left_tabs.setDocumentMode(True)
-        self.left_tabs.addTab(self.parts_panel, "Peças")
-        self.left_tabs.addTab(self.cut_panel, "Corte")
-        self.left_tabs.setTabToolTip(1, "Checklist: marque cada placa ao cortar e cada solicitação ao entregar")
-        self.left_tabs.setTabIcon(1, icon("check", "#16a34a", 15))
-        split.addWidget(self.left_tabs)
+        self.parts_panel.doneChanged.connect(self.on_part_done)
+        self.parts_panel.sheetToggled.connect(self.on_sheet_cut)
+        split.addWidget(self.parts_panel)
         split.addWidget(outer)
         split.addWidget(self.settings_panel)
         split.setStretchFactor(0, 0)
@@ -301,7 +280,7 @@ class MainWindow(QMainWindow):
         split.setStretchFactor(2, 0)
         split.setSizes([330, 760, 350])
         self.settings_panel.setMinimumWidth(330)
-        self.left_tabs.setMinimumWidth(280)
+        self.parts_panel.setMinimumWidth(280)
         split.setChildrenCollapsible(False)
 
         root = QWidget()
@@ -522,7 +501,6 @@ class MainWindow(QMainWindow):
         self.a_labels.setChecked(settings().value("ui/labels", "true") == "true")
         self.a_labels.toggled.connect(self.toggle_labels)
         self.canvas.show_labels = self.a_labels.isChecked()
-        act(m_view, "Checklist de corte", lambda: self.left_tabs.setCurrentIndex(1), "Ctrl+K")
 
         act(m_help, "Atalhos de teclado", self.show_shortcuts, "F1")
         act(m_help, "Sobre", self.show_about)
@@ -619,13 +597,13 @@ class MainWindow(QMainWindow):
         if not self.confirm_discard(add):
             return False
         old = (dict(self.file_multipliers), dict(self.file_materials), dict(self.file_tags), set(self.cut_sheets),
-               set(self.delivered), self.request_label, self.request_info)
+               set(self.done_parts), self.request_label, self.request_info)
         if not add:
             self.settings_panel.reset_file_options()   # arquivo novo: unidade automática, todas as camadas
             self.file_multipliers = {}
             self.file_materials = {}
             self.file_tags = {}
-            self.cut_sheets, self.delivered = set(), set()
+            self.cut_sheets, self.done_parts = set(), set()
             self.request_label = request_label
             self.request_info = request_info
             self.parts_panel.set_request(request_info)
@@ -638,7 +616,7 @@ class MainWindow(QMainWindow):
         files = list(self.files) + [p for p in paths if p not in self.files] if add else list(paths)
         if self._import(files, keep_quantities=add) is False:
             # leitura falhou: volta ao estado anterior (as peças antigas continuam na tela)
-            (self.file_multipliers, self.file_materials, self.file_tags, self.cut_sheets, self.delivered,
+            (self.file_multipliers, self.file_materials, self.file_tags, self.cut_sheets, self.done_parts,
              self.request_label, self.request_info) = old
             self.parts_panel.set_request(self.request_info)
             self._refresh_cut_panel()
@@ -871,7 +849,7 @@ class MainWindow(QMainWindow):
         self.file_tags = {}
         self.parts_panel.set_request(None)
         self.placements, self.n_sheets, self.unplaced = [], 0, []
-        self.cut_sheets, self.delivered = set(), set()
+        self.cut_sheets, self.done_parts = set(), set()
         self._refresh_cut_panel()
         self.too_big = set()
         self.undo_stack.clear()
@@ -945,7 +923,7 @@ class MainWindow(QMainWindow):
         save_project(path, self.files, self.settings_panel.params(), self.parts, res,
                      multipliers=self.file_multipliers, label=self.request_label,
                      materials=self.file_materials, request=self.request_info, tags=self.file_tags,
-                     checklist={"cut": sorted(self.cut_sheets), "delivered": sorted(self.delivered)})
+                     checklist={"cut": sorted(self.cut_sheets), "done": sorted(self.done_parts)})
 
     # ------------------------------------------------------------------ salvamento automático
     @staticmethod
@@ -1030,7 +1008,7 @@ class MainWindow(QMainWindow):
         self.file_tags = dict(getattr(proj, "tags", {}) or {})
         ck = getattr(proj, "checklist", None) or {}
         self.cut_sheets = set(int(x) for x in ck.get("cut", []))
-        self.delivered = set(str(x) for x in ck.get("delivered", []))
+        self.done_parts = set(str(x) for x in ck.get("done", []))
         self.request_label = proj.label
         self.request_info = proj.request
         self.parts_panel.set_request(proj.request)
@@ -1174,6 +1152,7 @@ class MainWindow(QMainWindow):
         self.n_sheets = max(self.n_sheets, max([pl.sheet_index + 1 for pl in self.placements], default=0))
         self.canvas.owner_colors = owner_colors(self.parts)
         self.canvas.cut_sheets = self.cut_sheets
+        self.canvas.done_parts = self.done_parts
         self.canvas.show_layout(self.pmap, self.placements, self.settings_panel.params(), n, keep_view)
         self.canvas.set_editable(self.worker is None)
         self._refresh_cut_panel()
@@ -1182,67 +1161,43 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ checklist de corte
     def _refresh_cut_panel(self):
+        """Atualiza, na aba Peças, as caixinhas das placas e as peças feitas (e a cor no desenho)."""
         from ..core.dxf_export import sheet_material
-        if not self.placements:
-            self.cut_panel.set_data([], [], self.cut_sheets, self.delivered)
-            self.left_tabs.setTabText(1, "Corte")
-            self._update_cut_button()
-            return
-        cols = owner_colors(self.parts)
-        nums = sheet_numbers(self.pmap, self.placements)
         sheets = []
-        for si, n in sorted(nums.items(), key=lambda kv: kv[1]):
-            pls = [pl for pl in self.placements if pl.sheet_index == si]
-            tags = sorted({self.pmap[pl.part_id].tag for pl in pls if self.pmap[pl.part_id].tag})
-            sheets.append({"si": si, "n": n, "material": sheet_material(self.pmap, self.placements, si),
-                           "count": len(pls), "tags": [(t, cols[t]) for t in tags if t in cols]})
-        info = self.request_info or {}
-        reqs = {str(r.get("code", "")): r for r in (info.get("requests", []) if info.get("batch") else [info])}
-        owners = []
-        keys = sorted(cols) if cols else ([""] if info else [])
-        for i, k in enumerate(keys):
-            r = reqs.get(k) or (next(iter(reqs.values()), {}) if not k else {})
-            where = sorted({(pl.sheet_index, nums.get(pl.sheet_index, pl.sheet_index + 1)) for pl in self.placements
-                            if self.pmap[pl.part_id].tag == k}, key=lambda t: t[1])
-            who = " · ".join(x for x in (r.get("nome", ""), f"RM {r['rm']}" if r.get("rm") else "") if x)
-            owners.append({"tag": k, "color": cols.get(k, theme_accent()), "title": k or str(r.get("code", "")),
-                           "who": who, "count": sum(1 for pl in self.placements if self.pmap[pl.part_id].tag == k),
-                           "sheets": where})
-        self.cut_panel.set_data(sheets, owners, self.cut_sheets, self.delivered)
-        done = sum(1 for s in sheets if s["si"] in self.cut_sheets)
-        self.left_tabs.setTabText(1, f"Corte {done}/{len(sheets)}" if sheets else "Corte")
-        self._update_cut_button()
+        if self.placements:
+            nums = sheet_numbers(self.pmap, self.placements)
+            for si, n in sorted(nums.items(), key=lambda kv: kv[1]):
+                sheets.append({"si": si, "n": n, "material": sheet_material(self.pmap, self.placements, si),
+                               "count": sum(1 for pl in self.placements if pl.sheet_index == si)})
+        self.parts_panel.set_sheets(sheets, self.cut_sheets)
+        self.parts_panel.set_done(self.done_parts)
+        tags = {p.tag for p in self.parts if p.tag}
+        done_tags = {t for t in tags if all(p.id in self.done_parts for p in self.parts if p.tag == t)}
+        if self.request_info:
+            self.parts_panel.set_request(self.request_info, done_tags)
+        self.canvas.done_parts = self.done_parts
+        if self.canvas.mode == "layout":
+            for it in self.canvas.part_items:
+                it.update()
 
-    def _fill_cut_menu(self):
-        from ..core.dxf_export import sheet_material
-        self.cut_menu.clear()
-        nums = sheet_numbers(self.pmap, self.placements) if self.placements else {}
-        if not nums:
-            a = self.cut_menu.addAction("Faça o encaixe primeiro")
-            a.setEnabled(False)
-            return
-        for si, n in sorted(nums.items(), key=lambda kv: kv[1]):
-            mat = sheet_material(self.pmap, self.placements, si)
-            cnt = sum(1 for pl in self.placements if pl.sheet_index == si)
-            a = self.cut_menu.addAction(f"Placa {n}" + (f" · {mat}" if mat else "") + f" · {cnt} peças")
-            a.setCheckable(True)
-            a.setChecked(si in self.cut_sheets)
-            a.toggled.connect(lambda on, si=si: self.on_sheet_cut(si, on))
-        self.cut_menu.addSeparator()
-        self.cut_menu.addAction("Abrir checklist completo (solicitações e entregas)…",
-                                lambda: self.left_tabs.setCurrentIndex(1))
-
-    def _update_cut_button(self):
-        nums = sheet_numbers(self.pmap, self.placements) if self.placements else {}
-        done = sum(1 for si in nums if si in self.cut_sheets)
-        self.btn_cut.setText(f"Placas cortadas  {done}/{len(nums)}" if nums else "Placas cortadas")
-        self.btn_cut.setEnabled(bool(nums) and self.worker is None)
-        all_done = bool(nums) and done == len(nums)
-        self.btn_cut.setIcon(icon("check", "#16a34a" if done else theme_tokens()["muted"], 15))
-        self.btn_cut.setStyleSheet("QToolButton#CutButton { color: #16a34a; font-weight: 700; }" if all_done else "")
+    def on_part_done(self, pid: str, on: bool):
+        (self.done_parts.add if on else self.done_parts.discard)(pid)
+        self.dirty = True
+        self._refresh_cut_panel()
+        self.schedule_autosave()
+        if on and self.parts and all(p.id in self.done_parts for p in self.parts):
+            self.statusBar().showMessage("Todas as peças feitas! 🎉", 8000)
 
     def on_sheet_cut(self, si: int, on: bool):
+        """Placa cortada: as peças que só aparecem em placas cortadas ficam como feitas."""
         (self.cut_sheets.add if on else self.cut_sheets.discard)(si)
+        on_sheet = {pl.part_id for pl in self.placements if pl.sheet_index == si}
+        for pid in on_sheet:
+            sheets_of = {pl.sheet_index for pl in self.placements if pl.part_id == pid}
+            if on and sheets_of <= self.cut_sheets:
+                self.done_parts.add(pid)
+            elif not on:
+                self.done_parts.discard(pid)
         self.dirty = True
         if self.canvas.mode == "layout":
             self.canvas.set_cut(self.cut_sheets)
@@ -1252,15 +1207,9 @@ class MainWindow(QMainWindow):
         if on and len(self.cut_sheets) >= len(nums):
             self.statusBar().showMessage("Todas as placas cortadas! 🎉", 8000)
 
-    def on_delivered(self, tag: str, on: bool):
-        (self.delivered.add if on else self.delivered.discard)(tag)
-        self.dirty = True
-        self._refresh_cut_panel()
-        self.schedule_autosave()
-
     def reset_checklist(self):
         self.cut_sheets.clear()
-        self.delivered.clear()
+        self.done_parts.clear()
         if self.canvas.mode == "layout":
             self.canvas.set_cut(self.cut_sheets)
         self._refresh_cut_panel()
@@ -1373,8 +1322,6 @@ class MainWindow(QMainWindow):
             b.setEnabled(editing)
         self.stack.setCurrentIndex(1 if self.parts else 0)
         self._update_sheet_label()
-        if hasattr(self, "btn_cut"):
-            self._update_cut_button()
 
     # ------------------------------------------------------------------ desfazer
     def _snapshot(self):
@@ -1522,8 +1469,8 @@ class MainWindow(QMainWindow):
         self._update_status()
         missing = sum(p.quantity for p in self.parts) - len(self.placements)
         msg = "Encaixe concluído." if missing <= 0 else f"Encaixe concluído — {missing} peça(s) não couberam."
-        self.statusBar().showMessage(msg + " Ao cortar, marque as placas em “Placas cortadas” (acima do desenho) "
-                                     "ou na aba Corte.", 12000)
+        self.statusBar().showMessage(msg + " Ao cortar, marque as placas e as peças feitas na lista de Peças.",
+                                     12000)
 
     def toggle_pause(self):
         if self.worker is None:

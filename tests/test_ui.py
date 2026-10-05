@@ -116,14 +116,22 @@ def test_fluxo_completo(app, tmp_path, monkeypatch):
     # só dois arquivos: todas as placas + relatório
     assert sorted(f for f in os.listdir(tmp_path) if f.startswith("t_")) == ["t_relatorio.pdf", "t_todas_placas.dxf"]
 
-    # checklist de corte (aba "Corte")
+    # checklist na aba Peças: placas cortadas e peças feitas
     first = min(pl.sheet_index for pl in w.placements)
     w.on_sheet_cut(first, True)
-    assert first in w.cut_sheets and w.left_tabs.tabText(1).startswith("Corte 1/")
-    assert w.cut_panel.sheet_boxes[first].isChecked()
+    assert first in w.cut_sheets and w.parts_panel.sheet_checks[first].isChecked()
     assert any(it.done for it in w.canvas.sheet_items if it.index == first)
+    only_first = {p.id for p in w.parts
+                  if {pl.sheet_index for pl in w.placements if pl.part_id == p.id} == {first}}
+    assert only_first and only_first <= w.done_parts          # peças só dessa placa ficam feitas
+    row = next(r for r in w.parts_panel.rows if r.part.id in only_first)
+    assert row.done_btn.isChecked() and row.property("done")
+    w.on_sheet_cut(first, False)
+    assert not w.done_parts
+    row.done_btn.setChecked(True)                              # marcar uma peça direto na lista
+    assert row.part.id in w.done_parts
     w.reset_checklist()
-    assert not w.cut_sheets and w.left_tabs.tabText(1).startswith("Corte 0/")
+    assert not w.cut_sheets and not w.done_parts and not row.done_btn.isChecked()
 
     w.set_dark(True)
     w.set_dark(False)

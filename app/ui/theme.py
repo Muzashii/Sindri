@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QApplication
 LIGHT = {
     "bg": "#eef0f4", "surface": "#ffffff", "surface2": "#f5f6f8", "surface3": "#e9ecf1",
     "border": "#dde1e7", "text": "#1d2330", "muted": "#6b7383", "accent": "#2563eb",
-    "accent_hover": "#1d4ed8", "accent_soft": "#e3ecfd", "success": "#15803d",
+    "accent_hover": "#1d4ed8", "accent_soft": "#e3ecfd", "done_bg": "#dcfce7", "success": "#15803d",
     "success_hover": "#116a32", "danger": "#dc2626", "danger_soft": "#fde8e8", "warn": "#b45309",
     "warn_soft": "#fdf1dc", "canvas": "#e4e7ec", "sheet": "#fbfbfc", "sheet_border": "#b9c0cc",
     "grid": "#0000000f", "grid2": "#00000022", "part_fill": "#2563eb22", "shadow": "#00000026",
@@ -15,7 +15,7 @@ LIGHT = {
 DARK = {
     "bg": "#121419", "surface": "#1a1d24", "surface2": "#21252e", "surface3": "#2a2f3a",
     "border": "#2c313c", "text": "#e5e7eb", "muted": "#8b93a3", "accent": "#3b82f6",
-    "accent_hover": "#2f6fdb", "accent_soft": "#1e2b45", "success": "#16a34a",
+    "accent_hover": "#2f6fdb", "accent_soft": "#1e2b45", "done_bg": "#14331f", "success": "#16a34a",
     "success_hover": "#15803d", "danger": "#ef4444", "danger_soft": "#3a1d22", "warn": "#f59e0b",
     "warn_soft": "#3a2d14", "canvas": "#0f1115", "sheet": "#262b35", "sheet_border": "#4a5262",
     "grid": "#ffffff0d", "grid2": "#ffffff1f", "part_fill": "#3b82f633", "shadow": "#00000080",
@@ -181,6 +181,12 @@ QListWidget::item:selected { background: transparent; }
 QFrame#PartRow { background: %(surface2)s; border: 1px solid %(border)s; border-radius: 9px; }
 QFrame#PartRow[selected="true"] { border: 1.5px solid %(accent)s; background: %(accent_soft)s; }
 QFrame#PartRow[warn="true"] { border-left: 3px solid %(warn)s; }
+QFrame#PartRow[done="true"] { background: %(done_bg)s; border: 1.5px solid #16a34a; }
+QFrame#PartRow[done="true"] QLabel#PartName { color: #15803d; }
+QToolButton#DoneButton { border: 1px solid %(border)s; border-radius: 6px; padding: 2px 4px; }
+QToolButton#DoneButton:checked { background: #16a34a; color: white; border-color: #16a34a; font-weight: 700; }
+QFrame#SheetsBox { background: %(surface2)s; border: 1px solid %(border)s; border-radius: 9px; }
+QLabel#SheetsTitle { font-weight: 700; }
 QLabel#PartName { font-weight: 700; color: %(text)s; }
 QLabel#PartSub { color: %(muted)s; font-size: 8pt; }
 QFrame#RequestCard { background: %(accent_soft)s; border: 1px solid %(accent)s; border-radius: 10px; }
