@@ -65,6 +65,8 @@ class UpdatesMixin:
                          '<a href="update:">Atualizar agora</a> · <a href="later:">Depois</a>', "warn")
 
     def install_pending_update(self):
+        if getattr(self, "_applying_update", False):
+            return
         remote = getattr(self, "_pending_update", None)
         if remote is None:
             return
@@ -72,6 +74,7 @@ class UpdatesMixin:
             QMessageBox.information(self, "Atualizar", "Pare o encaixe antes de atualizar.")
             return
         self.banner.hide()
+        self._applying_update = True
         self.statusBar().showMessage("Baixando atualização…")
         b = self._upd_bridge()
 
@@ -81,12 +84,12 @@ class UpdatesMixin:
             except Exception as e:
                 b.installed.emit(None, e)
 
-        threading.Thread(target=work, daemon=True).start()
+        threading.Thread(target=work, daemon=False).start()
 
     def _update_installed(self, summary, error):
+        self._applying_update = False
         if error is not None:
-            QMessageBox.warning(self, "Atualizar", f"A atualização não foi instalada:\n{error}\n\n"
-                                "Nada foi alterado. Tente de novo mais tarde.")
+            QMessageBox.warning(self, "Atualizar", f"A atualização não foi concluída:\n{error}")
             self.statusBar().clearMessage()
             return
         n = len(summary.get("changed", []))

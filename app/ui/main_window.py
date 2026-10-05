@@ -54,6 +54,8 @@ class MainWindow(UIBuildMixin, FilesMixin, ProjectMixin, NestingMixin, EditingMi
         self.file_multipliers: dict[str, int] = {}
         self.file_materials: dict[str, str] = {}
         self.file_tags: dict[str, str] = {}
+        self.file_units: dict[str, int] = {}
+        self.source_hashes: dict = {}
         self.cut_sheets: set[int] = set()        # placas já cortadas (checklist)
         self.done_parts: set[str] = set()        # peças marcadas como feitas (cortadas)
         self.request_label: Optional[str] = None
@@ -82,9 +84,13 @@ class MainWindow(UIBuildMixin, FilesMixin, ProjectMixin, NestingMixin, EditingMi
         self._drag_timer.timeout.connect(self._check_drag_collisions)
 
     def closeEvent(self, e):
+        if getattr(self, "_applying_update", False):
+            self.statusBar().showMessage("Aguarde a conclusão da atualização para fechar.", 5000)
+            e.ignore()
+            return
         if self.worker is not None:
             self.stop_nest(wait=True)
-        if self.dirty and self.placements:
+        if self.dirty and self.files:
             r = QMessageBox.question(self, "Sair", "Salvar o projeto antes de sair?",
                                      QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
                                      QMessageBox.Save)

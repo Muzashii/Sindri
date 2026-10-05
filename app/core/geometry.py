@@ -15,7 +15,7 @@ import numpy as np
 import pyclipper
 from ezdxf.math import BSpline, ConstructionEllipse, Vec3, bulge_to_arc, fit_points_to_cad_cv
 from shapely.geometry import Polygon, MultiPolygon
-from shapely import make_valid
+from shapely import make_valid, unary_union
 
 from .models import Prim
 
@@ -269,14 +269,25 @@ def ring_to_polygon(pts: np.ndarray) -> Optional[Polygon]:
     except Exception:
         return None
     if not poly.is_valid:
+        # Reparar auto-interseções sem perder partes do desenho: se o reparo der um único pedaço
+        # relevante, usa ele; se der vários (ex.: um "8"), usa um envelope que contém todos.
         fixed = make_valid(poly)
         polys = [g for g in getattr(fixed, "geoms", [fixed]) if isinstance(g, Polygon)]
         polys += [pp for g in getattr(fixed, "geoms", []) if isinstance(g, MultiPolygon) for pp in g.geoms]
         if isinstance(fixed, MultiPolygon):
             polys = list(fixed.geoms)
+        polys = [g for g in polys if g.area > 1e-9]
         if not polys:
             return None
-        poly = max(polys, key=lambda g: g.area)
+        total = sum(g.area for g in polys)
+        big = [g for g in polys if g.area > max(0.01, 1e-4 * total)]   # ignora lascas numéricas
+        merged = unary_union(big or polys)
+        if isinstance(merged, Polygon):
+            poly = merged
+        else:
+            poly = merged.convex_hull
+            if not isinstance(poly, Polygon):
+                return None
     if poly.area <= 1e-9:
         return None
     return Polygon(poly.exterior.coords)
@@ -325,4 +336,3 @@ def int_paths_to_shapely(paths: list) -> Polygon | MultiPolygon:
     if len(polys) == 1:
         return polys[0]
     return MultiPolygon(polys)
-

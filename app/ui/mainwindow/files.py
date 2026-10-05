@@ -122,11 +122,14 @@ class FilesMixin:
             return False
         old = (dict(self.file_multipliers), dict(self.file_materials), dict(self.file_tags), set(self.cut_sheets),
                set(self.done_parts), self.request_label, self.request_info)
+        old_params = self.settings_panel.params()
+        old_units = dict(self.file_units)
         if not add:
             self.settings_panel.reset_file_options()   # arquivo novo: unidade automática, todas as camadas
             self.file_multipliers = {}
             self.file_materials = {}
             self.file_tags = {}
+            self.file_units = {}
             self.cut_sheets, self.done_parts = set(), set()
             self.request_label = request_label
             self.request_info = request_info
@@ -143,8 +146,12 @@ class FilesMixin:
             (self.file_multipliers, self.file_materials, self.file_tags, self.cut_sheets, self.done_parts,
              self.request_label, self.request_info) = old
             self.parts_panel.set_request(self.request_info)
+            self.file_units = old_units
+            self.settings_panel.set_params(old_params)
             self._refresh_cut_panel()
             return False
+        if not add:
+            self.project_path = None
         return True
 
     def _import(self, files: list[str], keep_quantities: bool = False):
@@ -153,7 +160,7 @@ class FilesMixin:
         try:
             rep = import_files(files, p.join_tolerance, p.curve_tolerance, **p.import_kwargs(),
                                multipliers=self.file_multipliers, file_materials=self.file_materials,
-                               file_tags=self.file_tags)
+                               file_tags=self.file_tags, file_units=self.file_units)
         except Exception as e:
             QApplication.restoreOverrideCursor()
             QMessageBox.critical(self, "Erro ao abrir", f"Não foi possível ler os arquivos.\n\n{e}")
@@ -165,22 +172,34 @@ class FilesMixin:
             QMessageBox.critical(self, "Erro ao abrir", "Não foi possível ler os arquivos.\n\n"
                                  + "\n".join(rep.warnings[:8]))
             return False
-        old_q = {(pt.id, round(pt.area, 1)): pt.quantity for pt in self.parts} if keep_quantities else {}
+        old_q = {pt.identity: pt for pt in self.parts} if keep_quantities else {}
+        next_id = max([int(pt.id[1:]) for pt in self.parts if pt.id[1:].isdigit()], default=0) + 1
         clear_graphics_cache()
         self.report = rep
         self.files = rep.files
         self.parts = rep.parts
         for pt in self.parts:
-            q = old_q.get((pt.id, round(pt.area, 1)))
-            if q is not None:
-                pt.quantity = q
+            previous = old_q.get(pt.identity)
+            if previous is not None:
+                pt.id = previous.id
+                pt.quantity = max(0, pt.file_quantity + previous.quantity - previous.file_quantity)
+                pt.rotation_locked = previous.rotation_locked
+            elif keep_quantities:
+                pt.id = f"P{next_id:03d}"
+                next_id += 1
+        from ...core.project import source_hash
+        self.source_hashes = {os.path.abspath(f): source_hash(f) for f in self.files}
         self.pmap = {pt.id: pt for pt in self.parts}
         self.placements = []
         self.n_sheets = 0
+        self.cut_sheets.clear()
+        self.done_parts.intersection_update(self.pmap)
         self.unplaced = []
         self.undo_stack.clear()
         self.redo_stack.clear()
         self.dirty = True
+        self.reconcile_state()
+        self.schedule_autosave()
         self._rebuild_checker()
         self.parts_panel.set_parts(self.parts, self.too_big)
         self.settings_panel.set_layers(rep.extra.get("layers", {}))
@@ -211,14 +230,13 @@ class FilesMixin:
         sus = rep.extra.get("suspicious_units") or []
         if not sus or self.settings_panel.params().units_override >= 0:
             return False
-        path, declared, suggested = sus[0]
-        self.settings_panel.set_units(suggested)
-        self._import(self.files, keep_quantities=False)
+        for path, declared, suggested in sus:
+            self.file_units[os.path.abspath(path)] = suggested
+        self._import(self.files, keep_quantities=True)
+        details = "; ".join(f"{os.path.basename(path)}: {UNIT_NAMES[suggested]}" for path, _, suggested in sus)
         self.show_banner(
-            f"O arquivo “{os.path.basename(path)}” declara estar em "
-            f"{UNIT_NAMES.get(declared, 'unidade indefinida')}, mas assim as peças ficariam com tamanho "
-            f"absurdo. Usei <b>{UNIT_NAMES[suggested]}</b>. Se estiver errado, mude em "
-            "Parâmetros › Arquivo DXF › Unidade.", "warn")
+            f"Unidades ajustadas por arquivo: {details}. Confira as dimensões. "
+            "A unidade manual nos parâmetros se aplica ao lote inteiro.", "warn")
         return True
 
     def reimport(self):
@@ -239,7 +257,7 @@ class FilesMixin:
         box.exec()
 
     def confirm_discard(self, add: bool = False) -> bool:
-        if add or not self.placements or not self.dirty:
+        if add or not self.files or not self.dirty:
             return True
         r = QMessageBox.question(self, "Descartar encaixe?",
                                  "O encaixe atual não foi salvo. Deseja continuar e descartá-lo?",
@@ -264,6 +282,9 @@ class FilesMixin:
         self.file_multipliers, self.request_label = {}, None
         self.file_materials, self.request_info = {}, None
         self.file_tags = {}
+        self.file_units, self.source_hashes = {}, {}
+        if hasattr(self, "_autosave_timer"):
+            self._autosave_timer.stop()
         self.parts_panel.set_request(None)
         self.placements, self.n_sheets, self.unplaced = [], 0, []
         self.cut_sheets, self.done_parts = set(), set()

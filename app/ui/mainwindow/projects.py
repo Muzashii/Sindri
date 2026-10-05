@@ -15,6 +15,26 @@ from .common import APP_NAME, now_txt
 
 
 class ProjectMixin:
+    def mark_changed(self):
+        self.dirty = True
+        self.schedule_autosave()
+
+    def reconcile_state(self):
+        """Sincroniza cópias, pendências e checklist após alterar quantidades."""
+        seen = set()
+        kept = []
+        for pl in self.placements:
+            key = (pl.part_id, pl.instance)
+            part = self.pmap.get(pl.part_id)
+            if part is not None and 0 <= pl.instance < part.quantity and key not in seen:
+                seen.add(key)
+                kept.append(pl)
+        self.placements = kept
+        self.unplaced = [(p.id, i) for p in self.parts for i in range(p.quantity) if (p.id, i) not in seen]
+        self.done_parts.difference_update(pid for pid, _ in self.unplaced)
+        self.done_parts.intersection_update(self.pmap)
+        self._compact_sheets()
+
     def save_project(self, ask: bool = False):
         if not self.files:
             QMessageBox.information(self, "Salvar projeto", "Abra um DXF primeiro.")
@@ -29,7 +49,7 @@ class ProjectMixin:
                 path += ".sindri"
         try:
             self._write_project(path)
-        except OSError as e:
+        except (OSError, ValueError) as e:
             QMessageBox.critical(self, "Erro ao salvar", f"Não foi possível salvar o projeto:\n{e}")
             return
         self.project_path = path
@@ -41,10 +61,13 @@ class ProjectMixin:
         save_project(path, self.files, self.settings_panel.params(), self.parts, res,
                      multipliers=self.file_multipliers, label=self.request_label,
                      materials=self.file_materials, request=self.request_info, tags=self.file_tags,
-                     checklist={"cut": sorted(self.cut_sheets), "done": sorted(self.done_parts)})
+                     checklist={"cut": sorted(self.cut_sheets), "done": sorted(self.done_parts)},
+                     file_units=self.file_units, source_hashes=self.source_hashes)
 
     @staticmethod
     def autosave_path() -> str:
+        if os.environ.get("SINDRI_DATA_DIR"):
+            return os.path.join(os.environ["SINDRI_DATA_DIR"], "ultimo_trabalho.sindri")
         from ...core.intranet import default_base_folder
         return os.path.join(os.path.dirname(default_base_folder()), "ultimo_trabalho.sindri")
 
@@ -57,7 +80,7 @@ class ProjectMixin:
 
     def autosave(self):
         """Guarda o trabalho atual (encaixe + checklist) para recuperar se o programa fechar sem salvar."""
-        if not self.files or not self.placements or self.worker is not None:
+        if not self.files or self.worker is not None:
             return
         try:
             path = self.autosave_path()
@@ -65,8 +88,8 @@ class ProjectMixin:
             self._write_project(path)
             settings().setValue("autosave/clean", "false")
             settings().setValue("autosave/when", now_txt())
-        except Exception:
-            pass
+        except Exception as e:
+            self.statusBar().showMessage(f"Falha no salvamento automático: {e}", 15000)
 
     def recover_autosave(self, ask: bool = True):
         path = self.autosave_path()
@@ -118,6 +141,8 @@ class ProjectMixin:
         self.file_multipliers = dict(proj.multipliers)
         self.file_materials = dict(proj.materials)
         self.file_tags = dict(getattr(proj, "tags", {}) or {})
+        self.file_units = dict(proj.units)
+        self.source_hashes = dict(proj.source_hashes)
         ck = getattr(proj, "checklist", None) or {}
         self.cut_sheets = set(int(x) for x in ck.get("cut", []))
         self.done_parts = set(str(x) for x in ck.get("done", []))

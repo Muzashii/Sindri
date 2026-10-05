@@ -4,7 +4,10 @@ Toda a geometria interna está em milímetros, com Y para cima (convenção DXF)
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, fields
+import hashlib
+import json
+import math
 from typing import Any, Optional
 
 from shapely.geometry import Polygon
@@ -58,6 +61,21 @@ class Part:
     is_open: bool = False              # peça formada por contorno(s) aberto(s)
     material: str = ""                 # ex.: "MDF 3mm" — peças de materiais diferentes nunca dividem placa
     tag: str = ""                      # nº da solicitação (lote com várias): identifica de quem é a peça
+
+    @property
+    def identity(self) -> str:
+        """Identidade do desenho local, independente do número na lista e do caminho."""
+        def normalized(value):
+            if isinstance(value, float):
+                return round(value, 8)
+            if isinstance(value, (list, tuple)):
+                return [normalized(v) for v in value]
+            if isinstance(value, dict):
+                return {k: normalized(v) for k, v in value.items()}
+            return value
+        prims = sorted(json.dumps(normalized(p.to_json()), sort_keys=True) for p in self.prims)
+        payload = json.dumps([self.material, self.tag, prims], ensure_ascii=False)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     @property
     def area(self) -> float:
@@ -168,10 +186,30 @@ class NestParams:
     @staticmethod
     def from_json(d: dict) -> NestParams:
         p = NestParams()
+        names = {f.name for f in fields(p)}
         for k, v in d.items():
-            if hasattr(p, k):
+            if k in names:
                 setattr(p, k, v)
+        p.validate()
         return p
+
+    def validate(self) -> None:
+        for name in ("sheet_width", "sheet_height", "curve_tolerance", "join_tolerance"):
+            value = getattr(self, name)
+            if not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+                raise ValueError(f"{name}: informe um número positivo e finito.")
+        for name in ("margin", "spacing", "stop_after_seconds", "mutation_rate"):
+            value = getattr(self, name)
+            if not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+                raise ValueError(f"{name}: informe um número não negativo e finito.")
+        if 2 * self.margin >= min(self.sheet_width, self.sheet_height):
+            raise ValueError("A margem deixa a placa sem área útil.")
+        for name in ("rotation_steps", "max_sheets", "population"):
+            value = getattr(self, name)
+            if type(value) is not int or value < 1:
+                raise ValueError(f"{name}: informe um inteiro positivo.")
+        if self.mutation_rate > 1:
+            raise ValueError("mutation_rate deve estar entre 0 e 1.")
 
 
 @dataclass

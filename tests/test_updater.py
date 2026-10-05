@@ -1,6 +1,7 @@
 import io
 import os
 import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -29,7 +30,7 @@ def test_instala_por_cima_sem_tocar_no_ambiente(tmp_path):
     assert (root / "app" / "main.py").read_bytes() == b"new"
     assert (root / "app" / "novo.py").exists()
     assert (root / ".venv" / "x.txt").read_bytes() == b"venv"          # protegido
-    assert (root / updater.BACKUP_DIR / "app" / "main.py").read_bytes() == b"old"
+    assert (Path(res["backup"]) / "app" / "main.py").read_bytes() == b"old"
     assert sorted(res["changed"]) == ["app/main.py", "app/novo.py", "requirements.txt"]
     assert res["needs_setup"]
     assert updater.local_version(str(root)) == "abc123"

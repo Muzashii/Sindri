@@ -18,6 +18,8 @@ DEFAULT_PRESETS = [
 
 
 def settings() -> QSettings:
+    if os.environ.get("SINDRI_SETTINGS_FILE"):
+        return QSettings(os.environ["SINDRI_SETTINGS_FILE"], QSettings.IniFormat)
     return QSettings("LabMaker", "DXFNest")
 
 

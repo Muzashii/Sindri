@@ -91,14 +91,13 @@ def checklist_progress(idx: SheetIndex, parts: list[Part], cut: set[int], done: 
              solicitações com todas as peças feitas)."""
     per_part: dict[str, tuple[int, int]] = {}
     per_tag: dict[str, tuple[int, int]] = {}
-    for pl in idx.placements:
-        in_cut = pl.sheet_index in cut
-        c, t = per_part.get(pl.part_id, (0, 0))
-        per_part[pl.part_id] = (c + in_cut, t + 1)
-        tag = idx.pmap[pl.part_id].tag
-        if tag:
-            c, t = per_tag.get(tag, (0, 0))
-            per_tag[tag] = (c + (in_cut or pl.part_id in done), t + 1)
+    for part in parts:
+        copies = {pl.instance for pl in idx.placements if pl.part_id == part.id
+                  and pl.sheet_index in cut and 0 <= pl.instance < part.quantity}
+        per_part[part.id] = (len(copies), part.quantity)
+        if part.tag:
+            c, t = per_tag.get(part.tag, (0, 0))
+            per_tag[part.tag] = (c + (part.quantity if part.id in done else len(copies)), t + part.quantity)
     by_tag: dict[str, list[str]] = defaultdict(list)
     for p in parts:
         if p.tag:

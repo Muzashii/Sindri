@@ -5,6 +5,7 @@ Usa discretização de 0,01 mm do contorno externo original e confere:
 * distância entre peças >= espaçamento (peças dentro de furos são medidas até a borda do furo).
 """
 from __future__ import annotations
+import math
 
 
 from shapely.geometry import Polygon, box
@@ -45,12 +46,29 @@ def placed_geometry(solid: Polygon, pl: Placement) -> Polygon:
 def validate_layout(parts: dict[str, Part], placements: list[Placement], params: NestParams,
                     tol: float = 0.02) -> list[str]:
     issues: list[str] = []
+    try:
+        params.validate()
+    except ValueError as e:
+        return [str(e)]
+    seen = set()
     solids: dict[str, Polygon] = {}
     by_sheet: dict[int, list[tuple[Placement, Polygon]]] = {}
     m = params.margin
     usable = box(m - tol, m - tol, params.sheet_width - m + tol, params.sheet_height - m + tol)
     for pl in placements:
+        key = (pl.part_id, pl.instance)
+        if pl.part_id not in parts:
+            issues.append(f"Peça desconhecida: {pl.part_id}")
+            continue
         part = parts[pl.part_id]
+        if key in seen or type(pl.instance) is not int or not 0 <= pl.instance < part.quantity:
+            issues.append(f"Quantidade/instância inválida: {part.name} #{pl.instance + 1}")
+            continue
+        seen.add(key)
+        if type(pl.sheet_index) is not int or not 0 <= pl.sheet_index < params.max_sheets or \
+                not all(isinstance(v, (int, float)) and math.isfinite(v) for v in (pl.x, pl.y, pl.rotation)):
+            issues.append(f"Posição inválida: {part.name}")
+            continue
         if pl.part_id not in solids:
             solids[pl.part_id] = fine_solid(part)
         g = placed_geometry(solids[pl.part_id], pl)
@@ -59,6 +77,8 @@ def validate_layout(parts: dict[str, Part], placements: list[Placement], params:
         by_sheet.setdefault(pl.sheet_index, []).append((pl, g))
     min_d = params.spacing - tol
     for sheet, items in by_sheet.items():
+        if len({parts[pl.part_id].material for pl, _ in items}) > 1:
+            issues.append(f"Placa {sheet + 1}: materiais diferentes na mesma placa")
         geoms = [g for _, g in items]
         tree = STRtree(geoms)
         for i, (pl, g) in enumerate(items):
@@ -67,9 +87,10 @@ def validate_layout(parts: dict[str, Part], placements: list[Placement], params:
                 if j <= i:
                     continue
                 d = g.distance(geoms[j])
-                if d < min_d:
+                overlap = g.intersection(geoms[j]).area > 1e-8
+                if overlap or d < min_d:
                     a = parts[pl.part_id].name
                     b = parts[items[j][0].part_id].name
-                    kind = "sobreposição" if d <= 1e-9 else f"distância {d:.2f} mm"
+                    kind = "sobreposição" if overlap else f"distância {d:.2f} mm"
                     issues.append(f"Placa {sheet + 1}: {a} e {b} — {kind} (mínimo {params.spacing} mm)")
     return issues

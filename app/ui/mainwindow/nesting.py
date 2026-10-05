@@ -53,6 +53,11 @@ class NestingMixin:
             elif box.clickedButton() != b_all:
                 return
         p = self.settings_panel.params()
+        try:
+            p.validate()
+        except ValueError as e:
+            QMessageBox.warning(self, "Parâmetros inválidos", str(e))
+            return
         self.params = p
         self._cut_keys = set()
         if keep_cut:
@@ -132,7 +137,7 @@ class NestingMixin:
         if w is not None and w is not self.worker:
             return                        # sinal atrasado de um encaixe antigo
         self.worker = None
-        self.dirty = True
+        self.mark_changed()
         if getattr(self, "_best_timer", None) is not None:
             self._best_timer.stop()
         self._redraw(keep_view=True)          # versão final, com colisões e checklist
@@ -175,6 +180,7 @@ class NestingMixin:
             self._push_undo()
             for pl in self.placements:
                 pl.locked = False
+            self.mark_changed()
             self._redraw(keep_view=True)
 
     def _rebuild_checker(self):
@@ -199,8 +205,15 @@ class NestingMixin:
 
     def on_params_changed(self):
         new = self.settings_panel.params()
+        try:
+            new.validate()
+        except ValueError as e:
+            self.statusBar().showMessage(str(e), 8000)
+            return
         old = self.params
         self.params = new
+        if self.parts and old != new:
+            self.mark_changed()
         self._sync_preset_combo()
         settings().setValue("ui/last_params", json.dumps(new.to_json()))
         if self.files and abs(new.curve_tolerance - old.curve_tolerance) > 1e-9 and self.worker is None:

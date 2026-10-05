@@ -16,6 +16,9 @@ import subprocess
 import sys
 import urllib.request
 import zipfile
+import tempfile
+import uuid
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -101,11 +104,13 @@ def _download(url: str, progress: Optional[Callable[[int], None]] = None, timeou
 def _safe_members(z: zipfile.ZipFile) -> tuple[str, list[zipfile.ZipInfo]]:
     """Confere o .zip: uma pasta raiz, sem caminhos perigosos, e com os arquivos do Sindri."""
     names = [i.filename for i in z.infolist()]
+    if not names or len(names) > 10000 or sum(i.file_size for i in z.infolist()) > 200 * 1024 * 1024:
+        raise ValueError("Pacote vazio ou maior que o limite de atualização.")
     top = names[0].split("/")[0] + "/"
     members = []
     for info in z.infolist():
         n = info.filename
-        if not n.startswith(top) or ".." in n.split("/") or n.startswith("/") or ":" in n:
+        if not n.startswith(top) or ".." in n.split("/") or n.startswith("/") or ":" in n or "\\" in n:
             raise ValueError(f"arquivo inesperado no pacote: {n}")
         if not info.is_dir():
             members.append(info)
@@ -116,38 +121,86 @@ def _safe_members(z: zipfile.ZipFile) -> tuple[str, list[zipfile.ZipInfo]]:
 
 
 def apply_zip(data: bytes, root: str, sha: str) -> dict:
-    """Instala o conteúdo do .zip na pasta do programa. Devolve um resumo."""
-    z = zipfile.ZipFile(io.BytesIO(data))
-    top, members = _safe_members(z)
-    backup = os.path.join(root, BACKUP_DIR)
-    shutil.rmtree(backup, ignore_errors=True)
-    changed, reqs_changed = [], False
-    for info in members:
-        rel = info.filename[len(top):]
-        first = rel.split("/")[0]
-        if first in PROTECTED or not rel:
-            continue
-        dest = os.path.join(root, *rel.split("/"))
-        new = z.read(info)
-        try:
-            with open(dest, "rb") as fh:
-                if fh.read() == new:
-                    continue                      # igual: não mexe
-            os.makedirs(os.path.dirname(os.path.join(backup, *rel.split("/"))), exist_ok=True)
-            shutil.copy2(dest, os.path.join(backup, *rel.split("/")))
-        except FileNotFoundError:
-            pass
-        os.makedirs(os.path.dirname(dest), exist_ok=True)
-        tmp = dest + ".novo"
-        with open(tmp, "wb") as fh:
-            fh.write(new)
-        os.replace(tmp, dest)
-        changed.append(rel)
-        if rel in ("requirements.txt", "executar.bat"):
-            reqs_changed = True
-    with open(os.path.join(root, VERSION_FILE), "w", encoding="utf-8") as fh:
-        fh.write(sha + "\n")
-    return {"changed": changed, "needs_setup": reqs_changed, "backup": backup}
+    """Prepara e faz backup antes de trocar; reverte todas as trocas se ocorrer falha."""
+    root = os.path.realpath(root)
+    lock_path = os.path.join(root, ".sindri-update.lock")
+    try:
+        lock = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError as e:
+        raise RuntimeError("Há outra atualização em andamento (arquivo .sindri-update.lock).") from e
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex[:8]
+    backup = os.path.join(root, BACKUP_DIR, stamp)
+    allowed_files = {"sindri.py", "executar.bat", "requirements.txt", "pyproject.toml", "readme.md",
+                     "license", "decisions.md", "instalar.bat", "reparar.bat", "requirements-compat.txt",
+                     "build_exe.bat", "dxfnest.py"}
+    changed, applied = [], []
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as z, tempfile.TemporaryDirectory(prefix=".sindri-stage-", dir=root) as stage:
+            top, members = _safe_members(z)
+            payloads, seen = [], set()
+            for info in members:
+                rel = info.filename[len(top):]
+                first = rel.split("/")[0].casefold()
+                if first in {p.casefold() for p in PROTECTED}:
+                    continue
+                if first not in {"app", "assets"} and rel.casefold() not in allowed_files:
+                    continue
+                if rel.casefold() in seen or any(p.rstrip(" .") != p for p in rel.split("/")):
+                    raise ValueError(f"Caminho duplicado ou ambíguo no pacote: {rel}")
+                seen.add(rel.casefold())
+                dest = os.path.realpath(os.path.join(root, *rel.split("/")))
+                if os.path.commonpath([root, dest]) != root:
+                    raise ValueError(f"Destino fora da instalação: {rel}")
+                payloads.append((rel, z.read(info)))  # CRC e leitura antes da primeira troca
+            payloads.append((VERSION_FILE, (sha + "\n").encode("utf-8")))
+            plan = []
+            for rel, new in payloads:
+                dest = os.path.join(root, *rel.split("/"))
+                previous = None
+                if os.path.isfile(dest):
+                    with open(dest, "rb") as fh:
+                        if fh.read() == new:
+                            continue
+                    previous = os.path.join(backup, *rel.split("/"))
+                    os.makedirs(os.path.dirname(previous), exist_ok=True)
+                    shutil.copy2(dest, previous)
+                staged = os.path.join(stage, *rel.split("/"))
+                os.makedirs(os.path.dirname(staged), exist_ok=True)
+                with open(staged, "wb") as fh:
+                    fh.write(new)
+                plan.append((rel, dest, staged, previous))
+            os.makedirs(backup, exist_ok=True)
+            with open(os.path.join(backup, "transaction.json"), "w", encoding="utf-8") as fh:
+                json.dump({"version": sha, "files": [{"path": r, "existed": old is not None}
+                                                      for r, _, _, old in plan]}, fh, indent=2)
+            try:
+                for rel, dest, staged, previous in plan:
+                    os.makedirs(os.path.dirname(dest), exist_ok=True)
+                    os.replace(staged, dest)
+                    applied.append((dest, previous))
+                    if rel != VERSION_FILE:
+                        changed.append(rel)
+            except Exception as e:
+                failures = []
+                for dest, previous in reversed(applied):
+                    try:
+                        if previous is None:
+                            os.remove(dest)
+                        else:
+                            restore = os.path.join(stage, "restore-" + uuid.uuid4().hex)
+                            shutil.copy2(previous, restore)
+                            os.replace(restore, dest)
+                    except OSError as rollback_error:
+                        failures.append(str(rollback_error))
+                if failures:
+                    raise RuntimeError(f"Atualização falhou e a restauração ficou incompleta. Backup: {backup}. "
+                                       + "; ".join(failures)) from e
+                raise RuntimeError(f"Atualização falhou; arquivos anteriores restaurados. Backup: {backup}. {e}") from e
+        return {"changed": changed, "needs_setup": bool(set(changed) & {"requirements.txt", "executar.bat"}),
+                "backup": backup}
+    finally:
+        os.close(lock)
+        os.remove(lock_path)
 
 
 def install_update(remote: RemoteVersion, root: Optional[str] = None,
@@ -178,4 +231,3 @@ def restart(root: Optional[str] = None) -> None:
 def can_self_update() -> bool:
     """O .exe (PyInstaller) não se atualiza copiando os .py."""
     return not getattr(sys, "frozen", False)
-

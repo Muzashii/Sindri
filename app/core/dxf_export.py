@@ -33,12 +33,19 @@ def placed_prims(part: Part, pl: Placement, dx: float = 0.0, inner_first: bool =
 
 def order_placements(parts: dict[str, Part], placements: list[Placement]) -> list[Placement]:
     """Caminho do vizinho mais próximo partindo da origem (reduz deslocamentos do laser)."""
-    rest = list(placements)
+    from .validate import placed_geometry
+    rest = list(range(len(placements)))
+    envelopes = [placed_geometry(parts[p.part_id].outer, p) for p in placements]
+    dependencies = {i: {j for j in rest if i != j and placements[i].sheet_index == placements[j].sheet_index
+                        and envelopes[i].area > envelopes[j].area and envelopes[i].covers(envelopes[j])}
+                    for i in rest}
     out = []
     cx, cy = 0.0, 0.0
     while rest:
-        k = min(range(len(rest)), key=lambda i: (rest[i].x - cx) ** 2 + (rest[i].y - cy) ** 2)
-        pl = rest.pop(k)
+        eligible = [i for i in rest if not dependencies[i].intersection(rest)]
+        k = min(eligible, key=lambda i: (placements[i].x - cx) ** 2 + (placements[i].y - cy) ** 2)
+        rest.remove(k)
+        pl = placements[k]
         out.append(pl)
         cx, cy = pl.x, pl.y
     return out

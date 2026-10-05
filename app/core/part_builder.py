@@ -25,14 +25,14 @@ from shapely import affinity
 
 from .dxf_import import RawFile, read_dxf
 from .geometry import (Transform, flatten_prim, prim_endpoints, prim_is_closed, ring_to_polygon,
-                       transform_prim)
+                       transform_prim, prim_rgb)
 from .models import ImportReport, Part, Prim
 
 
 # ---------------------------------------------------------------------------
 # Duplicadas
 # ---------------------------------------------------------------------------
-def _r(v, q=0.01):
+def _r(v, q=0.000001):
     return round(float(v) / q) * q
 
 
@@ -61,7 +61,7 @@ def remove_duplicates(prims: list[Prim]) -> tuple[list[Prim], int]:
     removed = 0
     for p in prims:
         try:
-            sig = prim_signature(p)
+            sig = (p.layer, prim_rgb(p), prim_signature(p))
         except Exception:
             out.append(p)
             continue
@@ -85,6 +85,7 @@ class Contour:
     parent: Optional[int] = None
     depth: int = 0
     children: list[int] = field(default_factory=list)
+    repaired: bool = False
 
 
 class _UF:
@@ -201,6 +202,7 @@ def build_contours(prims: list[Prim], join_tol: float, curve_tol: float) -> list
 
     for c in contours:
         if c.closed:
+            c.repaired = len(c.pts) >= 3 and not Polygon(c.pts).is_valid
             poly = ring_to_polygon(c.pts)
             if poly is None:
                 c.closed = False
@@ -349,7 +351,7 @@ def build_parts_from_prims(prims: list[Prim], source_file: str, join_tol: float,
             else:
                 idxs.append(ref)
         # furos aproveitáveis: filhos diretos, sem nada dentro, mesma cor do externo
-        outer_color = prims[rc.members[0][0]].color
+        outer_colors = {prim_rgb(prims[i]) for i, _ in rc.members}
         holes = []
         extra_geoms = []
         for kind, ref in g["extra"]:
@@ -360,16 +362,21 @@ def build_parts_from_prims(prims: list[Prim], source_file: str, join_tol: float,
         extra_geoms = [x for x in extra_geoms if x is not None]
         for ch in rc.children:
             cc = contours[ch]
-            if cc.children:
+            if cc.children or cc.repaired or rc.repaired:
                 continue
-            if prims[cc.members[0][0]].color != outer_color:
+            if len(outer_colors) != 1 or {prim_rgb(prims[i]) for i, _ in cc.members} != outer_colors:
                 continue
             hp = cc.polygon
             if any(hp.intersects(x) for x in extra_geoms):
                 continue
             holes.append(hp)
         outer = Polygon(rc.polygon.exterior.coords)
-        raw_parts.append(_RawPart([prims[i] for i in idxs], outer, holes, outer_idx, False, [],
+        msgs = []
+        if rc.repaired:
+            msgs.append("Contorno inválido: usado envoltório conservador; confira o desenho no CAD.")
+            warnings.append(f"{name}: {msgs[0]}")
+            problem_prims.update(idxs)
+        raw_parts.append(_RawPart([prims[i] for i in idxs], outer, holes, outer_idx, False, msgs,
                                   source_file))
 
     # itens soltos (contornos abertos e textos fora de peças): agrupar os que se tocam
@@ -457,8 +464,9 @@ def _same_part(a: _RawPart, b: _RawPart, la, lb, tol: float) -> Optional[float]:
         return None
     if abs(a.outer.length - b.outer.length) > max(0.5, 0.005 * a.outer.length):
         return None
-    if {(p.layer, p.color, p.kind in ("TEXT", "MTEXT")) for p in a.prims} != \
-            {(p.layer, p.color, p.kind in ("TEXT", "MTEXT")) for p in b.prims}:
+    def operation(p):
+        return (p.layer, prim_rgb(p), p.kind in ("TEXT", "MTEXT"))
+    if {operation(p) for p in a.prims} != {operation(p) for p in b.prims}:
         return None
     ta = sorted(p.data.get("text", "") for p in a.prims if p.kind in ("TEXT", "MTEXT"))
     tb = sorted(p.data.get("text", "") for p in b.prims if p.kind in ("TEXT", "MTEXT"))
@@ -478,7 +486,16 @@ def _same_part(a: _RawPart, b: _RawPart, la, lb, tol: float) -> Optional[float]:
     for ang in sorted(cands):
         rb = affinity.rotate(lb0, ang, origin=(0, 0))
         if la0.hausdorff_distance(rb) <= tol:
-            return ang
+            # A geometria de cada cor/camada também precisa coincidir.
+            for op in {operation(p) for p in a.prims}:
+                def lines(rp, center):
+                    seq = [flatten_prim(p, tol / 4) for p in rp.prims if operation(p) == op]
+                    geom = MultiLineString([pts for pts in seq if len(pts) >= 2])
+                    return affinity.translate(geom, -center.x, -center.y)
+                if lines(a, ca).hausdorff_distance(affinity.rotate(lines(b, cb), ang, origin=(0, 0))) > tol:
+                    break
+            else:
+                return ang
     return None
 
 
@@ -490,8 +507,7 @@ def group_identical(raw: list[_RawPart], curve_tol: float) -> list[tuple[_RawPar
         if same is not None:
             same[1] += 1
             continue
-        size = math.sqrt(max(rp.outer.area, 1e-9))
-        tol = max(0.2, 3 * curve_tol, 0.002 * size)
+        tol = 0.001  # equivalência de fabricação, independente da resolução do encaixe
         lw = None
         for g in groups:
             a = g[0]
@@ -500,9 +516,9 @@ def group_identical(raw: list[_RawPart], curve_tol: float) -> list[tuple[_RawPar
                     or a.tag != rp.tag or abs(a.outer.area - rp.outer.area) > max(0.5, 0.005 * a.outer.area):
                 continue
             if lw is None:
-                lw = _linework(rp, curve_tol)
+                lw = _linework(rp, tol / 4)
             if g[2] is None:
-                g[2] = _linework(a, curve_tol)
+                g[2] = _linework(a, tol / 4)
             if _same_part(a, rp, g[2], lw, tol) is not None:
                 g[1] += 1
                 break
@@ -532,7 +548,8 @@ def import_files(paths: list[str], join_tol: float = 0.05, curve_tol: float = 0.
                  excluded_layers: Optional[set] = None,
                  multipliers: Optional[dict] = None,
                  file_materials: Optional[dict] = None,
-                 file_tags: Optional[dict] = None) -> ImportReport:
+                 file_tags: Optional[dict] = None,
+                 file_units: Optional[dict] = None) -> ImportReport:
     """Importa vários DXF e devolve as peças agrupadas."""
     warnings: list[str] = []
     all_raw: list[_RawPart] = []
@@ -545,7 +562,8 @@ def import_files(paths: list[str], join_tol: float = 0.05, curve_tol: float = 0.
         from .dxf_import import DXFImportError
         for path in paths:
             try:
-                raws.append(read_dxf(path, units_override, ignore_text, excluded_layers))
+                unit = units_override if units_override is not None else (file_units or {}).get(os.path.abspath(path))
+                raws.append(read_dxf(path, unit, ignore_text, excluded_layers))
             except DXFImportError as e:
                 warnings.append(str(e))
     suspicious = []

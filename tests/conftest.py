@@ -22,6 +22,12 @@ def fx(name: str) -> str:
     return os.path.join(FIX, name)
 
 
+@pytest.fixture(autouse=True)
+def isolated_preferences(tmp_path, monkeypatch):
+    monkeypatch.setenv("SINDRI_SETTINGS_FILE", str(tmp_path / "settings.ini"))
+    monkeypatch.setenv("SINDRI_DATA_DIR", str(tmp_path / "data"))
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _fixtures():
     if not os.path.isfile(fx("exemplo_lab.dxf")):

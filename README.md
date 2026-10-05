@@ -1,119 +1,263 @@
-# Sindri — encaixe automático de peças para corte a laser
+<div align="center">
 
-Programa para o laboratório maker que recebe um ou mais arquivos **DXF**, o tamanho da placa e alguns parâmetros, e
-**organiza as peças da forma mais compacta possível** (nesting), gerando DXF pronto para o **RDWorks**.
+<img src="assets/sindri.png" alt="Sindri" width="112">
 
-Mesma abordagem do SVGnest/Deepnest (No-Fit Polygon + algoritmo genético), mas com entrada e saída em DXF, arcos e
-círculos preservados, camadas/cores mantidas e interface em português.
+# Sindri
 
-## Como usar
-1. **Intranet FIAP** (`Ctrl+I`): marque as solicitações e clique em **Juntar na placa → Enviar**. Com
-   *Encaixar automaticamente ao enviar* (padrão) o Sindri escolhe sozinho a placa usada da última vez para aquele
-   material e já começa o encaixe. (Ou arraste um DXF para a janela / `Ctrl+O` e clique em **Encaixar**.)
-2. O encaixe melhora ao vivo e **para sozinho** depois de um tempo sem melhorar (padrão 40 s; a barra de baixo
-   mostra a contagem). O botão vira **Parar (Esc)** enquanto calcula.
-3. **Exportar** (`Ctrl+E`): direto, com as opções da última vez — gera `nome_todas_placas.dxf` + `nome_relatorio.pdf`
-   e abre o RDWorks. Se já existir, salva como `nome_2…`. `Ctrl+Shift+E` abre as opções (pasta, versão, contorno…).
-   O aviso verde no topo tem os links *Abrir pasta* e *Abrir relatório*.
-   - `nome_todas_placas.dxf` — todas as placas (de todos os materiais) organizadas lado a lado, na ordem do
-     relatório.
-   - `nome_relatorio.pdf` — resumo, uma página por placa com o nº da solicitação em cada peça e a lista de peças.
-4. Na hora de cortar: **C** marca a placa da tela como cortada e vai para a próxima (ou clique em "○ cortada" na
-   etiqueta da placa, ou nas caixinhas *Placas cortadas*). `Alt+1…9` mostra só a solicitação N do lote, `Alt+0`
-   todas. `Ctrl+P` esconde o painel de parâmetros para o desenho ficar maior.
+**Encaixe automático de peças DXF para o corte a laser do Laboratório Maker FIAP**
 
-**Quem é cada peça e o que já foi cortado (dentro do programa):**
-- No **Encaixe**, cada peça aparece **pintada com a cor da solicitação e com o nº escrito em cima** (numa
-  solicitação só: o nº da peça). `N` liga/desliga os números (menu Exibir).
-- Num **lote**, o cartão no topo da lista de Peças tem uma linha por solicitação (na cor dela): clique para ver
-  **só as peças daquela pessoa** — na lista e no desenho (as outras ficam apagadas). Clique de novo (ou em
-  *Mostrar todas*) para voltar.
-- Na lista de **Peças**, cada peça tem o botão **Feito**: marcada, a linha fica verde e a peça fica cinza com ✓ no
-  desenho. Acima da lista, **Placas cortadas** tem uma caixinha por placa; marcar uma placa marca como feitas as
-  peças que só estão em placas cortadas. Num lote, a solicitação ganha ✓ no cartão quando todas as peças dela
-  estão feitas. Tudo é salvo junto com o projeto.
-- **Encaixar de novo com placas já cortadas** pergunta: *Só o que falta* (as placas cortadas ficam como estão e
-  não recebem peças novas; o resto é reorganizado) ou *Tudo de novo*.
-- **Salvamento automático**: o encaixe e o checklist são guardados sozinhos em `Documentos\Sindri\
-  ultimo_trabalho.sindri`. Se o Sindri fechar sem salvar, ao abrir ele oferece recuperar (ou *Arquivo › Recuperar
-  último trabalho*).
-- No arquivo do RDWorks, a opção **Contorno e nº de cada placa** (padrão) desenha o contorno e escreve
-  “PLACA 1”, “PLACA 2”… acima de cada uma, na camada **cinza**. No RDWorks coloque essa camada com
-  **saída = NÃO** antes de cortar.
+Recebe os arquivos dos alunos (direto da intranet ou arrastando o DXF), organiza as peças da forma mais
+compacta possível nas placas e entrega um único DXF pronto para o **RDWorks**, com relatório e checklist de corte.
 
-**Limpar arquivos:** *Arquivo › Limpar arquivos baixados e relatórios…* mostra quantos arquivos e quanto espaço
-ocupam as solicitações baixadas da intranet, os relatórios PDF e os arquivos de corte exportados, e manda os que
-você marcar para a **Lixeira** (relatórios e solicitações vêm marcados; arquivos de corte, não).
+![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
+![PySide6](https://img.shields.io/badge/Qt-PySide6-41CD52?logo=qt&logoColor=white)
+![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows&logoColor=white)
+![Testes](https://img.shields.io/badge/testes-95%20pytest-success)
+![Licença](https://img.shields.io/badge/licen%C3%A7a-MIT-blue)
 
-Depois do encaixe você pode **arrastar** peças (ficam vermelhas se colidirem), **girar** (`R`), **travar** (`L`) e
-encaixar de novo só o restante, mover entre placas (arraste até a outra placa ou botão direito), remover (`Del`) e
-desfazer/refazer (`Ctrl+Z` / `Ctrl+Y`). O botão **Limpar** (acima da lista de peças, ou `Ctrl+Shift+Del`)
-remove todas as peças e o encaixe para começar do zero. `F` enquadra tudo, roda do mouse = zoom, botão do meio (ou `Alt`+arrastar) =
-mover a vista. `F1` mostra todos os atalhos.
+[Como funciona](#-como-funciona) · [Recursos](#-recursos) · [Instalação](#-instalação-windows) ·
+[Atalhos](#%EF%B8%8F-atalhos) · [Intranet](#-intranet-fiap) · [Arquitetura](#-arquitetura) · [Testes](#-testes)
 
-## Instalação (Windows)
-1. Instale o **Python 3.11** (python.org) marcando **"Add python.exe to PATH"**.
-2. Dê dois cliques em **`executar.bat`**. Na primeira vez ele prepara tudo sozinho (alguns minutos), cria o atalho
-   **Sindri** na área de trabalho e no menu Iniciar e abre o programa.
-3. Dali em diante, abra pelo **atalho Sindri** (sem janela preta).
+<br>
 
-Para atualizar, extraia a versão nova **por cima da mesma pasta** (mantendo a pasta `.venv`): assim nada precisa ser
-baixado de novo. Se o Windows bloquear uma biblioteca ("Controle de Aplicativo"), o `executar.bat`
-tenta de novo algumas vezes e, se continuar bloqueado, usa o **Anaconda** já instalado no computador (o numpy dele costuma ser liberado), instalando o resto na pasta `libs`.
+<img src="docs/tela_encaixe.png" alt="Sindri — lote com 3 solicitações encaixadas em 2 placas" width="900">
 
-### Gerar um .exe (opcional)
-`build_exe.bat` gera `dist\Sindri.exe`. Obs.: com o Controle Inteligente de Aplicativos ligado, um .exe sem
-assinatura digital também pode ser bloqueado.
+<sub>Um lote com 3 solicitações em MDF 3 mm: cada peça leva a cor e o nº da solicitação de quem pediu.</sub>
 
-### Linha de comando (sem interface)
+</div>
+
+---
+
+## ✨ Em resumo
+
+| | |
+|---|---|
+| 🧩 **Encaixe inteligente** | No-Fit Polygon + algoritmo genético em paralelo (a mesma ideia do SVGnest/Deepnest), com peças dentro de furos, várias placas e rotações configuráveis |
+| 🌐 **Direto da intranet** | Abre as *Solicitações Maker* dentro do programa, junta várias solicitações num lote e já começa a encaixar |
+| 🎨 **Quem é cada peça** | Cada solicitação ganha uma cor; clique numa delas para ver só as peças daquela pessoa |
+| ✅ **Checklist de corte** | Botão **Feito** em cada peça e caixinha por placa cortada, salvos junto com o projeto |
+| 📐 **DXF fiel ao original** | Arcos continuam arcos, camadas e cores preservadas, furos antes do contorno, R2000 ou R12 |
+| ⚡ **Um clique até o laser** | `Ctrl+E` gera `todas_placas.dxf` + `relatorio.pdf` e abre o RDWorks com o arquivo |
+| 🔄 **Sempre atualizado** | Ao abrir, procura versão nova aqui no GitHub e se atualiza com backup |
+
+---
+
+## 🔁 Como funciona
+
+```mermaid
+flowchart LR
+    A["🌐 Intranet FIAP<br/>ou DXF arrastado"] --> B["📥 Importação<br/>unidades · blocos · camadas"]
+    B --> C["🧩 Reconstrução<br/>contornos · furos · peças iguais"]
+    C --> D["⚙️ Encaixe<br/>NFP + algoritmo genético"]
+    D --> E["✋ Ajuste manual<br/>arrastar · girar · travar"]
+    E --> F["📤 Exportar<br/>DXF + relatório PDF"]
+    F --> G["🔥 RDWorks<br/>corte"]
+    G --> H["✅ Checklist<br/>peças e placas feitas"]
+```
+
+1. **Carregar.** Pela **Intranet FIAP** (`Ctrl+I`), marque uma ou várias solicitações e clique em **Juntar na placa → Enviar**,
+   ou arraste DXFs para a janela (`Ctrl+O`).
+2. **Encaixar.** O encaixe começa sozinho, melhora ao vivo e **para sozinho** quando passa um tempo sem melhorar
+   (padrão: 40 s). O botão vira **Parar (Esc)** enquanto calcula.
+3. **Ajustar** (se quiser). Arraste peças (ficam vermelhas se colidirem), gire (`R`), trave (`L`), mova entre placas e
+   encaixe de novo só o restante.
+4. **Exportar** (`Ctrl+E`). Saem dois arquivos e o RDWorks abre com as placas:
+
+   | Arquivo | Conteúdo |
+   |---|---|
+   | `nome_todas_placas.dxf` | Todas as placas de todos os materiais, lado a lado, com “PLACA 1”, “PLACA 2”… |
+   | `nome_relatorio.pdf` | Resumo e uma página por placa, com o nº da solicitação em cada peça |
+
+5. **Cortar e marcar.** `C` marca a placa da tela como cortada e vai para a próxima. Cada peça tem o botão **Feito**.
+
+> [!TIP]
+> No RDWorks, deixe a camada **cinza** (contorno e nº das placas) com **saída = NÃO** antes de cortar.
+
+---
+
+## 🧰 Recursos
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### 📥 Importação
+- LINE, ARC, CIRCLE, LWPOLYLINE/POLYLINE (com bulge), SPLINE, ELLIPSE
+- Blocos `INSERT`/`MINSERT` aninhados, com escala e rotação
+- Unidades do arquivo (`$INSUNITS`) convertidas para mm, com correção **por arquivo** quando a unidade declarada é absurda
+- Camadas listadas com cor; textos ignorados por padrão
+
+### 🧩 Reconstrução das peças
+- Encadeia linhas e arcos soltos e fecha contornos quase fechados
+- Remove linhas duplicadas
+- Liga furos, rasgos, gravações e textos à peça que os contém
+- Agrupa peças idênticas, mesmo giradas
+- Destaca contornos abertos em vermelho
+
+</td>
+<td width="50%" valign="top">
+
+### ⚙️ Encaixe
+- NFP com cache e algoritmo genético em todos os núcleos
+- Part-in-part: peças pequenas dentro de furos grandes
+- Várias placas; **materiais diferentes nunca dividem placa**
+- Rotações configuráveis, espelhamento opcional, trava de rotação por peça
+- Quantidades editáveis e kits (`× Kits`)
+- Verificação final com geometria fina antes de exportar
+
+### 📤 Exportação
+- Geometria **original**, só girada e movida
+- mm, origem em (0,0), camadas e cores mantidas
+- R2000 (padrão) ou R12
+- Furos antes do contorno externo; caminho curto entre peças
+
+</td>
+</tr>
+</table>
+
+### 💾 Projetos e segurança do trabalho
+- **Projetos `.sindri`** guardam arquivos, parâmetros, quantidades, encaixe e checklist. A geometria fica
+  **embutida no projeto**: ele abre mesmo se os DXF de origem forem movidos, e avisa se algum foi alterado.
+- **Salvamento automático** em `Documentos\Sindri\ultimo_trabalho.sindri`, com oferta de recuperação ao abrir.
+- **Limpeza** (*Arquivo › Limpar arquivos baixados e relatórios…*) manda solicitações baixadas, relatórios e
+  exportações antigas para a **Lixeira**.
+
+<div align="center">
+<img src="docs/tela_escuro.png" alt="Sindri no tema escuro" width="900">
+<br><sub>Tema escuro (<code>Ctrl+T</code>)</sub>
+</div>
+
+---
+
+## 💻 Instalação (Windows)
+
+1. Instale o **Python 3.11** ([python.org](https://www.python.org/downloads/)) marcando **“Add python.exe to PATH”**.
+2. Baixe este repositório (**Code › Download ZIP**) e extraia numa pasta.
+3. Dê dois cliques em **`executar.bat`**. Na primeira vez ele prepara tudo (alguns minutos), cria o atalho
+   **Sindri** na área de trabalho e no menu Iniciar, e abre o programa.
+4. Daí em diante, abra pelo **atalho Sindri**.
+
+<details>
+<summary><b>Problemas na instalação?</b></summary>
+
+- **Windows bloqueou uma biblioteca** (“Controle de Aplicativo”): o `executar.bat` tenta de novo e, se continuar
+  bloqueado, usa o **Anaconda** do computador (o numpy dele costuma ser liberado), instalando o resto na pasta `libs`.
+- **Algo quebrou depois de uma atualização**: feche o Sindri e rode **`reparar.bat`**, que reinstala as bibliotecas.
+- **Registros de erro** ficam em `%LOCALAPPDATA%\Sindri\` (`sindri_erro.log` e `sindri_travamentos.log`).
+- **Gerar um `.exe`** (opcional): `build_exe.bat` cria `dist\Sindri.exe`. Com o Controle Inteligente de Aplicativos
+  ligado, um `.exe` sem assinatura também pode ser bloqueado.
+
+</details>
+
+### 🔄 Atualização automática
+
+Ao abrir, o Sindri consulta este repositório. Se houver versão nova, aparece um aviso com **Atualizar agora**:
+
+```mermaid
+flowchart LR
+    A[Abrir o Sindri] --> B{Versão nova<br/>no GitHub?}
+    B -- não --> Z[Segue normal]
+    B -- sim --> C[Baixa e confere o pacote]
+    C --> D[Backup em<br/>_backup_atualizacao]
+    D --> E[Instala por cima<br/>sem tocar em .venv / libs]
+    E --> F[Reinicia pelo executar.bat]
+    E -. falhou .-> G[Restaura os arquivos antigos]
+```
+
+A versão instalada fica em `versao.txt`. Para desligar: *Ajuda › Procurar atualizações ao abrir*.
+
+---
+
+## ⌨️ Atalhos
+
+| Arquivo | | Encaixe e edição | | Visualização | |
+|---|---|---|---|---|---|
+| `Ctrl+O` | Abrir DXF | `R` | Girar peça | `F` | Enquadrar tudo |
+| `Ctrl+Shift+O` | Adicionar DXF | `M` | Espelhar peça | `N` | Nº em cima das peças |
+| `Ctrl+I` | Intranet FIAP | `L` | Travar / destravar | `Ctrl+P` | Esconder parâmetros |
+| `Ctrl+S` | Salvar projeto | `Del` | Remover peça | `Ctrl+T` | Tema claro/escuro |
+| `Ctrl+E` | Exportar | `Ctrl+Z` / `Ctrl+Y` | Desfazer / refazer | `Alt+1…9` | Só a solicitação N |
+| `Ctrl+Shift+E` | Exportar com opções | `C` | Placa cortada → próxima | `Alt+0` | Todas as solicitações |
+| `Ctrl+Shift+Del` | Limpar tudo | `Esc` | Parar o encaixe | `F1` | Todos os atalhos |
+
+Roda do mouse = zoom · botão do meio (ou `Alt` + arrastar) = mover a vista.
+
+---
+
+## 🌐 Intranet FIAP
+
+O botão **Intranet FIAP** abre a página de *Solicitações Maker* num navegador dentro do programa.
+
+- **Login:** feito por você, na própria página. A sessão fica salva e **o Sindri nunca vê sua senha**.
+- **Fila completa:** lista todas as páginas da aba escolhida, em ordem de envio, com filtro por status e busca por
+  nome, RM ou nº.
+- **Visualizar antes de baixar:** clicar numa solicitação mostra aluno, RM, projeto, arquivos, materiais e quantidades.
+  Nada é baixado até você enviar.
+- **Lotes:** marque várias solicitações e use **Juntar na placa**. As peças de todas são encaixadas juntas, cada uma com
+  seu nº. Peças de pedidos diferentes nunca são agrupadas, e o relatório lista cada solicitação.
+- **Onde ficam os arquivos:** `Documentos\Sindri\Solicitações\<nº> - <aluno>\<material>\`.
+
+> [!NOTE]
+> Cada material (ex.: MDF 3 mm, MDF 6 mm) ganha suas próprias placas, com a cor no contorno e na etiqueta.
+> Arrastar uma peça para a placa de outro material deixa ela vermelha.
+
+---
+
+## 🖥️ Linha de comando
+
+Também dá para encaixar sem interface:
+
 ```bash
 python -m app.cli peças.dxf --placa 600x400 --margem 5 --espaco 2 --tempo 30 --saida resultado/
 ```
-Opções: `--rotacoes 4|8|…`, `--espelhar`, `--sem-part-in-part`, `--versao R12|R2000`, `--contorno-placa`.
 
-## Baixar direto da intranet FIAP
-Botão **Intranet FIAP** (ou `Ctrl+I`): abre a página de Solicitações Maker num navegador dentro do programa.
-1. Na primeira vez, faça login normalmente — a sessão fica salva (o programa nunca vê sua senha).
-2. Clique numa solicitação da fila (filtro por tipo e busca por nome/RM/nº): ela é só **visualizada** —
-   aluno, RM, projeto, arquivos, materiais e quantidades. Nada é baixado.
-3. Clique em **Enviar tudo para a placa** (ou em um material só). Só então os DXF são baixados, para
-   `Documentos\Sindri\Solicitações\<nº> - <aluno>\<material>\`. As quantidades da tabela da intranet já entram nas peças.
-4. A tela principal mostra um cartão com **nº da solicitação, RM, aluno, projeto e professor**.
-5. **Várias solicitações juntas**: marque a caixinha ao lado do nº de cada solicitação (clicar no cabeçalho "Nº"
-   marca todas as visíveis) e clique em **Juntar na placa**. O Sindri mostra o lote (sem baixar nada) e, ao enviar,
-   encaixa as peças de todas juntas. O nome de cada peça começa com o nº da solicitação, peças de pedidos
-   diferentes nunca são agrupadas, e o relatório lista cada solicitação. Os arquivos saem como `lote_8759-8760_…`.
-6. **Materiais nunca dividem placa**: cada material (ex.: MDF 3mm em azul, MDF 6mm em laranja) ganha suas
-   próprias placas, com a cor no contorno e na etiqueta. Arrastar uma peça para a placa de outro material deixa
-   ela vermelha. A exportação gera `8759_RM500123_todas_placas.dxf` (as placas de 3mm e depois as de 6mm) e `8759_RM500123_relatorio.pdf`.
+| Opção | O que faz |
+|---|---|
+| `--rotacoes 4\|8\|…` | Quantas rotações testar |
+| `--espelhar` | Permite espelhar peças |
+| `--sem-part-in-part` | Não coloca peças dentro de furos |
+| `--versao R12\|R2000` | Versão do DXF exportado |
+| `--contorno-placa` | Desenha o contorno das placas |
+| `--permitir-parcial` | Exporta mesmo se nem todas as peças couberem |
 
-## Dicas
-- **Peças com tamanho absurdo (ex.: 141000 × 12500 mm)?** O arquivo declara a unidade errada. O programa corrige
-  sozinho e avisa; se precisar, troque em *Parâmetros › Arquivo DXF › Unidade*.
-- **Nomes das peças aparecendo como gravação?** Deixe marcado *Ignorar textos* (padrão) ou desmarque a camada dos
-  nomes na lista de camadas.
+Código de saída: `0` ok · `2` parâmetros inválidos · `4` encaixe incompleto.
 
-## O que o programa faz
-- **Importação**: LINE, ARC, CIRCLE, LWPOLYLINE/POLYLINE (com bulge), SPLINE, ELLIPSE, INSERT/MINSERT (blocos aninhados,
-  com escala e rotação), TEXT/MTEXT/ATTRIB. Converte unidades (`$INSUNITS`) para mm; sem unidade → assume mm e avisa.
-- **Reconstrução das peças**: encadeia linhas/arcos soltos (tolerância de 0,05 mm), fecha contornos quase fechados,
-  remove linhas duplicadas, vincula furos/rasgos/gravações/textos à peça que os contém, agrupa peças idênticas
-  (mesmo giradas) e destaca contornos abertos em vermelho.
-- **Encaixe**: NFP com cache, posicionamento por região válida, algoritmo genético em paralelo (todos os núcleos),
-  part-in-part (peças pequenas dentro de furos grandes), várias placas, rotações configuráveis, espelhamento opcional,
-  trava de rotação por peça, quantidades editáveis (botão "× Kits").
-- **Garantia**: nunca há sobreposição nem peça fora da margem — o espaçamento já inclui as tolerâncias de cálculo
-  (ver `DECISIONS.md`) e há uma verificação final com geometria fina antes de exportar.
-- **Exportação**: geometria **original** (arcos continuam arcos) apenas girada/movida; mm, origem em (0,0); camadas e
-  cores preservadas; R2000 (padrão) ou R12; contorno da placa opcional na camada `PLACA` (cinza, desligado por padrão);
-  furos antes do contorno externo; caminho mais curto entre peças; relatório PDF com checklist.
-- **Projetos**: salva/abre `.sindri` (JSON) com arquivos, parâmetros, quantidades e o encaixe — reabre exatamente igual.
+---
 
-## Estrutura
+## 🏗️ Arquitetura
+
+```mermaid
+flowchart TB
+    subgraph UI["app/ui — interface (PySide6)"]
+        MW["main_window + mainwindow/*<br/>arquivos · projetos · encaixe · edição · checklist · exportação · atualização"]
+        CV["canvas · parts_panel · settings_panel"]
+        IN["intranet (QtWebEngine)"]
+        RP["report (PDF)"]
+    end
+    subgraph W["app/workers"]
+        NW["nest_worker (thread)"]
+    end
+    subgraph CORE["app/core — núcleo sem Qt"]
+        IMP["dxf_import · part_builder · geometry"]
+        NEST["nfp · placement · optimizer"]
+        OUT["validate · dxf_export · project · sheets"]
+        EXT["intranet · rdworks · cleanup · updater"]
+    end
+    MW --> CV & IN & RP
+    MW --> NW --> NEST
+    MW --> IMP & OUT & EXT
+    IMP --> NEST --> OUT
 ```
-sindri.py               lançador (erros em %LOCALAPPDATA%\Sindri\sindri_erro.log)
+
+<details>
+<summary><b>Estrutura de pastas</b></summary>
+
+```
+sindri.py               lançador (registros em %LOCALAPPDATA%\Sindri)
+executar.bat            instala o ambiente e abre o programa
+reparar.bat             reinstala as bibliotecas
 app/
-  main.py               inicialização da interface (procura atualização no GitHub ao abrir)
+  main.py               inicialização da interface (procura atualização ao abrir)
   cli.py                linha de comando
   core/                 núcleo SEM Qt
     dxf_import.py       leitura, unidades, blocos, cores
@@ -121,47 +265,62 @@ app/
     geometry.py         discretização, transformações, offset
     nfp.py              No-Fit Polygon / Inner-Fit Polygon com cache
     placement.py        decodificador (posicionamento)
-    optimizer.py        algoritmo genético paralelo (para sozinho sem melhora)
-    sheets.py           índice das placas (numeração, material, andamento do corte)
+    optimizer.py        algoritmo genético paralelo
+    sheets.py           índice das placas (numeração, material, andamento)
     validate.py         verificação final com geometria fina
     collision.py        colisão para o ajuste manual
-    dxf_export.py       escrita do DXF final (todas as placas + nº das placas)
-    project.py          salvar/abrir .sindri
-    intranet.py         leitura da intranet FIAP (scripts e organização dos arquivos)
+    dxf_export.py       DXF final (todas as placas + nº das placas)
+    project.py          salvar/abrir .sindri (geometria embutida)
+    intranet.py         leitura da intranet FIAP
     rdworks.py          abrir o RDWorks
     cleanup.py          limpeza de arquivos baixados/exportados
-    updater.py          atualização automática pelo GitHub
+    updater.py          atualização pelo GitHub, com backup e reversão
     models.py           Part, Placement, NestResult, NestParams
   ui/
-    main_window.py      janela principal (monta as partes abaixo)
-    mainwindow/         partes da janela: ui_build, files, projects, nesting, editing,
+    main_window.py      janela principal
+    mainwindow/         ui_build, files, projects, nesting, editing,
                         checklist, status, export, updates
     canvas.py           desenho das placas e peças
-    parts_panel.py      lista de peças, placas cortadas e solicitações
-    intranet.py         janela da intranet (navegador embutido)
+    parts_panel.py      peças, placas cortadas e solicitações
+    intranet.py         janela da intranet
     report.py           relatório PDF
     settings_panel.py, dialogs.py, prefs.py, theme.py, icons.py, owners.py, render.py
-  workers/nest_worker.py  thread que coordena o encaixe sem travar a tela
+  workers/nest_worker.py  coordena o encaixe sem travar a tela
+docs/                   capturas de tela e revisão técnica
 tests/                  pytest
 ```
 
-## Atualização automática
-Ao abrir, o Sindri consulta o GitHub (`Muzashii/Sindri`). Se houver versão nova, aparece um aviso com
-**Atualizar agora**: ele baixa o pacote, guarda os arquivos antigos em `_backup_atualizacao`, instala por cima (sem
-tocar em `.venv`/`libs`) e reinicia pelo `executar.bat` (que instala bibliotecas novas, se houver). A versão
-instalada fica em `versao.txt`. Desligar: *Ajuda › Procurar atualizações ao abrir*.
+</details>
 
-## Testes
+Decisões de projeto (tolerâncias, espaçamento, formato do DXF) estão em [`DECISIONS.md`](DECISIONS.md). A revisão
+técnica mais recente está em [`docs/REVISAO_TECNICA.md`](docs/REVISAO_TECNICA.md).
+
+---
+
+## 🧪 Testes
+
 ```bash
 pip install pytest pytest-cov
 python -m pytest --cov=app/core
 ```
-68 testes (importação, geometria, NFP, posicionamento sem sobreposição, otimizador paralelo, exportação R12/R2000 com
-reimportação, projeto, CLI e um teste de ponta a ponta da interface em modo sem tela). Cobertura do `core/`: ~92%.
 
-## Pendente de validação no laboratório
-- Abrir os DXF exportados no **RDWorks** (R2000 e R12) e cortar uma placa de teste.
-- Comparar o aproveitamento com o encaixe manual de um arquivo real.
-- Gerar o `.exe` no Windows com `build_exe.bat`.
+95 testes cobrem importação, geometria, NFP, posicionamento sem sobreposição, otimizador paralelo, exportação R12/R2000
+com reimportação, projetos, intranet (com página simulada), limpeza, atualização, CLI e um fluxo completo da interface
+em modo sem tela.
 
-Referências: SVGnest e Deepnest (Jack Qiao, MIT), ezdxf, Shapely, pyclipper; Burke et al. (2007) sobre NFP.
+---
+
+## 🔬 Pendente de validação no laboratório
+
+- [ ] Abrir os DXF exportados no **RDWorks** (R2000 e R12) e cortar uma placa de teste
+- [ ] Comparar o aproveitamento com o encaixe manual de um arquivo real
+- [ ] Gerar o `.exe` no Windows com `build_exe.bat`
+
+---
+
+<div align="center">
+<sub>
+Feito para o Laboratório Maker da FIAP · Referências: SVGnest e Deepnest (Jack Qiao, MIT), ezdxf, Shapely, pyclipper;
+Burke et al. (2007) sobre NFP.
+</sub>
+</div>

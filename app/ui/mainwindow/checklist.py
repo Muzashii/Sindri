@@ -70,8 +70,9 @@ class ChecklistMixin:
             self.statusBar().showMessage(f"Solicitação {tag}: nenhuma peça encaixada ainda.", 6000)
 
     def on_part_done(self, pid: str, on: bool):
+        self._push_undo()
         (self.done_parts.add if on else self.done_parts.discard)(pid)
-        self.dirty = True
+        self.mark_changed()
         self._refresh_cut_panel()
         self.schedule_autosave()
         if on and self.parts and all(p.id in self.done_parts for p in self.parts):
@@ -79,14 +80,16 @@ class ChecklistMixin:
 
     def on_sheet_cut(self, si: int, on: bool):
         """Placa cortada: as peças que só aparecem em placas cortadas ficam como feitas."""
+        self._push_undo()
         (self.cut_sheets.add if on else self.cut_sheets.discard)(si)
         idx = self.sheet_index()
         for pid in {pl.part_id for pl in idx.by_sheet.get(si, ())}:
-            if on and idx.sheets_of_part.get(pid, set()) <= self.cut_sheets:
+            instances = {pl.instance for pl in self.placements if pl.part_id == pid and pl.sheet_index in self.cut_sheets}
+            if on and instances == set(range(self.pmap[pid].quantity)):
                 self.done_parts.add(pid)
             elif not on:
                 self.done_parts.discard(pid)
-        self.dirty = True
+        self.mark_changed()
         if self.canvas.mode == "layout":
             self.canvas.set_cut(self.cut_sheets)
         self._refresh_cut_panel()
@@ -95,8 +98,10 @@ class ChecklistMixin:
             self.statusBar().showMessage("Todas as placas cortadas! 🎉", 8000)
 
     def reset_checklist(self):
+        self._push_undo()
         self.cut_sheets.clear()
         self.done_parts.clear()
         if self.canvas.mode == "layout":
             self.canvas.set_cut(self.cut_sheets)
         self._refresh_cut_panel()
+        self.mark_changed()

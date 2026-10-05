@@ -9,6 +9,7 @@ import argparse
 import os
 import sys
 import time
+import math
 
 from .core.dxf_export import export_sheets
 from .core.models import NestParams
@@ -32,6 +33,7 @@ def main(argv=None) -> int:
     ap.add_argument("--contorno-placa", action="store_true")
     ap.add_argument("--saida", default="saida_nest")
     ap.add_argument("--nome", default=None)
+    ap.add_argument("--permitir-parcial", action="store_true", help="Exportar somente as peças que couberam (retorno 4)")
     ap.add_argument("--com-textos", action="store_true", help="Manter textos (gravação) do DXF")
     ap.add_argument("--unidade", choices=["auto", "mm", "cm", "pol", "m"], default="auto",
                     help="Unidade do DXF (auto = a declarada no arquivo)")
@@ -47,6 +49,13 @@ def main(argv=None) -> int:
                         part_in_part=not a.sem_part_in_part,
                         ignore_text=not a.com_textos,
                         units_override={"auto": -1, "mm": 4, "cm": 5, "pol": 1, "m": 6}[a.unidade])
+    try:
+        params.validate()
+        if not math.isfinite(a.tempo) or a.tempo <= 0 or (a.processos is not None and a.processos < 0):
+            raise ValueError("Tempo deve ser positivo e processos não pode ser negativo.")
+    except ValueError as e:
+        print(f"Parâmetros inválidos: {e}")
+        return 2
     rep = import_files(a.arquivos, params.join_tolerance, params.curve_tolerance, **params.import_kwargs())
     for wmsg in rep.warnings:
         print("Aviso:", wmsg)
@@ -68,6 +77,11 @@ def main(argv=None) -> int:
         print("ATENÇÃO — problemas na verificação final:")
         for i in issues:
             print("  -", i)
+        return 3
+    incomplete = len(res.placements) < total or len(rep.files) < len(a.arquivos)
+    if incomplete and (not a.permitir_parcial or not res.placements):
+        print("Encaixe incompleto; nenhum arquivo exportado. Use --permitir-parcial para exportar as peças que couberam.")
+        return 4
     base = a.nome or os.path.splitext(os.path.basename(a.arquivos[0]))[0]
     files = export_sheets(rep.parts, res.placements, params, a.saida, base, a.versao,
                           combined=len({p.sheet_index for p in res.placements}) > 1,
@@ -76,7 +90,7 @@ def main(argv=None) -> int:
         print("Gerado:", f)
     for pid, inst in res.unplaced:
         print(f"Não coube: {pmap[pid].name} #{inst + 1}")
-    return 0 if not issues else 3
+    return 4 if incomplete else 0
 
 
 if __name__ == "__main__":

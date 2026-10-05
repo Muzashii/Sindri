@@ -290,7 +290,7 @@ def test_projeto_guarda_lote(tmp_path):
                  request={"batch": True, "requests": [{"code": 8759}, {"code": 8760}]},
                  checklist={"cut": [0, 2], "delivered": ["8759"]})
     pr = load_project(proj)
-    assert pr.checklist == {"cut": [0, 2], "delivered": ["8759"]}
+    assert pr.checklist == {}          # sem encaixe salvo, as marcações de corte não valem
     assert pr.tags == tags and {p.tag for p in pr.parts} == {"8759", "8760"}
     assert pr.request["batch"] and pr.label == "lote_8759-8760"
 

@@ -14,12 +14,17 @@ from .common import MAX_UNDO
 class EditingMixin:
     def _snapshot(self):
         return (copy.deepcopy(self.placements), self.n_sheets, {p.id: p.quantity for p in self.parts},
-                list(self.unplaced), set(self.cut_sheets))
+                list(self.unplaced), set(self.cut_sheets), set(self.done_parts),
+                {p.id: p.rotation_locked for p in self.parts})
 
     def _restore(self, snap):
         pls, n, qty, unplaced = snap[:4]
         if len(snap) > 4:
             self.cut_sheets = set(snap[4])
+        if len(snap) > 6:
+            self.done_parts = set(snap[5])
+            for p in self.parts:
+                p.rotation_locked = snap[6].get(p.id, False)
         self.placements = copy.deepcopy(pls)
         self.n_sheets = n
         self.unplaced = list(unplaced)
@@ -28,6 +33,8 @@ class EditingMixin:
                 p.quantity = qty[p.id]
                 self.parts_panel.set_quantity(p.id, p.quantity)
         self.parts_panel.update_summary()
+        self._rebuild_checker()
+        self.parts_panel.set_parts(self.parts, self.too_big)
         if self.placements and self.tabs.currentIndex() != 1:
             self.tabs.setCurrentIndex(1)
         else:
@@ -47,14 +54,14 @@ class EditingMixin:
             return
         self.redo_stack.append(self._snapshot())
         self._restore(self.undo_stack.pop())
-        self.dirty = True
+        self.mark_changed()
 
     def redo(self):
         if self.worker is not None or not self.redo_stack:
             return
         self.undo_stack.append(self._snapshot())
         self._restore(self.redo_stack.pop())
-        self.dirty = True
+        self.mark_changed()
 
     def _check_drag_collisions(self):
         if not self.checker:
@@ -102,7 +109,7 @@ class EditingMixin:
             if s >= self.n_sheets:
                 grow = True
         self._compact_sheets()
-        self.dirty = True
+        self.mark_changed()
         self.schedule_autosave()
         if grow or any(it.placement.sheet_index != s for it, s, _, _ in moved):
             self._redraw(keep_view=True)
@@ -133,14 +140,14 @@ class EditingMixin:
             return
         p = self.settings_panel.params()
         steps = len(p.rotations())
-        step = 90.0 if steps <= 4 else 360.0 / steps
+        step = 360.0 / steps
         self._push_undo()
         for pl in sel:
             if self.pmap[pl.part_id].rotation_locked:
                 self.statusBar().showMessage("Esta peça está com rotação travada.", 4000)
                 continue
             pl.rotation = round((pl.rotation + step) % 360.0, 4)
-        self.dirty = True
+        self.mark_changed()
         for it in self.canvas.selected_items():
             it.sync_from_placement()
         self._mark_collisions()
@@ -155,7 +162,7 @@ class EditingMixin:
         self._push_undo()
         for pl in sel:
             pl.mirrored = not pl.mirrored
-        self.dirty = True
+        self.mark_changed()
         self._redraw(keep_view=True)
 
     def toggle_lock_selected(self):
@@ -166,6 +173,7 @@ class EditingMixin:
         new = not all(pl.locked for pl in sel)
         for pl in sel:
             pl.locked = new
+        self.mark_changed()
         for it in self.canvas.selected_items():
             it.update()
         self.statusBar().showMessage(
@@ -185,9 +193,10 @@ class EditingMixin:
                     other.instance -= 1
             self.parts_panel.set_quantity(part.id, part.quantity)
         self._compact_sheets()
-        self.dirty = True
+        self.mark_changed()
         self._redraw(keep_view=True)
         self.parts_panel.update_summary()
+        self.reconcile_state()
         self._update_status()
 
     def select_all(self):
@@ -202,7 +211,7 @@ class EditingMixin:
         for pl in sel:
             pl.sheet_index = target
         self._compact_sheets()
-        self.dirty = True
+        self.mark_changed()
         self._redraw(keep_view=True)
         self._update_status()
 
@@ -237,7 +246,9 @@ class EditingMixin:
         part.quantity = q
         before = len(self.placements)
         self.placements = [pl for pl in self.placements if not (pl.part_id == pid and pl.instance >= q)]
-        self.dirty = True
+        self.mark_changed()
+        self.done_parts.discard(pid)
+        self.reconcile_state()
         if len(self.placements) != before:
             self._redraw(keep_view=True)
         self.parts_panel.update_summary()
@@ -246,9 +257,10 @@ class EditingMixin:
     def on_rotation_lock_changed(self, pid: str, locked: bool):
         part = self.pmap.get(pid)
         if part:
+            self._push_undo()
             part.rotation_locked = locked
             self._rebuild_checker()
-            self.dirty = True
+            self.mark_changed()
 
     def multiply_kits(self):
         if not self.parts:
@@ -261,17 +273,20 @@ class EditingMixin:
             for p in self.parts:
                 p.quantity = p.file_quantity * n
                 self.parts_panel.set_quantity(p.id, p.quantity)
+            self.reconcile_state()
+            self._redraw(keep_view=True)
             self.parts_panel.update_summary()
             self._update_status()
-            self.dirty = True
+            self.mark_changed()
 
     def reset_quantities(self):
         self._push_undo()
-        self.dirty = True
+        self.mark_changed()
         for p in self.parts:
             p.quantity = p.file_quantity
             self.parts_panel.set_quantity(p.id, p.quantity)
         self.placements = [pl for pl in self.placements if pl.instance < self.pmap[pl.part_id].quantity]
+        self.reconcile_state()
         self._redraw(keep_view=True)
         self.parts_panel.update_summary()
         self._update_status()
