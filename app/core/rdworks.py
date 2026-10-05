@@ -92,10 +92,21 @@ def files_to_open(files: list[str]) -> list[str]:
     return combined or dxfs[:1]
 
 
-def launch(exe: str, path: str) -> subprocess.Popen:
+def _shell_execute(exe: str, path: str) -> None:
+    """Abre pelo Windows (ShellExecute): mostra o pedido de permissão (UAC) quando o programa exige
+    administrador — o RDWorks exige, e por isso subprocess dá 'WinError 740 ... requer elevação'."""
+    import ctypes
+    r = ctypes.windll.shell32.ShellExecuteW(None, "open", exe, f'"{os.path.abspath(path)}"',
+                                            os.path.dirname(exe) or None, 1)
+    if r <= 32:
+        if r == 5:      # acesso negado: o usuário recusou o pedido de permissão
+            raise OSError("o pedido de permissão do Windows foi recusado")
+        raise OSError(f"o Windows não conseguiu abrir o programa (código {r})")
+
+
+def launch(exe: str, path: str) -> None:
     """Abre o RDWorks com o arquivo. Diretório de trabalho = pasta do programa (ele lê configs de lá)."""
-    flags = 0
     if sys.platform == "win32":
-        flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-    return subprocess.Popen([exe, os.path.abspath(path)], cwd=os.path.dirname(exe) or None,
-                            creationflags=flags, close_fds=True)
+        _shell_execute(exe, path)
+        return
+    subprocess.Popen([exe, os.path.abspath(path)], cwd=os.path.dirname(exe) or None, close_fds=True)

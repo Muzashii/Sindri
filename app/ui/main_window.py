@@ -1427,9 +1427,11 @@ class MainWindow(QMainWindow):
         try:
             launch(exe, path)
         except OSError as e:
-            st.remove("rdworks/exe")
+            if not os.path.isfile(exe):
+                st.remove("rdworks/exe")
             return f"Não foi possível abrir o RDWorks: {e}"
-        msg = f"Abrindo {os.path.basename(path)} no RDWorks."
+        msg = (f"Abrindo {os.path.basename(path)} no RDWorks "
+               "(o Windows pode pedir permissão — o RDWorks roda como administrador).")
         n_sheets = sum(1 for f in files if f.lower().endswith(".dxf") and "_placa" in os.path.basename(f).lower())
         if not path.lower().endswith("_todas_placas.dxf") and n_sheets > 1:
             msg += f" As outras {n_sheets - 1} placa(s) estão na pasta."
