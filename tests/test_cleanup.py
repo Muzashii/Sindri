@@ -44,6 +44,7 @@ def test_menu_limpar(tmp_path, monkeypatch):
     (out / "t_todas_placas.dxf").write_text("x")
     settings().setValue("intranet/folder", str(base))
     settings().setValue("export/history", [str(out / "t_relatorio.pdf")])   # 1 item: vira str no Windows
+    settings().setValue("export/last_dir", str(out))
     seen = {}
 
     class FakeDlg:

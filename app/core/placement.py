@@ -241,6 +241,8 @@ class Decoder:
                         v = self.cache.variant(pid, r, m)
                         pos = self._try_place(sheet, v, criterion)
                         if pos is not None:
+                            if sheet.material is None:      # placa vazia criada antes de uma travada
+                                sheet.material = mat
                             sheet.add(_Placed(pid, inst, v, pos[0], pos[1], r, m, host=pos[2]))
                             placements.append(Placement(pid, inst, si, pos[0] / S, pos[1] / S,
                                                         round_rot(r), m))

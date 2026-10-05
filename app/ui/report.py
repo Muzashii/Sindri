@@ -47,6 +47,8 @@ def owners_for(parts: dict[str, Part], placements: list[Placement], requests: li
         if k not in keys:
             keys.append(k)
     keys.sort(key=lambda k: (k == "", k))
+    from .owners import owner_colors
+    cols = owner_colors(parts.values())          # mesmas cores da tela
     out = {}
     for i, k in enumerate(keys):
         r = reqs.get(k) or (next(iter(reqs.values())) if (not k and len(reqs) == 1) else {})
@@ -54,7 +56,7 @@ def owners_for(parts: dict[str, Part], placements: list[Placement], requests: li
         who = " · ".join(x for x in (r.get("nome", ""), f"RM {r['rm']}" if r.get("rm") else "") if x)
         extra = " · ".join(x for x in (r.get("projeto", ""), f"Prof. {r['professor']}" if r.get("professor") else "")
                            if x)
-        out[k] = Owner(k, QColor(OWNER_COLORS[i % len(OWNER_COLORS)]), title or "Peças", who, extra)
+        out[k] = Owner(k, QColor(cols.get(k, QColor(OWNER_COLORS[0]))), title or "Peças", who, extra)
     for p in parts.values():
         if p.tag in out:
             out[p.tag].parts.append(p.id)
@@ -166,6 +168,9 @@ class _Doc:
         self.writer.setResolution(RES)
         self.writer.setTitle(title)
         self.p = QPainter(self.writer)
+        if not self.p.isActive():
+            raise OSError(f"não foi possível gravar {os.path.basename(path)} — se ele estiver aberto "
+                          "(navegador/leitor de PDF), feche e exporte de novo")
         self.p.setRenderHint(QPainter.Antialiasing)
         self.W, self.H = float(self.writer.width()), float(self.writer.height())
         self.page = 0
@@ -482,7 +487,10 @@ def export_pdf(path: str, title: str, parts: dict[str, Part], result: NestResult
         d.text(0, d.y + 10, d.W, row, f"Sem lugar (não estão em nenhuma placa): {len(result.unplaced)} peça(s)", "#b91c1c")
     paint_w = d.W
     d.end()
-    _add_clickable_boxes(path, d.boxes, paint_w)
+    try:                                   # caixinhas clicáveis são um extra: nunca derrubam a exportação
+        _add_clickable_boxes(path, d.boxes, paint_w)
+    except Exception:
+        pass
     return path
 
 

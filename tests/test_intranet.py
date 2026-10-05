@@ -137,7 +137,7 @@ def test_dialogo_baixa_da_pagina_simulada(tmp_path):
     assert d.list.rowCount() == 1
     d.search.setText("")
     # clicar na linha só VISUALIZA: nada é baixado
-    d.list.selectRow(0)
+    d.list.cellClicked.emit(0, 1)
     assert pump(lambda: d.detail is not None and d.detail.code == 8759, 40)
     assert not os.path.exists(str(tmp_path / "solic"))
     mats = d.detail.materials()
@@ -294,3 +294,21 @@ def test_projeto_guarda_lote(tmp_path):
     assert pr.checklist == {"cut": [0, 2], "delivered": ["8759"]}
     assert pr.tags == tags and {p.tag for p in pr.parts} == {"8759", "8760"}
     assert pr.request["batch"] and pr.label == "lote_8759-8760"
+
+
+def test_projeto_lote_com_arquivos_de_mesmo_nome(tmp_path):
+    import shutil
+    a = tmp_path / "8759 - Ana" / "MDF 3mm" / "peca.dxf"
+    b = tmp_path / "8760 - Bia" / "Acrilico" / "peca.dxf"
+    for p, src in ((a, fx("furos.dxf")), (b, fx("simples.dxf"))):
+        p.parent.mkdir(parents=True)
+        shutil.copy(src, p)
+    fs = [str(a), str(b)]
+    mats = {str(a): "MDF 3mm", str(b): "Acrilico"}
+    mult = {str(a): 2, str(b): 5}
+    tags = {str(a): "8759", str(b): "8760"}
+    rep = import_files(fs, multipliers=mult, file_materials=mats, file_tags=tags)
+    proj = str(tmp_path / "lote.sindri")
+    save_project(proj, fs, NestParams(), rep.parts, None, multipliers=mult, materials=mats, tags=tags)
+    pr = load_project(proj)
+    assert pr.materials == mats and pr.multipliers == mult and pr.tags == tags

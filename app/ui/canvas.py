@@ -98,8 +98,14 @@ class SheetLabel(QGraphicsItem):
         self.w1 = QFontMetrics(self.f1).horizontalAdvance(title)
         self.w2 = QFontMetrics(self.f2).horizontalAdvance(sub)
         self.w0 = (QFontMetrics(self.f2).horizontalAdvance(material) + 18) if material else 0
-        self.wd = (QFontMetrics(self.f2).horizontalAdvance("✓ cortada") + 18) if done else 0
+        self.wd = QFontMetrics(self.f2).horizontalAdvance("✓ cortada") + 18
+        self.set_done(done)
+
+    def set_done(self, done: bool):
+        self.prepareGeometryChange()
+        self.done = done
         self.width = self.w0 + self.w1 + self.w2 + 34 + (self.wd + 6 if done else 0)
+        self.update()
 
     def boundingRect(self) -> QRectF:
         return QRectF(0, -32, self.width, 26)
@@ -153,6 +159,10 @@ class PartItem(QGraphicsItem):
         self.label_pt = self._label_point()
 
     def _label_point(self) -> QPointF:
+        cache = self.part.__dict__.setdefault("_label_pts", {})
+        key = bool(self.placement.mirrored)
+        if key in cache:
+            return cache[key]
         from shapely import affinity
         from shapely.ops import polylabel
         g = self.part.outer
@@ -162,7 +172,8 @@ class PartItem(QGraphicsItem):
             pt = polylabel(g, tolerance=max(0.5, (g.bounds[2] - g.bounds[0]) / 50))
         except Exception:
             pt = g.representative_point()
-        return QPointF(pt.x, pt.y)
+        cache[key] = QPointF(pt.x, pt.y)
+        return cache[key]
 
     def sync_from_placement(self):
         pl = self.placement
@@ -273,6 +284,7 @@ class NestCanvas(QGraphicsView):
         self.dark = False
         self.part_items: list[PartItem] = []
         self.sheet_items: list[SheetItem] = []
+        self.sheet_labels: list = []
         self._panning = False
         self._pan_start = None
         self.editable = True
@@ -292,6 +304,7 @@ class NestCanvas(QGraphicsView):
     def clear(self):
         self.part_items = []
         self.sheet_items = []
+        self.sheet_labels = []
         self.scene().blockSignals(True)
         self.scene().clear()
         self.scene().blockSignals(False)
@@ -370,7 +383,9 @@ class NestCanvas(QGraphicsView):
             sub_txt = (f"{len(pls)} peças · {100 * util:.1f}%".replace(".", ",")) if pls else "vazia"
             label = SheetLabel(txt, sub_txt, mat, done)
             label.setPos(sheet_offset(params, i), params.sheet_height)
+            label.index = i
             self.scene().addItem(label)
+            self.sheet_labels.append(label)
         for pl in placements:
             part = parts.get(pl.part_id)
             if part is None:
@@ -388,6 +403,17 @@ class NestCanvas(QGraphicsView):
             self.centerOn(center)
         else:
             self.fit_all()
+
+    def set_cut(self, cut: set):
+        """Atualiza só a marcação 'cortada' das placas (sem redesenhar as peças)."""
+        self.cut_sheets = cut
+        for it in self.sheet_items:
+            if it.done != (it.index in cut):
+                it.done = it.index in cut
+                it.update()
+        for lb in self.sheet_labels:
+            if lb.done != (lb.index in cut):
+                lb.set_done(lb.index in cut)
 
     def set_editable(self, editable: bool):
         self.editable = editable

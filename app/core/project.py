@@ -33,6 +33,12 @@ class Project:
     checklist: dict = field(default_factory=dict)
 
 
+def _get(d: Optional[dict], f: str, default):
+    if not d:
+        return default
+    return d.get(os.path.abspath(f), d.get(f, default))
+
+
 def save_project(path: str, files: list[str], params: NestParams, parts: list[Part],
                  result: Optional[NestResult], multipliers: Optional[dict] = None,
                  label: Optional[str] = None, materials: Optional[dict] = None,
@@ -55,6 +61,10 @@ def save_project(path: str, files: list[str], params: NestParams, parts: list[Pa
         "request": request,
         "checklist": checklist or {},
         "tags": [[os.path.relpath(os.path.abspath(k), base), v] for k, v in (tags or {}).items()],
+        # por arquivo, na mesma ordem de "files" (não depende do nome: num lote, vários alunos
+        # mandam arquivos com o mesmo nome)
+        "file_info": [{"mult": int(_get(multipliers, f, 1)), "material": _get(materials, f, ""),
+                       "tag": _get(tags, f, "")} for f in files],
     }
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -82,24 +92,31 @@ def load_project(path: str) -> Project:
                                "Coloque-o na mesma pasta do projeto.")
         files.append(found)
     params = NestParams.from_json(data.get("params", {}))
-    multipliers = {}
-    for rel, v in data.get("multipliers", []) or []:
-        p = os.path.abspath(os.path.join(base, rel))
-        for f in files:
-            if os.path.abspath(f) == p or os.path.basename(f) == os.path.basename(p):
-                multipliers[os.path.abspath(f)] = int(v)
-    materials = {}
-    for rel, v in data.get("materials", []) or []:
-        p = os.path.abspath(os.path.join(base, rel))
-        for f in files:
-            if os.path.abspath(f) == p or os.path.basename(f) == os.path.basename(p):
-                materials[os.path.abspath(f)] = v
-    tags = {}
-    for rel, v in data.get("tags", []) or []:
-        p = os.path.abspath(os.path.join(base, rel))
-        for f in files:
-            if os.path.abspath(f) == p:
-                tags[os.path.abspath(f)] = v
+    multipliers, materials, tags = {}, {}, {}
+    info = data.get("file_info")
+    if isinstance(info, list) and len(info) == len(files):
+        for f, fi in zip(files, info):
+            k = os.path.abspath(f)
+            if int(fi.get("mult", 1)) != 1:
+                multipliers[k] = int(fi["mult"])
+            if fi.get("material"):
+                materials[k] = fi["material"]
+            if fi.get("tag"):
+                tags[k] = fi["tag"]
+    else:                                   # projetos antigos: caminho exato, ou nome se for único
+        def match(rel):
+            p = os.path.abspath(os.path.join(base, rel))
+            exact = [f for f in files if os.path.abspath(f) == p]
+            if exact:
+                return exact[0]
+            same = [f for f in files if os.path.basename(f) == os.path.basename(p)]
+            return same[0] if len(same) == 1 else None
+        for key, dest, conv in (("multipliers", multipliers, int), ("materials", materials, str),
+                                ("tags", tags, str)):
+            for rel, v in data.get(key, []) or []:
+                f = match(rel)
+                if f:
+                    dest[os.path.abspath(f)] = conv(v)
     report = import_files(files, params.join_tolerance, params.curve_tolerance, **params.import_kwargs(),
                           multipliers=multipliers, file_materials=materials, file_tags=tags)
     saved = data.get("parts", {})

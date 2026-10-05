@@ -85,8 +85,12 @@ exit /b 0
 
 REM ======================= Plano B: Anaconda =======================
 :try_conda
-set "CPY=%USERPROFILE%\anaconda3\python.exe"
-if not exist "%CPY%" goto :blocked
+set "CDIR="
+for %%D in ("%USERPROFILE%\anaconda3" "%USERPROFILE%\miniconda3" "%ProgramData%\anaconda3" "%ProgramData%\miniconda3" "%LOCALAPPDATA%\anaconda3" "%LOCALAPPDATA%\miniconda3") do (
+    if not defined CDIR if exist "%%~D\python.exe" set "CDIR=%%~D"
+)
+if not defined CDIR goto :blocked
+set "CPY=%CDIR%\python.exe"
 "%CPY%" -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>nul
 if errorlevel 1 goto :blocked
 echo.
@@ -104,7 +108,8 @@ if errorlevel 1 "%CPY%" -m pip install --upgrade --target "%~dp0libs" --no-deps 
 "%CPY%" -c "%CHECK%" >"%LOG%" 2>&1
 if errorlevel 1 goto :blocked
 :conda_ok
-echo ok> "libs\usar_conda.txt"
+if not exist "libs" mkdir "libs"
+> "libs\usar_conda.txt" echo %CDIR%
 set "DN_TARGET=%~dp0executar.bat"
 set "DN_ARGS="
 set "DN_STYLE=7"
@@ -113,7 +118,9 @@ echo Funcionou com o Anaconda.
 
 :run_conda
 set "PYTHONPATH=%~dp0libs"
-set "CPYW=%USERPROFILE%\anaconda3\pythonw.exe"
+if not defined CDIR set /p CDIR=<"libs\usar_conda.txt"
+if "%CDIR%"=="ok" set "CDIR=%USERPROFILE%\anaconda3"
+set "CPYW=%CDIR%\pythonw.exe"
 if not exist "%CPYW%" (
     del "libs\usar_conda.txt" >nul 2>nul
     goto :blocked
@@ -136,7 +143,7 @@ exit /b 0
 
 :blocked
 echo.
-if not defined VPY if not exist "%USERPROFILE%\anaconda3\python.exe" goto :nopython
+if not defined VPY if not defined CDIR goto :nopython
 echo ==========================================================================
 echo [BLOQUEADO PELO WINDOWS] O Windows impediu o Python de carregar uma
 echo biblioteca do programa ("Uma politica de Controle de Aplicativo bloqueou

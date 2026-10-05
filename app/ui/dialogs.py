@@ -127,8 +127,8 @@ class ExportDialog(QDialog):
         self.path = QCheckBox("Ordenar peças pelo caminho mais curto")
         self.path.setChecked(st.value("export/path", "true") == "true")
         self.open_rd = QCheckBox("Abrir no RDWorks depois de exportar")
-        self.open_rd.setToolTip("Abre o RDWorks com um arquivo contendo todas as placas organizadas lado a "
-                                "lado (todos os materiais; os arquivos de cada placa também são salvos).")
+        self.open_rd.setToolTip("Abre no RDWorks o arquivo com todas as placas organizadas lado a lado "
+                                "(todos os materiais, na ordem Placa 1, 2, 3… do relatório e do checklist).")
         self.open_rd.setChecked(st.value("export/open_rdworks", "true") == "true")
         info = QLabel("Saem 2 arquivos: <b>todas as placas</b> organizadas num DXF (o que vai para o RDWorks) "
                       "e o <b>relatório PDF</b> com o desenho de cada placa, de quem é cada peça e a "
@@ -180,7 +180,8 @@ class CleanupDialog(QDialog):
         self.setWindowTitle("Limpar arquivos do Sindri")
         self.setMinimumWidth(520)
         lay = QVBoxLayout(self)
-        intro = QLabel("Os arquivos escolhidos vão para a <b>Lixeira</b> (dá para recuperar de lá).")
+        intro = QLabel("Os arquivos escolhidos vão para a <b>Lixeira</b> (dá para recuperar de lá). "
+                       "Projetos salvos (.sindri) que usam solicitações apagadas não vão mais abrir.")
         intro.setWordWrap(True)
         lay.addWidget(intro)
         self.checks: dict[str, QCheckBox] = {}

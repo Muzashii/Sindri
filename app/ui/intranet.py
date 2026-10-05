@@ -87,6 +87,7 @@ class IntranetDialog(QDialog):
         self.batch_result: Optional[list] = None     # [(detalhe, [arquivos baixados])]
         self._fetch_queue: list[int] = []
         self.file_rows: dict[str, QLabel] = {}
+        self.failed_files: list[str] = []
         t = theme.tokens()
 
         root = QVBoxLayout(self)
@@ -165,7 +166,7 @@ class IntranetDialog(QDialog):
         hh.setSectionResizeMode(1, QHeaderView.Stretch)
         for c in (0, 2, 3):
             hh.setSectionResizeMode(c, QHeaderView.ResizeToContents)
-        self.list.itemSelectionChanged.connect(self._row_selected)
+        self.list.cellClicked.connect(self._cell_clicked)
         self.list.itemChanged.connect(self._item_checked)
         hh.setSectionsClickable(True)
         hh.sectionClicked.connect(self._header_clicked)
@@ -324,6 +325,7 @@ class IntranetDialog(QDialog):
         self._crawl.stop()
         self._crawl_rows = {}
         self._crawled = set()
+        self._cache.clear()
         if self._logged:
             self.view.reload()
         else:
@@ -389,7 +391,6 @@ class IntranetDialog(QDialog):
         if not self._logged or self._crawl.isActive() or not status or status == ALL_STATUS \
                 or status in self._crawled:
             return
-        self._crawled.add(status)
         self._crawl_status = status
         self.page.runJavaScript(JS_CRAWL_RESET, 0)
         self.page.runJavaScript(crawl_script(status), 0)
@@ -411,6 +412,8 @@ class IntranetDialog(QDialog):
         self._crawl_rows[status] = list(data.get("rows") or [])
         if data.get("done"):
             self._crawl.stop()
+            if not data.get("error"):
+                self._crawled.add(status)              # só conta como lida se terminou bem
             self._write_log(status, data)
             self._merge_and_show()
             QTimer.singleShot(0, self._start_crawl)       # status trocado durante a leitura
@@ -506,6 +509,16 @@ class IntranetDialog(QDialog):
             self._sort_desc = not self._sort_desc
             self._set_date_header()
             self._fill_list()
+
+    def _cell_clicked(self, row: int, col: int):
+        """Clicar na linha visualiza; clicar na 1ª coluna (caixinha + nº) só marca/desmarca."""
+        it = self.list.item(row, 0)
+        if it is None:
+            return
+        if col == 0:
+            return              # a própria caixinha cuida da marcação (itemChanged)
+        self.code.setText(it.text())
+        self.view_request()
 
     def _row_selected(self):
         r = self.list.currentRow()
@@ -719,37 +732,68 @@ class IntranetDialog(QDialog):
             return
         self._sending = material
         self._plan = plan
-        for b in getattr(self, "send_buttons", []):
-            b.setEnabled(False)
+        self._set_buttons(False)
         n = sum(len(fs) for _, fs in plan)
         self._set_state(f"Baixando {n} arquivo(s)…", "run")
         self._pending = {}
+        self._claimed: set[str] = set()
         self._dl_ok = 0
-        for d, fs in plan:
-            for f in fs:
-                f.local_path = target_path(self.base_folder, d, f)
-                os.makedirs(os.path.dirname(f.local_path), exist_ok=True)
-                if os.path.exists(f.local_path):
-                    try:
-                        os.remove(f.local_path)
-                    except OSError:
-                        pass
-                key = f"{d.code}__{os.path.basename(f.local_path)}"
-                self._pending[key] = (d, f)
-                lab = self.file_rows.get(self._fkey(d, f))
-                if lab:
-                    lab.setText("baixando…")
-                self.page.download(QUrl(f.url), key)
+        used: set[str] = set()
+        try:
+            for d, fs in plan:
+                for f in fs:
+                    path = target_path(self.base_folder, d, f)
+                    stem, ext = os.path.splitext(path)
+                    k = 2
+                    while os.path.normcase(path) in used:        # mesmo nome duas vezes no pedido
+                        path = f"{stem} ({k}){ext}"
+                        k += 1
+                    used.add(os.path.normcase(path))
+                    if len(path) > 250:
+                        raise OSError(f"caminho muito longo ({len(path)} caracteres): escolha uma pasta mais "
+                                      "curta em “Pasta…”")
+                    f.local_path = path
+                    os.makedirs(os.path.dirname(path), exist_ok=True)
+                    if os.path.exists(path):
+                        os.remove(path)
+                    self._dl_seq = getattr(self, "_dl_seq", 0) + 1
+                    key = f"sindri{self._dl_seq}_{os.path.basename(path)}"
+                    self._pending[key] = (d, f)
+                    lab = self.file_rows.get(self._fkey(d, f))
+                    if lab:
+                        lab.setText("baixando…")
+                    self.page.download(QUrl(f.url), key)
+        except OSError as e:
+            self._pending = {}
+            self._sending = None
+            self._set_buttons(True)
+            for d, fs in plan:
+                for f in fs:
+                    f.local_path = None
+            self._set_state("Não foi possível preparar a pasta dos arquivos", "warn")
+            QMessageBox.warning(self, "Enviar para a placa", f"Não foi possível salvar os arquivos:\n{e}")
+            return
         self._dl_timer.start(DOWNLOAD_TIMEOUT_S * 1000 + 3000 * max(0, n - 3))
 
+    def _set_buttons(self, on: bool):
+        for b in getattr(self, "send_buttons", []):
+            try:
+                b.setEnabled(on)
+            except RuntimeError:          # botão já destruído (tela trocada)
+                pass
+
     def _match(self, req):
-        """Liga o download ao arquivo pedido: pelo nome sugerido ou, se não der, pela URL."""
+        """Liga o download ao arquivo pedido: pelo nome sugerido ou, se não der, pela URL
+        (na ordem em que foram pedidos, sem repetir um arquivo já ligado)."""
         name = req.downloadFileName()
-        if name in self._pending:
+        if name in self._pending and name not in self._claimed:
             return name
         url = req.url().toString()
         for k, (_, f) in self._pending.items():
-            if QUrl(f.url).toString() == url or os.path.basename(url) == os.path.basename(f.url):
+            if k not in self._claimed and QUrl(f.url).toString() == url:
+                return k
+        for k, (_, f) in self._pending.items():
+            if k not in self._claimed and os.path.basename(url.split("?")[0]) == os.path.basename(f.url.split("?")[0]):
                 return k
         return None
 
@@ -757,6 +801,7 @@ class IntranetDialog(QDialog):
         key = self._match(req) if self._sending else None
         if key is None:
             return  # download feito pelo usuário na página: comportamento padrão
+        self._claimed.add(key)
         _, f = self._pending[key]
         req.setDownloadDirectory(os.path.dirname(f.local_path))
         req.setDownloadFileName(os.path.basename(f.local_path))
@@ -796,14 +841,31 @@ class IntranetDialog(QDialog):
     def _finish_send(self):
         material = self._sending
         self._sending = None
-        for b in getattr(self, "send_buttons", []):
-            b.setEnabled(True)
+        self._set_buttons(True)
         if self._dl_ok == 0:
             self._set_state("Nenhum arquivo baixado — a sessão pode ter expirado. Faça login de novo.", "warn")
             self.btn_page.setChecked(True)
             return
+        failed = [(d, f) for d, fs in self._plan for f in fs if not f.local_path]
+        if failed:
+            names = "\n".join(f"• {d.code} — {f.name}" for d, f in failed[:15])
+            r = QMessageBox.question(
+                self, "Alguns arquivos não baixaram",
+                f"{len(failed)} arquivo(s) não foram baixados:\n\n{names}\n\n"
+                "Continuar só com os que baixaram? (Não = ficar aqui e tentar enviar de novo)",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if r != QMessageBox.Yes:
+                self._set_state(f"{len(failed)} arquivo(s) não baixaram — tente enviar de novo", "warn")
+                return
+        self.failed_files = [f"{d.code} — {f.name}" for d, f in failed]
         self.chosen_material = material
         self.batch_result = [(d, [f for f in fs if f.local_path]) for d, fs in self._plan] if self.batch else None
+        if self.batch:                       # lote enviado: desmarca para não mandar de novo sem querer
+            for d, _ in self._plan:
+                self._cache.pop(d.code, None)
+            self._checked = []
+            self._fill_list()
+            self._update_batch_bar()
         self.accept()
 
     # ------------------------------------------------------------------ lote (várias solicitações)
@@ -859,8 +921,9 @@ class IntranetDialog(QDialog):
 
     def _fetch_opened(self, res):
         if res != "ok":
+            left = ", ".join(str(c) for c in self._fetch_queue)
             self._fetch_queue = []
-            self._set_state("A intranet ainda não está pronta — faça login e abra Solicitações Maker", "warn")
+            self._set_state(f"Não consegui abrir {left} — faça login e abra Solicitações Maker", "warn")
             self._update_batch_bar()
             return
         self._fetch.start()
@@ -952,6 +1015,15 @@ class IntranetDialog(QDialog):
         self._fetch.stop()
         self._crawl.stop()
         self._dl_timer.stop()
+        # fechar no meio de um envio/leitura = cancelar (a janela é reaproveitada depois)
+        if self._sending and self.result() != QDialog.Accepted:
+            for d, fs in getattr(self, "_plan", []):
+                for f in fs:
+                    f.local_path = None
+        self._sending = None
+        self._pending = {}
+        self._fetch_queue = []
+        self._set_buttons(True)
         if getattr(self, "_dl_connected", False):
             try:
                 shared_profile().downloadRequested.disconnect(self._download_requested)

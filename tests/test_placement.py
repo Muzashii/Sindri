@@ -162,3 +162,21 @@ def test_detalhe_rapido_fecha_dentes_e_continua_valido(tmp_path):
         params = NestParams(sheet_width=400, sheet_height=300, spacing=0.5, detail=detail)
         res = nest(parts, params, time_limit=10, max_generations=1, workers=0)
         assert validate_layout({q.id: q for q in parts}, res.placements, params) == []
+
+
+def test_placa_vazia_antes_de_travada_nao_mistura_material():
+    """Peça travada na placa 3: as placas vazias criadas antes dela recebem um material só."""
+    from app.core.models import NestParams, Placement
+    from app.core.optimizer import nest
+    from app.core.part_builder import import_files
+    from tests.conftest import fx
+    import os
+    a, b = fx("simples.dxf"), fx("furos.dxf")
+    rep = import_files([a, b], file_materials={os.path.abspath(a): "Acrilico", os.path.abspath(b): "MDF 3mm"})
+    acr = next(p for p in rep.parts if p.material == "Acrilico")
+    locked = [Placement(acr.id, 0, 3, 100, 100, 0, False, True)]
+    res = nest(rep.parts, NestParams(sheet_width=600, sheet_height=400), locked=locked, time_limit=5,
+               max_generations=1, workers=0, seed=1)
+    pm = {p.id: p for p in rep.parts}
+    for si in {pl.sheet_index for pl in res.placements}:
+        assert len({pm[pl.part_id].material for pl in res.placements if pl.sheet_index == si}) == 1

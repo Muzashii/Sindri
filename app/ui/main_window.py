@@ -654,6 +654,7 @@ class MainWindow(QMainWindow):
         self.canvas.show_preview(rep.preview)
         names = ", ".join(os.path.basename(f) for f in self.files)
         self.setWindowTitle(f"{APP_NAME} — {names}" if names else APP_NAME)
+        self._refresh_cut_panel()
         self._update_status()
         self._update_buttons()
         if self._ask_fix_units(rep):
@@ -703,10 +704,12 @@ class MainWindow(QMainWindow):
             self._intranet_dlg = dlg
         dlg.chosen_material = None
         dlg.batch_result = None
+        dlg.failed_files = []
         if not dlg.exec() or not dlg.chosen_material:
             return
+        failed = list(getattr(dlg, "failed_files", []) or [])
         if dlg.batch_result:
-            self._load_batch(dlg.batch_result)
+            self._load_batch(dlg.batch_result, failed)
             return
         if dlg.detail is None:
             return
@@ -728,14 +731,18 @@ class MainWindow(QMainWindow):
                + ". Quantidades da intranet aplicadas; cada material ganha placas próprias.")
         if others:
             txt += " Não carregado: " + ", ".join(others) + "."
-        if not self.banner.isVisible():
+        if failed:
+            self.show_banner(txt + f" <b>ATENÇÃO: {len(failed)} arquivo(s) não baixaram:</b> "
+                             + ", ".join(failed[:6]) + ("…" if len(failed) > 6 else ""), "warn")
+        elif not self.banner.isVisible():
             self.show_banner(txt, "info")
         self.setWindowTitle(f"{APP_NAME} — Solicitação {d.code} · RM {rm}")
 
-    def _load_batch(self, items: list):
+    def _load_batch(self, items: list, failed: Optional[list] = None):
         """Várias solicitações encaixadas juntas (cada material com suas placas)."""
         from ..core.intranet import batch_label, batch_summary, file_materials, file_multipliers, file_tags
         items = [(d, [f for f in fs if f.local_path and os.path.isfile(f.local_path)]) for d, fs in items]
+        missing = [str(d.code) for d, fs in items if not fs]
         items = [(d, fs) for d, fs in items if fs]
         if not items:
             return
@@ -746,10 +753,18 @@ class MainWindow(QMainWindow):
                                materials=file_materials(files), request_info=info, tags=file_tags(items)):
             return
         codes = ", ".join(str(d.code) for d, _ in items)
-        self.show_banner(f"Lote com <b>{len(items)}</b> solicitações ({codes}) — "
-                         + ", ".join(f"<b>{m}</b>" for m in info["materials"])
-                         + ". As peças estão juntas nas placas; o nome de cada peça começa com o nº da "
-                           "solicitação.", "info")
+        txt = (f"Lote com <b>{len(items)}</b> solicitações ({codes}) — "
+               + ", ".join(f"<b>{m}</b>" for m in info["materials"])
+               + ". As peças estão juntas nas placas; o nome de cada peça começa com o nº da solicitação.")
+        warn = []
+        if missing:
+            warn.append(f"solicitação(ões) sem nenhum arquivo baixado, NÃO incluídas: {', '.join(missing)}")
+        if failed:
+            warn.append(f"{len(failed)} arquivo(s) não baixaram: " + ", ".join(failed[:6])
+                        + ("…" if len(failed) > 6 else ""))
+        if warn:
+            txt += " <b>ATENÇÃO:</b> " + "; ".join(warn) + "."
+        self.show_banner(txt, "warn" if warn else "info")
         self.setWindowTitle(f"{APP_NAME} — Lote {codes}")
 
     def cleanup_files(self):
@@ -761,7 +776,7 @@ class MainWindow(QMainWindow):
         st = settings()
         base = st.value("intranet/folder", default_base_folder())
         hist = _str_list(st.value("export/history", []))
-        dirs = {os.path.dirname(h) for h in hist} | {st.value("export/last_dir", "")}
+        dirs = [st.value("export/last_dir", "")]        # pasta da última exportação (+ o histórico)
         log = os.path.join(os.path.dirname(base), "intranet_log.txt")
         groups = [
             ("down", "Arquivos das solicitações baixadas da intranet", downloaded_files(base), True),
@@ -782,6 +797,9 @@ class MainWindow(QMainWindow):
         if loaded & {os.path.abspath(f) for f in files}:
             if self.worker is not None:
                 self.stop_nest(wait=True)
+            if not self.confirm_discard():   # oferece salvar o encaixe/checklist antes
+                return
+            self.dirty = False
             self.clear_all(ask=False)        # as peças abertas vêm de arquivos que serão apagados
         size = total_size(files)
         failed = []
@@ -945,6 +963,7 @@ class MainWindow(QMainWindow):
         self.parts_panel.set_parts(self.parts, self.too_big)
         self.settings_panel.set_layers((proj.report.extra or {}).get("layers", {}) if proj.report else {})
         self.setWindowTitle(f"{APP_NAME} — {os.path.basename(path)}")
+        self._refresh_cut_panel()
         if self.placements:
             self.tabs.blockSignals(True)
             self.tabs.setCurrentIndex(1)
@@ -1111,10 +1130,9 @@ class MainWindow(QMainWindow):
     def on_sheet_cut(self, si: int, on: bool):
         (self.cut_sheets.add if on else self.cut_sheets.discard)(si)
         self.dirty = True
-        if self.tabs.currentIndex() == 1:
-            self._redraw(keep_view=True)
-        else:
-            self._refresh_cut_panel()
+        if self.canvas.mode == "layout":
+            self.canvas.set_cut(self.cut_sheets)
+        self._refresh_cut_panel()
         nums = sheet_numbers(self.pmap, self.placements)
         if on and len(self.cut_sheets) >= len(nums):
             self.statusBar().showMessage("Todas as placas cortadas! 🎉", 8000)
@@ -1127,7 +1145,9 @@ class MainWindow(QMainWindow):
     def reset_checklist(self):
         self.cut_sheets.clear()
         self.delivered.clear()
-        self._redraw(keep_view=True) if self.tabs.currentIndex() == 1 else self._refresh_cut_panel()
+        if self.canvas.mode == "layout":
+            self.canvas.set_cut(self.cut_sheets)
+        self._refresh_cut_panel()
 
     def _show_sheet(self, si: int):
         if self.tabs.currentIndex() != 1:
@@ -1241,10 +1261,12 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ desfazer
     def _snapshot(self):
         return (copy.deepcopy(self.placements), self.n_sheets, {p.id: p.quantity for p in self.parts},
-                list(self.unplaced))
+                list(self.unplaced), set(self.cut_sheets))
 
     def _restore(self, snap):
-        pls, n, qty, unplaced = snap
+        pls, n, qty, unplaced = snap[:4]
+        if len(snap) > 4:
+            self.cut_sheets = set(snap[4])
         self.placements = copy.deepcopy(pls)
         self.n_sheets = n
         self.unplaced = list(unplaced)
@@ -1294,6 +1316,16 @@ class MainWindow(QMainWindow):
         if sum(pt.quantity for pt in self.parts) == 0:
             QMessageBox.information(self, "Encaixar", "Todas as quantidades estão em zero.")
             return
+        if self.cut_sheets and self.placements:
+            r = QMessageBox.question(
+                self, "Encaixar de novo",
+                f"{len(self.cut_sheets)} placa(s) já estão marcadas como cortadas no checklist.\n"
+                "Encaixar de novo reorganiza as peças e desmarca o checklist das placas.\n\n"
+                "Dica: para encaixar só o que falta, remova (Del) as peças das placas já cortadas "
+                "ou trave (L) as que devem ficar onde estão.\n\nContinuar?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if r != QMessageBox.Yes:
+                return
         p = self.settings_panel.params()
         self.params = p
         locked = [pl for pl in self.placements if pl.locked and pl.instance < self.pmap[pl.part_id].quantity]
@@ -1308,7 +1340,7 @@ class MainWindow(QMainWindow):
         self.worker.bestFound.connect(self.on_best)
         self.worker.progress.connect(self.on_progress)
         self.worker.failed.connect(self.on_failed)
-        self.worker.finished.connect(self.on_finished)
+        self.worker.finished.connect(lambda w=self.worker: self.on_finished(w))
         self.worker.start()
         self.tabs.blockSignals(True)
         self.tabs.setCurrentIndex(1)
@@ -1324,8 +1356,7 @@ class MainWindow(QMainWindow):
             return
         self.placements = list(res.placements)
         self.unplaced = list(res.unplaced)
-        self.cut_sheets.clear()          # encaixe novo: checklist recomeça
-        self.delivered.clear()
+        self.cut_sheets.clear()          # encaixe novo: as placas mudam (entregas continuam valendo)
         self.n_sheets = max(res.sheets_used, max([pl.sheet_index + 1 for pl in self.placements], default=0))
         self._redraw(keep_view=self._layout_shown_once)
         self._layout_shown_once = True
@@ -1341,7 +1372,9 @@ class MainWindow(QMainWindow):
                              "Ocorreu um erro inesperado durante o encaixe. A melhor solução até agora foi mantida.\n\n"
                              + msg.split("\n\n")[0])
 
-    def on_finished(self):
+    def on_finished(self, w=None):
+        if w is not None and w is not self.worker:
+            return                        # sinal atrasado de um encaixe antigo
         self.worker = None
         self.dirty = True
         self.canvas.set_editable(True)
@@ -1365,7 +1398,10 @@ class MainWindow(QMainWindow):
         self.worker.stop()
         self.statusBar().showMessage("Parando… mantendo a melhor solução.", 3000)
         if wait:
-            self.worker.wait(10000)
+            if not self.worker.wait(30000):
+                # ainda terminando o cálculo: guarda a referência até a thread acabar (senão o Qt aborta)
+                old = self.worker
+                self._old_workers = [x for x in getattr(self, "_old_workers", []) if x.isRunning()] + [old]
             self.on_finished()
 
     def unlock_all(self):
@@ -1426,12 +1462,14 @@ class MainWindow(QMainWindow):
         self._update_status()
 
     def _compact_sheets(self):
-        """Remove placas vazias do fim e renumera."""
-        used = sorted({pl.sheet_index for pl in self.placements})
-        remap = {s: i for i, s in enumerate(used)}
+        """Remove placas vazias e renumera na ordem por material (a mesma do arquivo 'todas as placas',
+        do relatório e do checklist), levando junto as marcações de 'cortada'."""
+        nums = sheet_numbers(self.pmap, self.placements)          # índice -> nº (1..N) por material
+        remap = {s: n - 1 for s, n in nums.items()}
         for pl in self.placements:
-            pl.sheet_index = remap[pl.sheet_index]
-        self.n_sheets = len(used)
+            pl.sheet_index = remap.get(pl.sheet_index, pl.sheet_index)
+        self.cut_sheets = {remap[s] for s in self.cut_sheets if s in remap}
+        self.n_sheets = len(nums)
 
     def _selected_placements(self) -> list[Placement]:
         if self.worker is not None or self.canvas.mode != "layout":
@@ -1577,6 +1615,16 @@ class MainWindow(QMainWindow):
         if not dlg.exec():
             return
         o = dlg.options()
+        targets = [os.path.join(o["folder"], f"{o['base']}_todas_placas.dxf"),
+                   os.path.join(o["folder"], f"{o['base']}_relatorio.pdf")]
+        exist = [t for t in targets if os.path.exists(t)]
+        if exist:
+            r = QMessageBox.question(self, "Substituir arquivos?",
+                                     "Já existem na pasta:\n\n" + "\n".join(os.path.basename(t) for t in exist) +
+                                     "\n\nSubstituir? (marcações feitas no PDF antigo serão perdidas)",
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if r != QMessageBox.Yes:
+                return
         settings().setValue("export/last_dir", o["folder"])
         self._compact_sheets()
         QApplication.setOverrideCursor(Qt.WaitCursor)

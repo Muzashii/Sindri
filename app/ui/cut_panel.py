@@ -70,6 +70,7 @@ class CutPanel(QWidget):
     def set_data(self, sheets: list[dict], owners: list[dict], cut: set, delivered: set):
         """sheets: [{si, n, material, count, tags:[(tag, QColor)]}]
         owners: [{tag, color, title, who, count, sheets:[(si, n)]}]"""
+        scroll = self.scroll.verticalScrollBar().value()
         self._clear()
         self.sheet_boxes, self.owner_boxes = {}, {}
         done = sum(1 for s in sheets if s["si"] in cut)
@@ -162,3 +163,5 @@ class CutPanel(QWidget):
             fl.addWidget(sl)
             self.bl.addWidget(fr)
         self.bl.addStretch(1)
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(0, lambda: self.scroll.verticalScrollBar().setValue(scroll))
