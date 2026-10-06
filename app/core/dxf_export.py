@@ -215,8 +215,40 @@ _STROKES = {
     "L": [[(0, 2), (0, 0), (1, 0)]],
     "A": [[(0, 0), (0, 2), (1, 2), (1, 0)], [(0, 1), (1, 1)]],
     "C": [[(1, 0), (0, 0), (0, 2), (1, 2)]],
+    "B": [[(0, 0), (0, 2), (0.8, 2), (0.8, 1), (1, 1), (1, 0), (0, 0)], [(0, 1), (0.8, 1)]],
+    "D": [[(0, 0), (0, 2), (0.6, 2), (1, 1.6), (1, 0.4), (0.6, 0), (0, 0)]],
+    "E": [[(1, 2), (0, 2), (0, 0), (1, 0)], [(0, 1), (0.7, 1)]],
+    "F": [[(1, 2), (0, 2), (0, 0)], [(0, 1), (0.7, 1)]],
+    "G": [[(1, 2), (0, 2), (0, 0), (1, 0), (1, 1), (0.5, 1)]],
+    "H": [[(0, 0), (0, 2)], [(1, 0), (1, 2)], [(0, 1), (1, 1)]],
+    "I": [[(0.5, 0), (0.5, 2)], [(0.2, 2), (0.8, 2)], [(0.2, 0), (0.8, 0)]],
+    "J": [[(1, 2), (1, 0), (0, 0), (0, 0.5)]],
+    "K": [[(0, 0), (0, 2)], [(1, 2), (0, 1), (1, 0)]],
+    "M": [[(0, 0), (0, 2), (0.5, 1.2), (1, 2), (1, 0)]],
+    "N": [[(0, 0), (0, 2), (1, 0), (1, 2)]],
+    "O": [[(0, 0), (1, 0), (1, 2), (0, 2), (0, 0)]],
+    "Q": [[(0, 0), (1, 0), (1, 2), (0, 2), (0, 0)], [(0.6, 0.4), (1.1, -0.2)]],
+    "R": [[(0, 0), (0, 2), (1, 2), (1, 1), (0, 1), (1, 0)]],
+    "S": [[(1, 2), (0, 2), (0, 1), (1, 1), (1, 0), (0, 0)]],
+    "T": [[(0, 2), (1, 2)], [(0.5, 2), (0.5, 0)]],
+    "U": [[(0, 2), (0, 0), (1, 0), (1, 2)]],
+    "V": [[(0, 2), (0.5, 0), (1, 2)]],
+    "W": [[(0, 2), (0.25, 0), (0.5, 1), (0.75, 0), (1, 2)]],
+    "X": [[(0, 0), (1, 2)], [(0, 2), (1, 0)]],
+    "Y": [[(0, 2), (0.5, 1), (1, 2)], [(0.5, 1), (0.5, 0)]],
+    "Z": [[(0, 2), (1, 2), (0, 0), (1, 0)]],
+    "-": [[(0.2, 1), (0.8, 1)]],
+    ".": [[(0.4, 0), (0.6, 0)]],
+    ",": [[(0.5, 0.1), (0.4, -0.3)]],
+    "/": [[(0, 0), (1, 2)]],
     " ": [],
 }
+
+
+def _plain(text: str) -> str:
+    """Sem acentos (a fonte de traços só tem A-Z, 0-9 e alguns sinais)."""
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFD", text) if not unicodedata.combining(c))
 
 
 def _stroke_text(msp, text: str, x: float, y: float, height: float, layer: str, color: int):
@@ -224,7 +256,7 @@ def _stroke_text(msp, text: str, x: float, y: float, height: float, layer: str, 
     sy, sx = height / 2.0, height * 0.55
     at = {"layer": layer, "color": color}
     cx = x
-    for ch in text.upper():
+    for ch in _plain(text).upper():
         for line in _STROKES.get(ch, []):
             pts = [(cx + px * sx, y + py * sy) for px, py in line]
             if msp.doc.dxfversion == "AC1009":        # R12 não tem LWPOLYLINE
@@ -329,7 +361,8 @@ def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Plac
                 _plate(msp, params, dx)
                 # nº da placa acima dela, na mesma camada cinza do contorno (desativar no RDWorks)
                 hh = min(40.0, max(12.0, 0.05 * params.sheet_height))
-                _stroke_text(msp, f"PLACA {n_sheet}", dx, params.sheet_height + hh * 0.6, hh, PLATE_LAYER, 8)
+                label = f"PLACA {n_sheet}" + (f" - {mat}" if mat else "")
+                _stroke_text(msp, label, dx, params.sheet_height + hh * 0.6, hh, PLATE_LAYER, 8)
             pls = [pl for pl in placements if pl.sheet_index == si]
             seq = order_placements(pmap, pls, nearest=sort_path) if inner_first or sort_path else pls
             for pl in seq:

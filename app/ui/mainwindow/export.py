@@ -58,11 +58,13 @@ class ExportMixin:
             self.stop_nest(wait=True)
         if not self.placements:
             return
-        sheet_no = None
+        sheet_no, sheet_mat = None, ""
         if sheet is not None:
-            sheet_no = self.sheet_index().number.get(sheet)
+            idx0 = self.sheet_index()
+            sheet_no = idx0.number.get(sheet)
             if sheet_no is None:
                 return
+            sheet_mat = idx0.material.get(sheet, "")
         p = self.settings_panel.params()
         # problemas numa única confirmação (só aparece se houver algum)
         problems = []
@@ -101,7 +103,8 @@ class ExportMixin:
                  "open_rdworks": st.value("export/open_rdworks", "true") == "true"}
         # nomes livres: em vez de perguntar, acrescenta _2, _3…
         if sheet_no is not None:
-            o["base"] = f"{o['base']}_placa{sheet_no}"
+            from ...core.dxf_export import material_tag
+            o["base"] = f"{o['base']}_placa{sheet_no}" + (f"_{material_tag(sheet_mat)}" if sheet_mat else "")
         suffix = "" if sheet_no is not None else "_todas_placas"
         base, k = o["base"], 2
         while any(os.path.exists(os.path.join(o["folder"], f"{base}{suf}"))
@@ -157,7 +160,8 @@ class ExportMixin:
         links = (f' · <a href="open:{quote(o["folder"])}">Abrir pasta</a>'
                  + (f' · <a href="open:{quote(pdf)}">Abrir relatório</a>' if pdf else "")
                  + ' · <a href="opts:">Opções de exportação…</a>')
-        what = (f"só a placa {sheet_no}" if sheet_no is not None else "todas as placas + relatório")
+        what = (f"só a placa {sheet_no}" + (f" · {sheet_mat}" if sheet_mat else "")
+                if sheet_no is not None else "todas as placas + relatório")
         txt = f"<b>Exportado ({what}):</b> {os.path.basename(files[0])}" + links
         if opened:
             txt += "<br>" + opened.replace("\n", "<br>")

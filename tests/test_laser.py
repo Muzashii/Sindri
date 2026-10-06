@@ -132,11 +132,11 @@ def test_exporta_so_uma_placa(tmp_path, monkeypatch):
     st.setValue("export/outline2", "true")
     w.export(sheet=1)
     out = sorted(os.listdir(out_dir))
-    assert out == ["lote_placa2.dxf"]                   # só a placa 2, sem relatório
-    doc = ezdxf.readfile(str(out_dir / "lote_placa2.dxf"))
+    assert out == ["lote_placa2_MDF3mm.dxf"]                   # só a placa 2, sem relatório
+    doc = ezdxf.readfile(str(out_dir / "lote_placa2_MDF3mm.dxf"))
     assert len([e for e in doc.modelspace() if e.dxf.layer == "CORTE"]) == 1
     w.export()
-    assert sorted(os.listdir(out_dir)) == ["lote_placa2.dxf", "lote_relatorio.pdf", "lote_todas_placas.dxf"]
+    assert sorted(os.listdir(out_dir)) == ["lote_placa2_MDF3mm.dxf", "lote_relatorio.pdf", "lote_todas_placas.dxf"]
     w._fill_export_menu()
     texts = [a.text() for a in w._export_menu.actions()]
     assert any(t.startswith("   Placa 3") for t in texts)
