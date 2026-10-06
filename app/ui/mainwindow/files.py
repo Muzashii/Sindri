@@ -439,6 +439,7 @@ class FilesMixin:
             self._intranet_dlg = dlg
         dlg.chosen_material = None
         dlg.batch_result = None
+        dlg.set_open_codes(request_codes(self.request_info) if self.parts else [])
         dlg.failed_files = []
         if not dlg.exec() or not dlg.chosen_material:
             return

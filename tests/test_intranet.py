@@ -311,3 +311,33 @@ def test_projeto_lote_com_arquivos_de_mesmo_nome(tmp_path):
     save_project(proj, fs, NestParams(), rep.parts, None, multipliers=mult, materials=mats, tags=tags)
     pr = load_project(proj)
     assert pr.materials == mats and pr.multipliers == mult and pr.tags == tags
+
+
+def test_solicitacoes_abertas_aparecem_marcadas(tmp_path):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    try:
+        import PySide6.QtWebEngineWidgets  # noqa: F401
+    except Exception:
+        pytest.skip("QtWebEngine indisponível")
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication([])
+    from app.ui.intranet import IntranetDialog
+    d = IntranetDialog(None, start_url="about:blank", base_folder=str(tmp_path / "solic"))
+    d._base_rows = [{"codigo": c, "nome": n, "rm": "1", "data": "01/10/2026", "tipo": "Corte Laser",
+                     "situacao": "Aguardando"} for c, n in (("10", "A"), ("11", "B"), ("12", "C"))]
+    d._merge_and_show()
+    d.type_filter.setCurrentText("Todos os tipos")
+    d.set_open_codes([10, 12])
+    rows = {d.list.item(i, 0).text(): i for i in range(d.list.rowCount())}
+    assert set(rows) == {"10", "11", "12"}
+    for code in ("10", "12"):
+        it = d.list.item(rows[code], 0)
+        assert it.checkState() == Qt.Checked and not it.flags() & Qt.ItemIsUserCheckable
+        assert "no Sindri" in d.list.item(rows[code], 1).text()
+    assert d.list.item(rows["11"], 0).checkState() == Qt.Unchecked
+    assert d._checked == []                       # abertas não entram no lote a baixar
+    d._header_clicked(0)                          # "marcar todas" só pega as que ainda não estão abertas
+    assert d._checked == ["11"]
+    assert "já no Sindri" in d.batch_lbl.text()
+    d.deleteLater()

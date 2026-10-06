@@ -14,6 +14,7 @@ import uuid
 from typing import Optional
 
 from PySide6.QtCore import QStandardPaths, Qt, QTimer, QUrl
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QCheckBox, QAbstractItemView, QApplication, QComboBox, QDialog, QFileDialog,
                                QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
                                QMessageBox, QPushButton, QScrollArea, QSplitter, QStackedWidget,
@@ -83,6 +84,7 @@ class IntranetDialog(QDialog):
         self._downloads = []
         self._sending: Optional[str] = None
         self._checked: list[str] = []              # solicitações marcadas para juntar (ordem do clique)
+        self.open_codes: set[str] = set()          # já abertas no Sindri (aparecem marcadas, sem baixar de novo)
         self._cache: dict[int, RequestDetail] = {}  # detalhes já lidos
         self.batch: list[RequestDetail] = []         # lote em exibição/envio
         self.batch_result: Optional[list] = None     # [(detalhe, [arquivos baixados])]
@@ -489,6 +491,7 @@ class IntranetDialog(QDialog):
         self.list.blockSignals(True)
         self.list.setRowCount(0)
         shown = 0
+        t = theme.tokens()
         rows = sorted(self._rows, key=lambda r: date_key(r.get("data", "")), reverse=self._sort_desc)
         for r in rows:
             if tf != "Todos os tipos" and r.get("tipo", "") != tf:
@@ -499,16 +502,26 @@ class IntranetDialog(QDialog):
                 continue
             i = self.list.rowCount()
             self.list.insertRow(i)
+            is_open = str(r["codigo"]) in self.open_codes
             vals = [r["codigo"], r.get("nome", ""), r.get("rm", ""), r.get("data", "").split(" ")[0]]
+            if is_open:
+                vals[1] = f"{vals[1]}   ✓ no Sindri"
             for c, v in enumerate(vals):
                 it = QTableWidgetItem(v)
-                it.setToolTip(f"{r.get('tipo', '')} · {r.get('situacao', '')} · {r.get('data', '')}")
+                it.setToolTip(f"{r.get('tipo', '')} · {r.get('situacao', '')} · {r.get('data', '')}"
+                              + ("\nJá está aberta no Sindri: as peças dela já estão nas placas." if is_open else ""))
+                if is_open:
+                    it.setBackground(QColor(t["done_bg"]))
                 if c == 0:
                     f = it.font()
                     f.setBold(True)
                     it.setFont(f)
-                    it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
-                    it.setCheckState(Qt.Checked if str(v) in self._checked else Qt.Unchecked)
+                    if is_open:      # marcada e travada: já está no lote aberto, não entra de novo
+                        it.setFlags(it.flags() & ~Qt.ItemIsUserCheckable)
+                        it.setCheckState(Qt.Checked)
+                    else:
+                        it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+                        it.setCheckState(Qt.Checked if str(v) in self._checked else Qt.Unchecked)
                 self.list.setItem(i, c, it)
             if r["codigo"] == cur:
                 self.list.selectRow(i)
@@ -526,7 +539,8 @@ class IntranetDialog(QDialog):
 
     def _header_clicked(self, col: int):
         if col == 0:
-            vis = [self.list.item(i, 0).text() for i in range(self.list.rowCount())]
+            vis = [self.list.item(i, 0).text() for i in range(self.list.rowCount())
+                   if self.list.item(i, 0).text() not in self.open_codes]
             if vis and all(c in self._checked for c in vis):
                 self._checked = [c for c in self._checked if c not in vis]
             else:
@@ -552,6 +566,8 @@ class IntranetDialog(QDialog):
                 return True
             if ev.key() == Qt.Key_Space and r >= 0 and self.list.item(r, 0):
                 it = self.list.item(r, 0)
+                if it.text() in self.open_codes:
+                    return True
                 it.setCheckState(Qt.Unchecked if it.checkState() == Qt.Checked else Qt.Checked)
                 return True
         return super().eventFilter(obj, ev)
@@ -951,10 +967,19 @@ class IntranetDialog(QDialog):
         self.accept()
 
     # ------------------------------------------------------------------ lote (várias solicitações)
+    def set_open_codes(self, codes) -> None:
+        """Solicitações já abertas no Sindri: aparecem marcadas (e travadas) na fila."""
+        self.open_codes = {str(c) for c in codes or []}
+        self._checked = [c for c in self._checked if c not in self.open_codes]
+        self._fill_list()
+        self._update_batch_bar()
+
     def _item_checked(self, item):
         if item.column() != 0:
             return
         code = item.text()
+        if code in self.open_codes:
+            return
         on = item.checkState() == Qt.Checked
         if on and code not in self._checked:
             self._checked.append(code)
@@ -966,7 +991,12 @@ class IntranetDialog(QDialog):
         n = len(self._checked)
         self.batch_bar.setVisible(n > 0)
         self.batch_tip.setVisible(n == 0)
-        self.batch_lbl.setText(f"{n} marcada(s)")
+        extra = f" · {len(self.open_codes)} já no Sindri" if self.open_codes else ""
+        self.batch_tip.setText(
+            f"Em verde: {len(self.open_codes)} solicitação(ões) já abertas no Sindri. Marque outras para "
+            "adicionar ao lote." if self.open_codes else
+            "Marque a caixinha ao lado do nº para juntar várias solicitações nas mesmas placas.")
+        self.batch_lbl.setText(f"{n} marcada(s){extra}")
         self.btn_batch.setEnabled(n >= 1 and not self._fetch.isActive())
         self.btn_batch.setText(f"Juntar {n} na placa" if n > 1 else "Juntar na placa")
 
@@ -1043,7 +1073,10 @@ class IntranetDialog(QDialog):
         self._clear_detail()
         self.file_rows = {}
         top = QHBoxLayout()
-        tt = QLabel(f"Lote · {len(self.batch)} solicitações")
+        n_new = len(self.batch)
+        tt = QLabel(f"Lote · {n_new} solicitaç{'ão' if n_new == 1 else 'ões'}"
+                    + (f"  <span style='font-size:11pt; font-weight:600;'>+ {len(self.open_codes)} já no Sindri"
+                       "</span>" if self.open_codes else ""))
         tt.setStyleSheet("font-size: 17pt; font-weight: 800;")
         top.addWidget(tt)
         top.addStretch(1)
