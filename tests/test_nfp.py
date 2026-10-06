@@ -72,3 +72,20 @@ def test_hole_ifp_peca_cabe_no_furo():
     for r in regs:
         for x, y in from_int_path(r):
             assert hp.covers(Polygon(np.asarray(sq.exterior.coords) + [x, y]))
+
+
+def test_contorno_com_muitos_vertices_fica_leve_e_seguro():
+    """Engrenagem de 300 dentes miúdos no modo Preciso: poucos vértices no NFP, sem cortar a peça."""
+    import math
+    from app.core.nfp import MAX_OUTLINE_VERTICES
+    pts = []
+    for i in range(300):                       # 300 dentes retos: 4 vértices cada
+        for frac, r in ((0.0, 98.5), (0.2, 100), (0.6, 100), (0.8, 98.5)):
+            a = 2 * math.pi * (i + frac) / 300
+            pts.append((r * math.cos(a), r * math.sin(a)))
+    shapes = {"G": _shape("G", pts)}
+    cache = NFPCache(shapes, spacing=0.0, curve_tol=0.1, part_in_part=False, detail=0)
+    v = cache.variant("G", 0)
+    assert len(v.path) <= MAX_OUTLINE_VERTICES * 2       # o offset em quina viva pode duplicar alguns
+    outline = Polygon(from_int_path(v.path))
+    assert outline.buffer(1e-6).covers(Polygon(shapes["G"].outer))

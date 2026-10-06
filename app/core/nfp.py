@@ -52,6 +52,28 @@ def round_rot(r: float) -> float:
 
 # nível de detalhe do contorno usado no encaixe: (raio de fechamento de reentrâncias, simplificação) em mm
 DETAIL_LEVELS = {0: (0.0, 0.05), 1: (10.0, 0.2), 2: (20.0, 0.5)}
+# Contornos com muitos vértices (engrenagens, textos vetorizados) deixam o NFP lentíssimo: no modo
+# "Preciso" uma engrenagem de 800 vértices levava ~40 s só para a 1ª solução (agora ~3 s). Acima deste número a
+# simplificação aumenta (até MAX_SIMPLIFY_MM) e a folga da peça cresce junto, então continua seguro.
+MAX_OUTLINE_VERTICES = 150
+MAX_SIMPLIFY_MM = 0.4
+
+
+def _ok(g) -> bool:
+    return not g.is_empty and g.geom_type == "Polygon"
+
+
+def _close(poly: Polygon, r: float) -> Polygon:
+    """Fechamento morfológico (preenche reentrâncias com abertura < 2r); nunca perde área."""
+    if r <= 0:
+        return poly
+    closed = poly.buffer(r, join_style=2, mitre_limit=5).buffer(-r, join_style=2, mitre_limit=5)
+    if _ok(closed) and closed.covers(poly.buffer(-1e-6)):
+        out = closed.union(poly)
+        if out.geom_type != "Polygon":
+            out = max(out.geoms, key=lambda g: g.area)
+        return Polygon(out.exterior.coords)
+    return poly
 
 
 class NFPCache:
@@ -68,6 +90,7 @@ class NFPCache:
         self.offset = self.spacing / 2.0 + self.curve_tol + self.simplify_tol
         self.hole_shrink = self.spacing / 2.0 + self.curve_tol + self.arc_tol
         self._base: dict[str, np.ndarray] = {}
+        self._simp: dict[str, float] = {}       # tolerância de simplificação usada em cada peça
         self.part_in_part = part_in_part
         self._variants: dict[tuple, Variant] = {}
         self._nfp: dict[tuple, list] = {}
@@ -95,7 +118,8 @@ class NFPCache:
         base = polygon_to_int(simp)
         pco = pyclipper.PyclipperOffset(2.0)
         pco.AddPath(base, pyclipper.JT_MITER, pyclipper.ET_CLOSEDPOLYGON)
-        off = pco.Execute(self.offset * CLIPPER_SCALE)
+        offset = self.offset + self._simp.get(pid, self.simplify_tol) - self.simplify_tol
+        off = pco.Execute(offset * CLIPPER_SCALE)
         off = [p for p in off if pyclipper.Orientation(p)]
         path = max(off, key=lambda p: abs(pyclipper.Area(p))) if off else base
         arr = np.asarray(path)
@@ -124,6 +148,8 @@ class NFPCache:
         O fechamento morfológico (cresce r e encolhe r, com quinas vivas) só ACRESCENTA área:
         preenche os dentes/rasgos do contorno com abertura menor que 2r. Isso reduz muito o
         número de vértices (peças com encaixes tipo "finger joint") e acelera o NFP.
+        Contornos que continuam com vértices demais (engrenagens, letras) recebem simplificação e
+        fechamento maiores só para eles — sempre aumentando a área, nunca cortando a peça.
         """
         b = self._base.get(pid)
         if b is not None:
@@ -133,26 +159,31 @@ class NFPCache:
             poly = poly.buffer(0)
         if poly.geom_type != "Polygon":
             poly = max(getattr(poly, "geoms", [poly]), key=lambda g: g.area)
-        if self.close_r > 0:
-            closed = poly.buffer(self.close_r, join_style=2, mitre_limit=5).buffer(
-                -self.close_r, join_style=2, mitre_limit=5)
-            if closed.geom_type == "Polygon" and not closed.is_empty and closed.covers(poly.buffer(-1e-6)):
-                poly = closed.union(poly)
-                if poly.geom_type != "Polygon":
-                    poly = max(poly.geoms, key=lambda g: g.area)
-                poly = Polygon(poly.exterior.coords)
-        simp = poly.simplify(self.simplify_tol, preserve_topology=True)
-        if simp.is_empty or simp.geom_type != "Polygon":
-            simp = poly
-        b = np.asarray(simp.exterior.coords)[:-1]
+        closes = [self.close_r] + [r for r in (2.0, 5.0, 10.0) if r > self.close_r]
+        b, tol = None, self.simplify_tol
+        for close_r in closes:
+            closed = _close(poly, close_r)
+            tol = self.simplify_tol
+            simp = closed.simplify(tol, preserve_topology=True)
+            while (_ok(simp) and len(simp.exterior.coords) > MAX_OUTLINE_VERTICES and tol < MAX_SIMPLIFY_MM):
+                tol = min(MAX_SIMPLIFY_MM, tol * 1.6)
+                simp = closed.simplify(tol, preserve_topology=True)
+            if not _ok(simp):
+                simp, tol = closed, self.simplify_tol
+            b = np.asarray(simp.exterior.coords)[:-1]
+            if len(b) <= MAX_OUTLINE_VERTICES:
+                break
         self._base[pid] = b
+        self._simp[pid] = tol
         return b
 
     def export_state(self) -> tuple:
-        return (self._base, self._variants, self._nfp)
+        return (self._base, self._variants, self._nfp, self._simp)
 
     def import_state(self, state: tuple):
-        base, variants, nfp = state
+        base, variants, nfp = state[:3]
+        if len(state) > 3:
+            self._simp.update(state[3])
         self._base.update(base)
         self._variants.update(variants)
         self._nfp.update(nfp)
