@@ -1,6 +1,7 @@
 """Abrir arquivos (DXF, intranet), placas pré-definidas e limpeza de arquivos."""
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 from typing import Optional
@@ -8,6 +9,7 @@ from typing import Optional
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
+from ...core.intranet import merge_request_info, request_codes
 from ...core.part_builder import import_files
 from ..dialogs import CleanupDialog, PresetsDialog, load_presets, save_presets, settings
 from ..prefs import get_list_value
@@ -115,7 +117,10 @@ class FilesMixin:
 
     def load_files(self, paths: list[str], add: bool = False, multipliers: Optional[dict] = None,
                    request_label: Optional[str] = None, materials: Optional[dict] = None,
-                   request_info: Optional[dict] = None, tags: Optional[dict] = None) -> bool:
+                   request_info: Optional[dict] = None, tags: Optional[dict] = None,
+                   keep_layout: bool = False) -> bool:
+        """Carrega DXFs. ``add``: junta aos atuais. ``keep_layout`` (com ``add``): mantém o encaixe e o
+        checklist das peças que já estavam abertas; as novas ficam de fora até encaixar de novo."""
         if self.worker is not None:
             self.stop_nest(wait=True)
         if not self.confirm_discard(add):
@@ -141,7 +146,7 @@ class FilesMixin:
         if tags:
             self.file_tags.update(tags)
         files = list(self.files) + [p for p in paths if p not in self.files] if add else list(paths)
-        if self._import(files, keep_quantities=add) is False:
+        if self._import(files, keep_quantities=add, keep_layout=add and keep_layout) is False:
             # leitura falhou: volta ao estado anterior (as peças antigas continuam na tela)
             (self.file_multipliers, self.file_materials, self.file_tags, self.cut_sheets, self.done_parts,
              self.request_label, self.request_info) = old
@@ -154,7 +159,7 @@ class FilesMixin:
             self.project_path = None
         return True
 
-    def _import(self, files: list[str], keep_quantities: bool = False):
+    def _import(self, files: list[str], keep_quantities: bool = False, keep_layout: bool = False):
         p = self.settings_panel.params()
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
@@ -173,14 +178,26 @@ class FilesMixin:
                                  + "\n".join(rep.warnings[:8]))
             return False
         old_q = {pt.identity: pt for pt in self.parts} if keep_quantities else {}
+        # peça sem nº de solicitação que passou a ter um (solicitação avulsa virando lote): mesmo
+        # desenho, mesmo arquivo -> mesma peça
+        old_untagged = {(os.path.normcase(os.path.abspath(pt.source_file)), pt.identity): pt
+                        for pt in self.parts if not pt.tag} if keep_quantities else {}
+        old_state = (list(self.placements), set(self.cut_sheets), set(self.done_parts)) if keep_layout else None
         next_id = max([int(pt.id[1:]) for pt in self.parts if pt.id[1:].isdigit()], default=0) + 1
         clear_graphics_cache()
         self.report = rep
         self.files = rep.files
         self.parts = rep.parts
+        used = set()
         for pt in self.parts:
             previous = old_q.get(pt.identity)
+            if previous is None and pt.tag and old_untagged:
+                previous = old_untagged.get((os.path.normcase(os.path.abspath(pt.source_file)),
+                                             dataclasses.replace(pt, tag="").identity))
+            if previous is not None and previous.id in used:
+                previous = None
             if previous is not None:
+                used.add(previous.id)
                 pt.id = previous.id
                 pt.quantity = max(0, pt.file_quantity + previous.quantity - previous.file_quantity)
                 pt.rotation_locked = previous.rotation_locked
@@ -195,6 +212,12 @@ class FilesMixin:
         self.cut_sheets.clear()
         self.done_parts.intersection_update(self.pmap)
         self.unplaced = []
+        if old_state is not None:
+            # só as peças que continuam iguais mantêm posição, placa cortada e "feito"
+            self.placements = [pl for pl in old_state[0] if pl.part_id in self.pmap]
+            self.n_sheets = max([pl.sheet_index + 1 for pl in self.placements], default=0)
+            self.cut_sheets = {s for s in old_state[1] if any(pl.sheet_index == s for pl in self.placements)}
+            self.done_parts = {pid for pid in old_state[2] if pid in self.pmap}
         self.undo_stack.clear()
         self.redo_stack.clear()
         self.mark_changed()
@@ -398,8 +421,9 @@ class FilesMixin:
         else:
             self.statusBar().showMessage(f"{len(files)} arquivo(s) ({human(size)}) enviados para a Lixeira.", 8000)
 
-    def open_intranet(self):
-        """Abre a intranet, baixa a solicitação escolhida e carrega no encaixe (placas por material)."""
+    def open_intranet(self, add: Optional[bool] = None):
+        """Abre a intranet, baixa a solicitação escolhida e carrega no encaixe (placas por material).
+        ``add``: True junta às solicitações já abertas, False substitui, None pergunta (se houver peças)."""
         from ...core.intranet import file_materials, file_multipliers, request_summary
         from ..intranet import ALL_MATERIALS, IntranetDialog, webengine_available
         ok, err = webengine_available()
@@ -419,6 +443,22 @@ class FilesMixin:
         if not dlg.exec() or not dlg.chosen_material:
             return
         failed = list(getattr(dlg, "failed_files", []) or [])
+        if add is None and self.parts:
+            add = self._ask_add_or_replace()
+            if add is None:
+                return
+        if add and self.parts:
+            if dlg.batch_result:
+                items = list(dlg.batch_result)
+            elif dlg.detail is not None:
+                mats = dlg.detail.materials()
+                chosen = list(mats) if dlg.chosen_material == ALL_MATERIALS else [dlg.chosen_material]
+                items = [(dlg.detail, [f for m in chosen for f in mats.get(m, [])])]
+            else:
+                return
+            if self._add_requests(items, failed):
+                self._after_intranet_load(keep_plate=True)   # a placa atual (e o que já foi cortado) fica
+            return
         if dlg.batch_result:
             self._load_batch(dlg.batch_result, failed)
             self._after_intranet_load()
@@ -451,11 +491,88 @@ class FilesMixin:
         self.setWindowTitle(f"{APP_NAME} — Solicitação {d.code} · RM {rm}")
         self._after_intranet_load()
 
-    def _after_intranet_load(self):
+    def _ask_add_or_replace(self) -> Optional[bool]:
+        """Já há peças abertas: juntar a nova solicitação a elas ou começar de novo? None = cancelar."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Question)
+        box.setWindowTitle("Intranet FIAP")
+        codes = request_codes(self.request_info)
+        now = (f"as solicitações {', '.join(codes)}" if len(codes) > 1 else
+               f"a solicitação {codes[0]}" if codes else "peças")
+        box.setText(f"Já há {now} abertas no Sindri.")
+        info = "“Adicionar ao lote” junta as novas às atuais e encaixa tudo junto."
+        if self.cut_sheets:
+            info += ("\nAs placas já marcadas como cortadas continuam como estão (no encaixe você pode "
+                     "escolher “Só o que falta”).")
+        info += "\n“Substituir” fecha o que está aberto e abre só as novas."
+        box.setInformativeText(info)
+        b_add = box.addButton("Adicionar ao lote", QMessageBox.AcceptRole)
+        b_new = box.addButton("Substituir", QMessageBox.DestructiveRole)
+        box.addButton("Cancelar", QMessageBox.RejectRole)
+        box.setDefaultButton(b_add)
+        box.exec()
+        if box.clickedButton() == b_add:
+            return True
+        if box.clickedButton() == b_new:
+            return False
+        return None
+
+    def _add_requests(self, items: list, failed: Optional[list] = None) -> bool:
+        """Junta solicitações da intranet às que já estão abertas, sem perder encaixe nem checklist."""
+        from ...core.intranet import batch_label, batch_summary, file_materials, file_multipliers, file_tags
+        items = [(d, [f for f in fs if f.local_path and os.path.isfile(f.local_path)]) for d, fs in items]
+        have = set(request_codes(self.request_info))
+        repeated = [str(d.code) for d, _ in items if str(d.code) in have]
+        missing = [str(d.code) for d, fs in items if not fs and str(d.code) not in have]
+        items = [(d, fs) for d, fs in items if fs and str(d.code) not in have]
+        if not items:
+            msg = ("Nada novo para adicionar." +
+                   (f"\n\nJá estão no lote: {', '.join(repeated)}." if repeated else "") +
+                   (f"\n\nSem nenhum arquivo baixado: {', '.join(missing)}." if missing else ""))
+            QMessageBox.information(self, "Adicionar ao lote", msg)
+            return False
+        files = [f for _, fs in items for f in fs]
+        tags = file_tags(items)
+        old = self.request_info
+        if old and not old.get("batch") and old.get("code") not in (None, ""):
+            # a solicitação avulsa aberta vira parte do lote: as peças dela ganham o nº
+            for f in self.files:
+                k = os.path.abspath(f)
+                if not self.file_tags.get(k):
+                    tags[k] = str(old["code"])
+        info = merge_request_info(old, batch_summary(items))
+        prev = (self.request_label, self.request_info)
+        self.request_info = info
+        self.request_label = batch_label(info["codes"])
+        if not self.load_files([f.local_path for f in files], add=True, multipliers=file_multipliers(files),
+                               materials=file_materials(files), tags=tags, keep_layout=True):
+            self.request_label, self.request_info = prev
+            self.parts_panel.set_request(self.request_info)
+            return False
+        added = ", ".join(str(d.code) for d, _ in items)
+        all_codes = ", ".join(str(c) for c in info["codes"])
+        txt = (f"Adicionada(s) ao lote: <b>{added}</b>. Agora são <b>{len(info['codes'])}</b> solicitações "
+               f"({all_codes}).")
+        warn = []
+        if repeated:
+            warn.append(f"já estavam no lote: {', '.join(repeated)}")
+        if missing:
+            warn.append(f"sem nenhum arquivo baixado, NÃO incluídas: {', '.join(missing)}")
+        if failed:
+            warn.append(f"{len(failed)} arquivo(s) não baixaram: " + ", ".join(failed[:6])
+                        + ("…" if len(failed) > 6 else ""))
+        if warn:
+            txt += " <b>ATENÇÃO:</b> " + "; ".join(warn) + "."
+        self.show_banner(txt, "warn" if warn else "info")
+        self.setWindowTitle(f"{APP_NAME} — Lote {all_codes}")
+        return True
+
+    def _after_intranet_load(self, keep_plate: bool = False):
         """Depois de baixar da intranet: placa do material e (se ligado) já começa a encaixar."""
         if not self.parts:
             return
-        self._apply_material_preset()
+        if not keep_plate:
+            self._apply_material_preset()
         if settings().value("intranet/auto_nest", "true") == "true" and not self.too_big:
             QTimer.singleShot(300, self.start_nest)
 

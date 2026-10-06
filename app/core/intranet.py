@@ -472,3 +472,29 @@ def batch_summary(details_files: list[tuple[RequestDetail, list[RequestFile]]]) 
     return {"code": " + ".join(str(c) for c in codes), "codes": codes, "batch": True,
             "rm": ", ".join(r["rm"] for r in reqs if r["rm"]), "nome": f"{len(reqs)} solicitações",
             "materials": mats, "requests": reqs}
+
+
+def request_codes(info: Optional[dict]) -> list[str]:
+    """Nºs das solicitações de um cartão (avulsa ou lote)."""
+    if not info:
+        return []
+    if info.get("batch"):
+        return [str(r.get("code", "")) for r in info.get("requests", [])]
+    return [str(info["code"])] if info.get("code") not in (None, "") else []
+
+
+def merge_request_info(old: Optional[dict], new: dict) -> dict:
+    """Junta as solicitações já abertas (avulsa ou lote) com as novas num único lote."""
+    if not old:
+        return new
+    reqs = list(old.get("requests", [])) if old.get("batch") else [old]
+    have = {str(r.get("code", "")) for r in reqs}
+    reqs += [r for r in new.get("requests", []) if str(r.get("code", "")) not in have]
+    mats = []
+    for m in list(old.get("materials", [])) + list(new.get("materials", [])):
+        if m not in mats:
+            mats.append(m)
+    codes = [r["code"] for r in reqs]
+    return {"code": " + ".join(str(c) for c in codes), "codes": codes, "batch": True,
+            "rm": ", ".join(r.get("rm", "") for r in reqs if r.get("rm")), "nome": f"{len(reqs)} solicitações",
+            "materials": mats, "requests": reqs}

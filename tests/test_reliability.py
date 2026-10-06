@@ -11,6 +11,7 @@ from shapely.geometry import LineString, box
 
 from app.core.geometry import flatten_prim
 from app.core.models import NestParams, NestResult, Part, Placement, Prim
+from tests.conftest import fx
 from app.core.part_builder import build_parts_from_prims, group_identical, import_files, make_part
 from app.core.project import ProjectError, load_project, save_project
 from app.core.validate import fine_solid, validate_layout
@@ -321,3 +322,53 @@ def test_cancelamento_de_download_cancela_requisicao(tmp_path):
     obj = SimpleNamespace(_downloads=[req], _remove_partial=IntranetDialog._remove_partial)
     IntranetDialog._cancel_downloads(obj)
     assert calls == ["cancel"] and not temp.exists() and not obj._downloads
+
+
+def test_merge_request_info_avulsa_vira_lote():
+    from app.core.intranet import merge_request_info, request_codes
+    single = {"code": 10, "rm": "1", "nome": "A", "materials": ["MDF 3mm"]}
+    new = {"batch": True, "codes": [11], "materials": ["MDF 6mm"],
+           "requests": [{"code": 11, "rm": "2", "nome": "B", "materials": ["MDF 6mm"]}]}
+    m = merge_request_info(single, new)
+    assert m["batch"] and request_codes(m) == ["10", "11"] and m["materials"] == ["MDF 3mm", "MDF 6mm"]
+    again = merge_request_info(m, new)                       # repetida não entra duas vezes
+    assert request_codes(again) == ["10", "11"]
+    assert merge_request_info(None, new) is new
+
+
+def test_adicionar_solicitacao_mantem_encaixe_e_corte(window, tmp_path):
+    import shutil
+    from app.core.intranet import RequestDetail, RequestFile, request_codes
+    a = tmp_path / "10" / "a.dxf"
+    b = tmp_path / "11" / "b.dxf"
+    a.parent.mkdir()
+    b.parent.mkdir()
+    shutil.copy(fx("furos.dxf"), a)
+    shutil.copy(fx("simples.dxf"), b)
+    d1 = RequestDetail(10, {"RM": "1", "Nome": "A"}, [RequestFile("a.dxf", "", "MDF 3mm", 1, local_path=str(a))])
+    d2 = RequestDetail(11, {"RM": "2", "Nome": "B"}, [RequestFile("b.dxf", "", "MDF 3mm", 2, local_path=str(b))])
+    from app.core.intranet import request_summary
+    assert window.load_files([str(a)], request_info=request_summary(d1, ["MDF 3mm"]),
+                             materials={str(a): "MDF 3mm"}, request_label="10_RM1")
+    # encaixe "feito à mão": uma peça por placa, e a primeira placa já cortada
+    from app.core.models import Placement
+    window.placements = [Placement(p.id, i, 0, 10.0 + 5 * i, 10.0, 0.0) for p in window.parts for i in range(p.quantity)]
+    window.n_sheets = 1
+    window.cut_sheets = {0}
+    window.done_parts = {window.parts[0].id}
+    before = {(pl.part_id, pl.instance): (pl.x, pl.y) for pl in window.placements}
+    old_ids = {p.id for p in window.parts}
+
+    assert window._add_requests([(d2, d2.files)])
+    assert request_codes(window.request_info) == ["10", "11"] and window.request_info["batch"]
+    assert window.request_label == "lote_10-11"
+    assert {p.tag for p in window.parts} == {"10", "11"}
+    assert old_ids <= {p.id for p in window.parts}               # peças antigas mantêm a identidade
+    assert {(pl.part_id, pl.instance): (pl.x, pl.y) for pl in window.placements} == before
+    assert window.cut_sheets == {0} and window.parts[0].id in window.done_parts
+    new_parts = [p for p in window.parts if p.tag == "11"]
+    assert new_parts and all((p.id, 0) in window.unplaced for p in new_parts)
+
+    # a mesma solicitação de novo: nada muda
+    n = len(window.parts)
+    assert window._add_requests([(d2, d2.files)]) is False and len(window.parts) == n

@@ -377,6 +377,7 @@ class UIBuildMixin:
 
         act(m_file, "Abrir DXF…", self.open_dxf_dialog, "Ctrl+O")
         act(m_file, "Baixar solicitação da intranet…", lambda: self.open_intranet(), "Ctrl+I")
+        act(m_file, "Adicionar solicitação ao lote aberto…", lambda: self.open_intranet(add=True), "Ctrl+Shift+I")
         act(m_file, "Limpar tudo", lambda: self.clear_all(), "Ctrl+Shift+Del")
         act(m_file, "Adicionar DXF…", lambda: self.open_dxf_dialog(add=True), "Ctrl+Shift+O")
         m_file.addSeparator()
@@ -465,6 +466,7 @@ class UIBuildMixin:
             "Ctrl+O\tAbrir DXF\n"
             "Ctrl+Shift+O\tAdicionar DXF\n"
             "Ctrl+I\tIntranet FIAP\n"
+            "Ctrl+Shift+I\tAdicionar solicitação ao lote aberto\n"
             "Ctrl+S\tSalvar projeto\n"
             "Espaço\tEncaixar / pausar\n"
             "Esc\tParar encaixe\n"

@@ -200,6 +200,9 @@ O botão **Intranet FIAP** abre a página de *Solicitações Maker* num navegado
   Nada é baixado até você enviar.
 - **Lotes:** marque várias solicitações e use **Juntar na placa**. As peças de todas são encaixadas juntas, cada uma com
   seu nº. Peças de pedidos diferentes nunca são agrupadas, e o relatório lista cada solicitação.
+- **Adicionar ao lote aberto:** com solicitações já abertas, abra a intranet de novo (ou `Ctrl+Shift+I`) e envie
+  outra: escolha **Adicionar ao lote**. As peças que já estavam mantêm posição, placas cortadas e ✓ Feito; no
+  encaixe, “Só o que falta” preserva as placas já cortadas.
 - **Onde ficam os arquivos:** `Documentos\Sindri\Solicitações\<nº> - <aluno>\<material>\`.
 
 > [!NOTE]
