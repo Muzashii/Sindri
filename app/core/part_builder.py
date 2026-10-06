@@ -211,6 +211,40 @@ def build_contours(prims: list[Prim], join_tol: float, curve_tol: float) -> list
     return contours
 
 
+def drop_duplicate_contours(contours: list[Contour], tol: float) -> tuple[list[Contour], int]:
+    """Contornos fechados praticamente iguais (o mesmo desenho repetido, às vezes começando em outro
+    ponto ou no sentido contrário, ou feito com outras entidades): fica só o primeiro."""
+    kept: list[Contour] = []
+    index: dict[tuple, list[Polygon]] = {}
+    removed = 0
+    for c in contours:
+        if not c.closed or c.polygon is None:
+            kept.append(c)
+            continue
+        poly = c.polygon
+        x0, y0, x1, y1 = poly.bounds
+        key = (round(x0), round(y0), round(x1), round(y1))
+        lim = max(1e-6, poly.length * tol)
+        dup = False
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                k2 = (key[0] + dx, key[1] + dy, key[2] + dx, key[3] + dy)
+                for other in index.get(k2, ()):
+                    if abs(other.area - poly.area) <= lim and other.symmetric_difference(poly).area <= lim:
+                        dup = True
+                        break
+                if dup:
+                    break
+            if dup:
+                break
+        if dup:
+            removed += 1
+            continue
+        index.setdefault(key, []).append(poly)
+        kept.append(c)
+    return kept, removed
+
+
 def _extend_back(chain, start_node, adj, used, node):
     back = []
     cur = start_node
@@ -256,6 +290,10 @@ def build_parts_from_prims(prims: list[Prim], source_file: str, join_tol: float,
         warnings.append(f"{name}: {removed} entidade(s) duplicada(s)/sobreposta(s) removida(s).")
 
     contours = build_contours(prims, join_tol, curve_tol)
+    contours, dup = drop_duplicate_contours(contours, max(join_tol, curve_tol))
+    if dup:
+        warnings.append(f"{name}: {dup} contorno(s) desenhado(s) em dobro ignorado(s) "
+                        "(a peça não é contada duas vezes nem cortada duas vezes).")
     closed = [i for i, c in enumerate(contours) if c.closed]
     opened = [i for i, c in enumerate(contours) if not c.closed]
 

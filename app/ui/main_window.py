@@ -78,10 +78,16 @@ class MainWindow(UIBuildMixin, FilesMixin, ProjectMixin, NestingMixin, EditingMi
         self._refresh_presets()
         self.set_dark(self.dark)
         self._update_buttons()
+        scr = self.screen()
+        self.apply_width(scr.availableGeometry().width() if scr else 1600, force=True)
         self._drag_timer = QTimer(self)
         self._drag_timer.setSingleShot(True)
         self._drag_timer.setInterval(30)
         self._drag_timer.timeout.connect(self._check_drag_collisions)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self.apply_width(self.width())
 
     def closeEvent(self, e):
         if getattr(self, "_applying_update", False):

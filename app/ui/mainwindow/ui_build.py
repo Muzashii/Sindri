@@ -70,6 +70,7 @@ class UIBuildMixin:
         tl.addWidget(self.btn_save)
         tl.addWidget(self._vsep())
         lbl = QLabel("Placa")
+        self.plate_lbl = lbl
         lbl.setObjectName("Muted")
         tl.addWidget(lbl)
         self.preset_combo = QComboBox()
@@ -213,6 +214,7 @@ class UIBuildMixin:
         self.settings_panel.laserChanged.connect(self.set_laser_value)
 
         split = QSplitter(Qt.Horizontal)
+        self.split = split
         self.parts_panel.doneChanged.connect(self.on_part_done)
         self.parts_panel.sheetToggled.connect(self.on_sheet_cut)
         self.parts_panel.requestFilter.connect(self.on_request_filter)
@@ -251,10 +253,10 @@ class UIBuildMixin:
         self.setStatusBar(sb)
         self.project_state = QLabel("")
         self.project_state.setObjectName("Muted")
-        sb.addWidget(self.project_state)
-        hint = QLabel("Roda: zoom  ·  botão do meio / Alt+arrastar: mover vista  ·  R girar  ·  "
-                      "L travar  ·  Del remover  ·  F1 atalhos")
+        sb.addPermanentWidget(self.project_state)     # permanente: as mensagens não escrevem por cima
+        hint = QLabel("")
         hint.setObjectName("Muted")
+        self.status_hint = hint
         sb.addPermanentWidget(hint)
         self._refresh_icons()
 
@@ -264,6 +266,8 @@ class UIBuildMixin:
         h = QHBoxLayout(box)
         h.setContentsMargins(14, 8, 14, 8)
         h.setSpacing(18)
+        self._metrics_layout = h
+        self._metric_caps = {}
 
         def metric(caption: str, big: bool = False):
             v = QVBoxLayout()
@@ -275,6 +279,7 @@ class UIBuildMixin:
             v.addWidget(val)
             v.addWidget(cap)
             h.addLayout(v)
+            self._metric_caps[caption] = (cap, val)
             return val
 
         self.chip_util = metric("aproveitamento", big=True)
@@ -282,7 +287,7 @@ class UIBuildMixin:
         self.progress = QProgressBar()
         self.progress.setRange(0, 1000)
         self.progress.setTextVisible(False)
-        self.progress.setMinimumWidth(120)
+        self.progress.setMinimumWidth(40)
         self.progress.setToolTip("Aproveitamento: área das peças ÷ área das placas usadas")
         h.addWidget(self.progress, 1)
         h.addWidget(self._vsep())
@@ -292,6 +297,7 @@ class UIBuildMixin:
         h.addWidget(self._vsep())
         self.status_label = QLabel("Pronto")
         self.status_label.setObjectName("State")
+        self.status_label.setWordWrap(True)
         h.addWidget(self.status_label)
         return box
 
@@ -482,6 +488,39 @@ class UIBuildMixin:
         a_auto.setChecked(get_bool("update/auto_check", True))
         a_auto.toggled.connect(self.toggle_auto_update)
         act(m_help, "Sobre", self.show_about)
+
+    def apply_width(self, w: int, force: bool = False):
+        """Ajusta a janela à largura da tela: em telas menores (ou com zoom do Windows em 125–150%)
+        os botões ficam só com ícone e os painéis laterais estreitam, sem cortar nada."""
+        compact, tiny = w < 1500, w < 1250
+        if not force and (compact, tiny) == getattr(self, "_width_mode", None):
+            return
+        self._width_mode = (compact, tiny)
+        for b, txt in ((self.btn_open, "Abrir DXF"), (self.btn_intranet, "Intranet FIAP"), (self.btn_save, "Salvar")):
+            b.setText("" if compact else txt)
+        self.btn_export.setText("Exportar" if compact else "Exportar para RDWorks")
+        self.preset_combo.setMinimumWidth(130 if tiny else (170 if compact else 230))
+        self.plate_lbl.setVisible(not compact)
+        self.btn_nest.setMinimumWidth(0 if compact else 130)
+        self.mode_tabs.setTabText(1, "Foto" if tiny else "Gravação de foto")
+        self.parts_panel.setMinimumWidth(270)
+        self.settings_panel.setMinimumWidth(290 if tiny else 300)
+        self.photo_panel.set_compact(tiny)
+        self.status_hint.setText("F1 atalhos" if compact else
+                                 "Roda: zoom  ·  botão do meio / Alt+arrastar: mover vista  ·  R girar  ·  "
+                                 "L travar  ·  Del remover  ·  F1 atalhos")
+        self.status_hint.setVisible(not tiny)
+        self._metrics_layout.setSpacing(10 if compact else 18)
+        for full, short in (("peças encaixadas", "peças"), ("soluções testadas", "soluções"),
+                            ("aproveitamento", "aproveit.")):
+            cap, val = self._metric_caps[full]
+            cap.setText(short if compact else full)
+        for wdg in self._metric_caps["soluções testadas"]:
+            wdg.setVisible(not tiny)
+        self.status_label.setMaximumWidth(190 if compact else 16777215)
+        side_l = int(min(340, max(self.parts_panel.minimumWidth(), w * 0.22)))
+        side_r = int(min(360, max(self.settings_panel.minimumWidth(), w * 0.23)))
+        self.split.setSizes([side_l, max(300, w - side_l - side_r), side_r])
 
     def set_mode(self, i: int):
         """0 = encaixe de peças, 1 = gravação de foto."""

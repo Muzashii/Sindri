@@ -151,3 +151,45 @@ def test_r12_com_contorno_e_numero(tmp_path):
     res = nest(rep.parts, p, time_limit=3, max_generations=1, workers=0, seed=1)
     f = export_all_sheets(rep.parts, res.placements, p, str(tmp_path), "r12", "R12", sheet_outline=True)
     assert ezdxf.readfile(f).modelspace().query("LINE[layer=='PLACA']")
+
+
+def test_linhas_repetidas_saem_uma_vez(tmp_path):
+    """Desenhos com o contorno duplicado, segmentos 'ida e volta' e trechos colineares sobrepostos."""
+    import math
+    import ezdxf
+    from app.core.dxf_export import export_all_sheets
+    from app.core.part_builder import import_files
+    from app.core.models import Placement
+    path = tmp_path / "dup.dxf"
+    doc = ezdxf.new("R2000")
+    doc.units = 4                                                      # mm
+    msp = doc.modelspace()
+    rect = [(0, 0), (80, 0), (80, 40), (0, 40)]
+    msp.add_lwpolyline(rect, close=True)
+    msp.add_lwpolyline(list(reversed(rect)), close=True)               # mesmo contorno de novo
+    msp.add_lwpolyline([(80, 0), (80, 40)], close=True)                # "ida e volta" num lado
+    msp.add_line((10, 0), (50, 0))                                     # trecho dentro de um lado
+    msp.add_circle((40, 20), 5)
+    msp.add_circle((40, 20), 5)
+    doc.saveas(path)
+    rep = import_files([str(path)])
+    pls = [Placement(p.id, i, 0, 100, 100, 0) for p in rep.parts for i in range(p.quantity)]
+    st = {}
+    out = export_all_sheets(rep.parts, pls, NestParams(sheet_width=300, sheet_height=200), str(tmp_path),
+                            "t", stats=st)
+    total = 0.0
+    circles = 0
+    for e in ezdxf.readfile(out).modelspace():
+        if e.dxftype() == "LINE":
+            total += math.dist((e.dxf.start.x, e.dxf.start.y), (e.dxf.end.x, e.dxf.end.y))
+        elif e.dxftype() == "LWPOLYLINE":
+            pts = [(q[0], q[1]) for q in e.get_points()]
+            if e.closed:
+                pts.append(pts[0])
+            total += sum(math.dist(a, b) for a, b in zip(pts, pts[1:]))
+        elif e.dxftype() == "CIRCLE":
+            circles += 1
+    assert abs(total - 240) < 0.5                     # o perímetro do retângulo, uma vez só
+    assert circles == 1 and st["overlaps"] >= 2
+    assert rep.parts[0].quantity == 1                  # contorno repetido não vira 2 peças
+    assert any("em dobro" in w for w in rep.warnings)

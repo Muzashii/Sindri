@@ -180,6 +180,7 @@ class ExportMixin:
             idx = self.sheet_index()
             only = {si for si in idx.ordered if idx.number[si] == sheet_no}
         groups = self._laser_plan(only)
+        export_stats: dict = {}
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             os.makedirs(o["folder"], exist_ok=True)
@@ -187,7 +188,7 @@ class ExportMixin:
                 dxf = export_all_sheets(self.parts, self.placements, p, stage, o["base"], o["version"],
                                         sheet_outline=o["outline"], inner_first=o["inner"], sort_path=o["path"],
                                         color_map=laser.color_map(groups), only_sheets=only,
-                                        file_suffix=suffix)
+                                        file_suffix=suffix, stats=export_stats)
                 sources = [dxf]
                 if only is None:                     # relatório só na exportação completa
                     res = NestResult(self.placements, self.n_sheets, self._utilization(), 0.0, self.unplaced)
@@ -224,6 +225,9 @@ class ExportMixin:
         what = (f"só a placa {sheet_no}" + (f" · {sheet_mat}" if sheet_mat else "")
                 if sheet_no is not None else "todas as placas + relatório")
         txt = f"<b>Exportado ({what}):</b> {os.path.basename(files[0])}" + links
+        if export_stats.get("overlaps"):
+            txt += (f"<br>{export_stats['overlaps']} linha(s) repetida(s) ou sobreposta(s) removida(s) — "
+                    "o laser passa uma vez só em cada trecho.")
         if opened:
             txt += "<br>" + opened.replace("\n", "<br>")
         if o["outline"]:

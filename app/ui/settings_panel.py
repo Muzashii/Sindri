@@ -254,6 +254,7 @@ class SettingsPanel(QWidget):
             cb.setMinimumContentsLength(8)
         for form in body.findChildren(_F):
             form.setFieldGrowthPolicy(_F.AllNonFixedFieldsGrow)
+            form.setRowWrapPolicy(_F.WrapLongRows)    # painel estreito: o campo desce para baixo do rótulo
             form.setContentsMargins(0, 0, 0, 0)
             form.setHorizontalSpacing(10)
             form.setVerticalSpacing(8)

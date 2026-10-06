@@ -296,9 +296,10 @@ def export_sheets(parts: list[Part] | dict[str, Part], placements: list[Placemen
 
     def emit(msp, pls, dx):
         seq = order_placements(pmap, pls, nearest=sort_path) if inner_first or sort_path else pls
-        for pl in seq:
-            for pr in placed_prims(pmap[pl.part_id], pl, dx, inner_first):
-                write_prim(msp, pr, version)
+        from .overlap import remove_overlaps
+        prims = [pr for pl in seq for pr in placed_prims(pmap[pl.part_id], pl, dx, inner_first)]
+        for pr in remove_overlaps(prims)[0]:
+            write_prim(msp, pr, version)
 
     groups = sheet_groups(pmap, placements)
     for mat, sis in groups:
@@ -335,7 +336,8 @@ def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Plac
                       out_dir: str, base_name: str = "projeto", version: str = "R2000",
                       sheet_outline: bool = False, inner_first: bool = True, sort_path: bool = True,
                       gap: float = 20.0, color_map: Optional[dict] = None,
-                      only_sheets: Optional[set] = None, file_suffix: str = "_todas_placas") -> str:
+                      only_sheets: Optional[set] = None, file_suffix: str = "_todas_placas",
+                      remove_overlap: bool = True, stats: Optional[dict] = None) -> str:
     """Um arquivo só (<nome>_todas_placas.dxf) com TODAS as placas de todos os materiais lado a lado,
     na mesma ordem do relatório (materiais separados por um espaço maior). É o que abre no RDWorks.
     ``color_map``: {(material, cor ACI original): cor ACI a gravar} — separa materiais em camadas.
@@ -365,6 +367,7 @@ def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Plac
                 _stroke_text(msp, label, dx, params.sheet_height + hh * 0.6, hh, PLATE_LAYER, 8)
             pls = [pl for pl in placements if pl.sheet_index == si]
             seq = order_placements(pmap, pls, nearest=sort_path) if inner_first or sort_path else pls
+            sheet_prims = []
             for pl in seq:
                 part = pmap[pl.part_id]
                 for pr in placed_prims(part, pl, dx, inner_first):
@@ -373,7 +376,14 @@ def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Plac
                         target = color_map.get((part.material or "", export_aci(pr)))
                         if target:
                             pr.color, pr.rgb = target, None
-                    write_prim(msp, pr, version)
+                    sheet_prims.append(pr)
+            if remove_overlap:
+                from .overlap import remove_overlaps
+                sheet_prims, n_rm = remove_overlaps(sheet_prims)
+                if stats is not None:
+                    stats["overlaps"] = stats.get("overlaps", 0) + n_rm
+            for pr in sheet_prims:
+                write_prim(msp, pr, version)
             dx += params.sheet_width + gap
     path = os.path.join(out_dir, f"{base_name}{file_suffix}.dxf")
     _finish(doc, path)

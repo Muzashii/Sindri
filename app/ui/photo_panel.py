@@ -148,6 +148,7 @@ class PhotoPanel(QWidget):
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setFixedWidth(340)
+        self._controls = scroll
         body = QWidget()
         scroll.setWidget(body)
         v = QVBoxLayout(body)
@@ -614,6 +615,10 @@ class PhotoPanel(QWidget):
             txt += "  ·  ⚠ a foto passa da borda da placa"
         self.info.setText(txt)
         self.btn_export.setEnabled(ok)
+
+    def set_compact(self, on: bool):
+        """Telas pequenas: coluna de controles mais estreita."""
+        self._controls.setFixedWidth(290 if on else 340)
 
     def show_message(self, html: str):
         self.msg.setText(html)

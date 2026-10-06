@@ -19,6 +19,10 @@ def main() -> int:
     import numpy  # carrega explicitamente para preservar o diagnóstico de falhas nas DLLs
     from app.ui.main_window import MainWindow
 
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QGuiApplication
+    # zoom do Windows fracionado (125%, 150%…): escala exata, sem arredondar para 100%/200% (texto borrado)
+    QGuiApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication(sys.argv)
     app.setApplicationName("Sindri")
     app.setOrganizationName("LabMaker")
