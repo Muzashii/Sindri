@@ -211,6 +211,21 @@ O botão **Intranet FIAP** abre a página de *Solicitações Maker* num navegado
 
 ---
 
+## 🖼️ Gravação de foto
+
+Na aba **Gravação de foto** (topo da janela, ou `Ctrl+2`), abra uma imagem (ou arraste o arquivo) e o Sindri a
+transforma em **linhas horizontais com potências diferentes**, prontas para gravar em madeira/MDF:
+
+- **Tamanho e posição** em mm na placa atual — arraste a foto na placa ou use *Centralizar*.
+- **Espaço entre linhas** (ex.: 0,25 mm) e até **5 níveis de potência**; o *pontilhado* mistura níveis vizinhos
+  para parecer que há muito mais tons.
+- **Brilho, contraste, gama**, *ignorar claros* (fundo limpo), *inverter* e *moldura*.
+- **Velocidade e potência** do tom mais escuro e do mais claro; cada nível vira uma cor/camada no RDWorks
+  (preto, azul, vermelho, verde, amarelo) e o Sindri preenche a potência de cada uma ao exportar.
+- A pré-visualização mostra como fica na madeira, com o número de traços e o tempo estimado.
+
+---
+
 ## 🖥️ Linha de comando
 
 Também dá para encaixar sem interface:

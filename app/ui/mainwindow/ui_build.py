@@ -46,6 +46,15 @@ class UIBuildMixin:
         tl.addWidget(mark)
         tl.addWidget(logo)
         tl.addSpacing(10)
+        # modos do programa: encaixe de peças ou gravação de foto
+        self.mode_tabs = QTabBar()
+        self.mode_tabs.setDrawBase(False)
+        self.mode_tabs.addTab("Encaixe")
+        self.mode_tabs.addTab("Gravação de foto")
+        self.mode_tabs.setTabToolTip(0, "Encaixar peças DXF nas placas")
+        self.mode_tabs.setTabToolTip(1, "Transformar uma foto em linhas com potências diferentes")
+        self.mode_tabs.currentChanged.connect(self.set_mode)
+        tl.addWidget(self.mode_tabs)
         tl.addWidget(self._vsep())
         self.btn_open = QPushButton("Abrir DXF")
         self.btn_open.setToolTip("Abrir um ou vários arquivos DXF (Ctrl+O). Você também pode arrastá-los para a janela.")
@@ -99,14 +108,19 @@ class UIBuildMixin:
         self._export_menu.aboutToShow.connect(self._fill_export_menu)
         self.btn_export_menu.setMenu(self._export_menu)
         self.btn_export_menu.setStyleSheet("QPushButton::menu-indicator { image: none; width: 0; }")
+        self.nest_actions = QWidget()
+        na = QHBoxLayout(self.nest_actions)
+        na.setContentsMargins(0, 0, 0, 0)
+        na.setSpacing(8)
         for w in (self.btn_nest, self.btn_pause, self.btn_stop):
-            tl.addWidget(w)
-        tl.addWidget(self._vsep())
+            na.addWidget(w)
+        na.addWidget(self._vsep())
         exp = QHBoxLayout()
         exp.setSpacing(2)
         exp.addWidget(self.btn_export)
         exp.addWidget(self.btn_export_menu)
-        tl.addLayout(exp)
+        na.addLayout(exp)
+        tl.addWidget(self.nest_actions)
         tl.addWidget(self._vsep())
         self.btn_theme = QToolButton()
         self.btn_theme.setToolTip("Alternar tema claro/escuro (Ctrl+T)")
@@ -213,12 +227,22 @@ class UIBuildMixin:
         self.parts_panel.setMinimumWidth(280)
         split.setChildrenCollapsible(False)
 
+        from ..photo_panel import PhotoPanel
+        self.photo_panel = PhotoPanel(lambda: (self.settings_panel.params().sheet_width,
+                                               self.settings_panel.params().sheet_height))
+        self.photo_panel.exportRequested.connect(self.export_photo)
+        self.photo_panel.msg.linkActivated.connect(self._banner_link)
+        self.settings_panel.paramsChanged.connect(self.photo_panel.plate_changed)
+        self.mode_stack = QStackedWidget()
+        self.mode_stack.addWidget(split)
+        self.mode_stack.addWidget(self.photo_panel)
+
         root = QWidget()
         rl = QVBoxLayout(root)
         rl.setContentsMargins(0, 0, 0, 0)
         rl.setSpacing(0)
         rl.addWidget(top)
-        rl.addWidget(split, 1)
+        rl.addWidget(self.mode_stack, 1)
         self.setCentralWidget(root)
 
         # ---------------- barra de status com indicadores
@@ -435,6 +459,8 @@ class UIBuildMixin:
         act(m_view, "Placa anterior", lambda: self.goto_sheet(self.canvas.current_sheet() - 1), "PgUp")
         act(m_view, "Próxima placa", lambda: self.goto_sheet(self.canvas.current_sheet() + 1), "PgDown")
         act(m_view, "Tema claro/escuro", lambda: self.set_dark(not self.dark), "Ctrl+T")
+        act(m_view, "Encaixe de peças", lambda: self.mode_tabs.setCurrentIndex(0), "Ctrl+1")
+        act(m_view, "Gravação de foto", lambda: self.mode_tabs.setCurrentIndex(1), "Ctrl+2")
         self.a_params = act(m_view, "Painel de parâmetros", lambda: None, "Ctrl+P")
         self.a_params.setCheckable(True)
         self.a_params.setChecked(settings().value("ui/params_visible", "true") == "true")
@@ -457,6 +483,16 @@ class UIBuildMixin:
         a_auto.toggled.connect(self.toggle_auto_update)
         act(m_help, "Sobre", self.show_about)
 
+    def set_mode(self, i: int):
+        """0 = encaixe de peças, 1 = gravação de foto."""
+        if self.mode_tabs.currentIndex() != i:
+            self.mode_tabs.setCurrentIndex(i)
+            return
+        self.mode_stack.setCurrentIndex(i)
+        self.nest_actions.setVisible(i == 0)
+        if i == 1:
+            self.photo_panel.plate_changed()
+
     def set_dark(self, dark: bool):
         self.dark = dark
         apply_theme(QApplication.instance(), dark)
@@ -467,6 +503,8 @@ class UIBuildMixin:
         if self.parts:
             self.parts_panel.set_parts(self.parts, self.too_big)
         self._redraw(keep_view=True)
+        if getattr(self, "photo_panel", None) is not None:
+            self.photo_panel.refresh_theme()
 
     def toggle_params(self, on: bool):
         self.settings_panel.setVisible(on)

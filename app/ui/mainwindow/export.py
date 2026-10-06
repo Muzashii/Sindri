@@ -21,6 +21,52 @@ class ExportMixin:
     def export_with_options(self):
         self.export(ask=True)
 
+    def export_photo(self):
+        """Aba Gravação de foto: grava o DXF da foto e abre no RDWorks com a potência de cada nível."""
+        from ...core.photo import write_dxf
+        pp = self.photo_panel
+        if pp.result is None or not pp.result.count:
+            return
+        st = settings()
+        folder = st.value("photo/last_dir", "") or (os.path.dirname(pp.image_path) if pp.image_path else "")
+        if not folder or not os.path.isdir(folder):
+            folder = QFileDialog.getExistingDirectory(self, "Onde salvar o arquivo da foto?",
+                                                      os.path.expanduser("~"))
+            if not folder:
+                return
+        st.setValue("photo/last_dir", folder)
+        stem = os.path.splitext(os.path.basename(pp.image_path))[0] or "foto"
+        import re
+        stem = re.sub(r"[^\w\-]+", "_", stem).strip("_") or "foto"
+        base, k = f"{stem}_foto", 2
+        while os.path.exists(os.path.join(folder, base + ".dxf")):
+            base = f"{stem}_foto_{k}"
+            k += 1
+        path = os.path.join(folder, base + ".dxf")
+        p = pp.params()
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            w, h = pp.plate_size()
+            outline = (w, h) if st.value("export/outline2", "true") == "true" else None
+            write_dxf(pp.result, pp._result_params or p, path, outline=outline)
+        except Exception as e:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.critical(self, "Erro ao exportar", f"Não foi possível salvar o arquivo da foto:\n{e}")
+            return
+        QApplication.restoreOverrideCursor()
+        values = pp.laser_values(self._laser_palette())
+        opened = self._open_in_rdworks([path], values=values) if st.value("export/open_rdworks", "true") == "true" else ""
+        from urllib.parse import quote
+        txt = (f"<b>Foto exportada:</b> {os.path.basename(path)} · "
+               f'<a href="open:{quote(folder)}">Abrir pasta</a>')
+        powers = ", ".join(f"{pw:g}%" for pw in p.level_powers())
+        txt += f"<br>Níveis (do escuro ao claro): {powers} a {p.speed:g} mm/s."
+        if opened:
+            txt += "<br>" + opened.replace("\n", "<br>")
+        if outline:
+            txt += "<br><b>RDWorks:</b> na camada cinza (contorno da placa) coloque <b>saída = NÃO</b>."
+        pp.show_message(txt)
+
     def _fill_export_menu(self):
         """Menu da seta ao lado de Exportar: tudo, a placa da tela, ou uma placa escolhida."""
         m = self._export_menu
@@ -211,10 +257,13 @@ class ExportMixin:
                              f"{v[0]:g} mm/s · {v[1]:g}%")
         return lines
 
-    def _apply_laser(self, exe: str, path: str, groups: list) -> tuple[bool, str]:
-        """Grava velocidade/potência no RDWorks antes de abrir. Devolve (já abriu o RDWorks?, aviso)."""
-        vals = self.laser_values()
-        values = {g.rd_index: tuple(vals[g.key]) for g in groups if vals.get(g.key)}
+    def _apply_laser(self, exe: str, path: str, groups: list,
+                     values: dict | None = None) -> tuple[bool, str]:
+        """Grava velocidade/potência no RDWorks antes de abrir. Devolve (já abriu o RDWorks?, aviso).
+        ``values``: {camada do RDWorks: (velocidade, potência)} já prontos (ex.: gravação de foto)."""
+        if values is None:
+            vals = self.laser_values()
+            values = {g.rd_index: tuple(vals[g.key]) for g in groups if vals.get(g.key)}
         if not values:
             return False, ""
         cfg = laser.config_path(exe)
@@ -251,7 +300,8 @@ class ExportMixin:
             return False, f"Velocidade/potência não aplicadas: {e}"
         return True, ""
 
-    def _open_in_rdworks(self, files: list[str], groups: list | None = None) -> str:
+    def _open_in_rdworks(self, files: list[str], groups: list | None = None,
+                         values: dict | None = None) -> str:
         """Abre o DXF exportado no RDWorks. Devolve uma frase para a mensagem final."""
         targets = files_to_open(files)
         if not targets:
@@ -270,7 +320,7 @@ class ExportMixin:
         st.setValue("rdworks/exe", exe)
         path = targets[0]
         QApplication.clipboard().setText(os.path.abspath(path))
-        opened, laser_msg = self._apply_laser(exe, path, groups or [])
+        opened, laser_msg = self._apply_laser(exe, path, groups or [], values)
         try:
             if not opened:
                 launch(exe, path)
