@@ -10,7 +10,7 @@ from typing import Callable, Optional
 import numpy as np
 from PySide6.QtCore import QObject, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QImage, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import (QCheckBox, QFileDialog, QFormLayout, QFrame, QGraphicsItem, QGraphicsPixmapItem,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QGraphicsItem, QGraphicsPixmapItem,
                                QGraphicsRectItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel, QPushButton,
                                QScrollArea, QSlider, QSpinBox, QVBoxLayout, QWidget)
 
@@ -20,6 +20,7 @@ from .dialogs import settings
 from .settings_panel import _dspin, _Section
 
 IMAGE_FILTER = "Imagens (*.png *.jpg *.jpeg *.bmp *.gif *.tif *.tiff *.webp)"
+HEAVY_SEGMENTS = 60000              # acima disto o RDWorks demora muito para abrir o DXF
 MAX_SOURCE_PX = 3000                 # fotos maiores são reduzidas ao abrir (o resultado não precisa mais)
 
 
@@ -60,6 +61,16 @@ def preview_image(result: PhotoResult, levels: int) -> QImage:
     h, w = gray.shape
     img = QImage(rgb.data, w, h, 3 * w, QImage.Format_RGB888)
     return img.copy()
+
+
+def preview_gray(dark: np.ndarray) -> QImage:
+    """Modo imagem: tons contínuos (queima proporcional) sobre madeira clara."""
+    g = (255 - np.clip(dark, 0, 1) * 220).astype(np.float32)
+    rgb = np.dstack([(g * 0.93 + 18).clip(0, 255), (g * 0.80 + 20).clip(0, 255),
+                     (g * 0.58 + 22).clip(0, 255)]).astype(np.uint8)
+    rgb = np.ascontiguousarray(rgb)
+    h, w = g.shape
+    return QImage(rgb.data, w, h, 3 * w, QImage.Format_RGB888).copy()
 
 
 class _Bridge(QObject):
@@ -177,6 +188,17 @@ class PhotoPanel(QWidget):
 
         g2 = _Section("Linhas e tons", "layers")
         f2 = QFormLayout(g2.body)
+        self.mode = QComboBox()
+        self.mode.addItem("Imagem BMP (rápido)", "imagem")
+        self.mode.addItem("Linhas DXF (vetor)", "linhas")
+        self.mode.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.mode.setMinimumContentsLength(10)
+        self.mode.setToolTip(
+            "Imagem: um BMP em tons de cinza; o RDWorks grava linha a linha variando a potência entre a\n"
+            "mínima (claro) e a máxima (escuro). Abre na hora, mesmo fotos grandes.\n"
+            "Linhas: cada tom vira traços vetoriais numa camada com potência própria (arquivo bem maior;\n"
+            "o RDWorks pode demorar a abrir).")
+        f2.addRow("Exportar como", self.mode)
         self.line = _dspin(0.05, 2, 0.05, 2, " mm",
                            "Distância entre as linhas (o ponto do laser costuma ter 0,1–0,2 mm).\n"
                            "Menor = mais detalhe, arquivo maior e gravação mais demorada.")
@@ -235,6 +257,7 @@ class PhotoPanel(QWidget):
             wdg.valueChanged.connect(self._changed)
         for c in (self.dither, self.invert):
             c.toggled.connect(self._changed)
+        self.mode.currentIndexChanged.connect(self._changed)
         for wdg in (self.x, self.y):
             wdg.valueChanged.connect(self._moved_by_spin)
         for wdg in (self.speed, self.pmax, self.pmin):
@@ -313,7 +336,8 @@ class PhotoPanel(QWidget):
                            brightness=self.bright.value() / 100.0, contrast=self.contrast.value() / 100.0 * 0.9,
                            gamma=self.gamma.value(), invert=self.invert.isChecked(),
                            dither=self.dither.isChecked(), white_cut=self.cut.value() / 100.0,
-                           frame_mm=self.frame.value(), x_mm=self.x.value(), y_mm=self.y.value())
+                           frame_mm=self.frame.value(), x_mm=self.x.value(), y_mm=self.y.value(),
+                           mode=self.mode.currentData() or "imagem")
 
     def _set_params(self, p: PhotoParams):
         for wdg, val in ((self.w, p.width_mm), (self.line, p.line_mm), (self.levels, p.levels),
@@ -329,6 +353,10 @@ class PhotoPanel(QWidget):
             c.blockSignals(True)
             c.setChecked(bool(val))
             c.blockSignals(False)
+        self.mode.blockSignals(True)
+        self.mode.setCurrentIndex(max(0, self.mode.findData(p.mode)))
+        self.mode.blockSignals(False)
+        self._mode_ui()
 
     def _load_settings(self):
         p = PhotoParams()
@@ -350,6 +378,8 @@ class PhotoPanel(QWidget):
         from ..core import laser
         p = self.params()
         pal = palette or laser.DEFAULT_PALETTE
+        if p.mode == "imagem":                       # bitmap na camada preta: mín. = claro, máx. = escuro
+            return {laser.nearest_layer((0, 0, 0), pal): (p.speed, p.power_min, p.power_max)}
         n = max(1, min(MAX_LEVELS, int(p.levels)))
         return {laser.nearest_layer(laser.aci_rgb(LEVEL_ACI[k]), pal): (p.speed, pw)
                 for k, pw in enumerate(p.level_powers()[:n])}
@@ -387,7 +417,16 @@ class PhotoPanel(QWidget):
                 break
 
     # ------------------------------------------------------------------ traçado (em segundo plano)
+    def _mode_ui(self):
+        lines = (self.mode.currentData() or "imagem") == "linhas"
+        self.levels.setEnabled(lines)
+        self.dither.setEnabled(lines)
+        for wdg in (self.x, self.y, self.btn_center):
+            wdg.setToolTip(wdg.toolTip().split("\n(Imagem")[0] + ("" if lines else
+                           "\n(Imagem: só para ver na placa — no RDWorks a imagem entra onde você colocar)"))
+
     def _changed(self, *_):
+        self._mode_ui()
         self._save_settings()
         self._update_size()
         if self.gray is not None:
@@ -475,6 +514,9 @@ class PhotoPanel(QWidget):
             g = np.ascontiguousarray(g)
             hh, ww = g.shape
             img = QImage(g.data, ww, hh, ww, QImage.Format_Grayscale8).copy()
+        elif self._result_params is not None and self._result_params.mode == "imagem" \
+                and self.result.dark is not None:
+            img = preview_gray(self.result.dark)
         else:
             img = preview_image(self.result, self._result_params.levels if self._result_params else 5)
         pm = QPixmap.fromImage(img)
@@ -516,8 +558,12 @@ class PhotoPanel(QWidget):
         p = self.params()
         n = max(1, min(MAX_LEVELS, int(p.levels)))
         pw = p.level_powers()
-        self.levels_lbl.setText("Camadas no RDWorks (do mais escuro ao mais claro): " + "; ".join(
-            f"{LEVEL_NAMES[k]} {pw[k]:g}%" for k in range(n)))
+        if p.mode == "imagem":
+            self.levels_lbl.setText(f"Camada preta do RDWorks: potência {p.power_min:g}% nos claros até "
+                                    f"{p.power_max:g}% nos escuros. Deixe a camada em modo varredura (scan).")
+        else:
+            self.levels_lbl.setText("Camadas no RDWorks (do mais escuro ao mais claro): " + "; ".join(
+                f"{LEVEL_NAMES[k]} {pw[k]:g}%" for k in range(n)))
         if self.gray is None:
             self.info.setText("Abra uma imagem para começar (botão à esquerda ou arraste o arquivo).")
             self.btn_export.setEnabled(False)
@@ -527,14 +573,26 @@ class PhotoPanel(QWidget):
         w, h = self.plate_size()
         outside = (p.x_mm < -1e-6 or p.y_mm < -1e-6 or p.x_mm + self.result.width_mm > w + 1e-6
                    or p.y_mm + self.result.height_mm > h + 1e-6)
-        mins = estimate_minutes(self.result, p)
-        txt = (f"{self.result.width_mm:.0f} × {self.result.height_mm:.0f} mm · "
-               f"{self.result.levels.shape[0]} linhas · {self.result.count:,} traços · "
-               f"≈ {mins:.0f} min a {p.speed:g} mm/s").replace(",", ".")
+        rp = self._result_params or p
+        rows, cols = self.result.levels.shape
+        if rp.mode == "imagem":
+            mins = (rows * (self.result.width_mm * 1.15 + 10)) / max(p.speed, 1) / 60.0
+            txt = (f"{self.result.width_mm:.0f} × {self.result.height_mm:.0f} mm · imagem {cols} × {rows} px · "
+                   f"≈ {mins:.0f} min a {p.speed:g} mm/s")
+            ok = bool((self.result.dark is not None) and (self.result.dark > 0).any())
+        else:
+            mins = estimate_minutes(self.result, p)
+            txt = (f"{self.result.width_mm:.0f} × {self.result.height_mm:.0f} mm · "
+                   f"{rows} linhas · {self.result.count:,} traços · "
+                   f"≈ {mins:.0f} min a {p.speed:g} mm/s").replace(",", ".")
+            if self.result.count > HEAVY_SEGMENTS:
+                txt += ("  ·  ⚠ arquivo pesado: o RDWorks vai demorar para abrir — use “Imagem (BMP)”, "
+                        "desligue o pontilhado ou aumente o espaço entre linhas")
+            ok = self.result.count > 0
         if outside:
             txt += "  ·  ⚠ a foto passa da borda da placa"
         self.info.setText(txt)
-        self.btn_export.setEnabled(self.result.count > 0)
+        self.btn_export.setEnabled(ok)
 
     def show_message(self, html: str):
         self.msg.setText(html)

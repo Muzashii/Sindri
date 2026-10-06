@@ -179,20 +179,22 @@ def read_layer(data: bytes, table: LayerTable, index: int) -> tuple[float, float
     return s, pmin, pmax
 
 
-def patch(data: bytes, values: dict[int, tuple[float, float]]) -> bytes:
-    """Troca velocidade e potência (mín = máx, nos dois tubos) das camadas pedidas, em todas as tabelas."""
+def patch(data: bytes, values: dict[int, tuple]) -> bytes:
+    """Troca velocidade e potência das camadas pedidas, em todas as tabelas, nos dois tubos.
+    Cada valor é (velocidade, potência) — mín. = máx. — ou (velocidade, pot. mín., pot. máx.)."""
     tables = find_tables(data)
     if not tables:
         raise ValueError("não reconheci a tabela de camadas do RDWorks (versão diferente?)")
     out = bytearray(data)
     for t in tables:
-        for idx, (speed, power) in values.items():
+        for idx, val in values.items():
+            speed, pmin, pmax = (val[0], val[1], val[1]) if len(val) == 2 else tuple(val[:3])
             if not 0 <= idx < t.count:
                 continue
             o = t.offset + idx * t.stride
             if not _plausible(out, o):
                 raise ValueError(f"registro inesperado na camada {idx}")
-            struct.pack_into("<5d", out, o, float(speed), float(power), float(power), float(power), float(power))
+            struct.pack_into("<5d", out, o, float(speed), float(pmin), float(pmax), float(pmin), float(pmax))
     return bytes(out)
 
 

@@ -38,6 +38,8 @@ class PhotoParams:
     min_seg_mm: float = 0.0         # trechos menores são descartados (0 = mantém todos)
     x_mm: float = 10.0              # posição na placa (canto inferior esquerdo)
     y_mm: float = 10.0
+    mode: str = "imagem"            # "imagem": BMP em tons de cinza (o RDWorks varia a potência sozinho)
+                                    # "linhas": DXF com uma camada por nível de potência
 
     def level_powers(self) -> list[float]:
         """Potência de cada nível (0 = mais escuro)."""
@@ -54,6 +56,7 @@ class PhotoResult:
     height_mm: float
     line_mm: float
     segments: list = field(default_factory=list)   # [(nível, y, x0, x1)] em mm, origem no canto inf. esq.
+    dark: Optional[np.ndarray] = None              # escuridão 0..1 já ajustada (modo imagem)
 
     @property
     def count(self) -> int:
@@ -192,11 +195,39 @@ def trace(gray: np.ndarray, p: PhotoParams, max_cols: int = 2400) -> PhotoResult
         fc = max(1, int(round(p.frame_mm / px)))
         dark[:fr, :] = dark[-fr:, :] = 1.0
         dark[:, :fc] = dark[:, -fc:] = 1.0
+    dark = np.where(dark < float(p.white_cut), 0.0, dark).astype(np.float32)
+    if p.mode == "imagem":
+        lv = np.where(dark > 0, 0, -1).astype(np.int8)
+        return PhotoResult(lv, width, rows * line, line, [], dark)
     lv = quantize(dark, p)
     segs = segments(lv, line, p.min_seg_mm)
     if abs(px - line) > 1e-9:                           # colunas com passo diferente das linhas
         segs = [(k, y, x0 / line * px, x1 / line * px) for k, y, x0, x1 in segs]
-    return PhotoResult(lv, width, rows * line, line, segs)
+    return PhotoResult(lv, width, rows * line, line, segs, dark)
+
+
+def write_bmp(result: PhotoResult, path: str) -> str:
+    """BMP 8 bits em tons de cinza, com a resolução gravada (o RDWorks importa já no tamanho certo).
+    Branco = não grava; quanto mais escuro, mais potência (entre a mínima e a máxima da camada)."""
+    import os
+    import struct
+    dark = result.dark if result.dark is not None else np.where(result.levels >= 0, 1.0, 0.0)
+    img = (255 - np.clip(dark, 0, 1) * 255).round().astype(np.uint8)
+    h, w = img.shape
+    row = (w + 3) & ~3
+    data = np.full((h, row), 255, dtype=np.uint8)
+    data[:, :w] = img[::-1]                                  # BMP guarda de baixo para cima
+    ppm = int(round(w / result.width_mm * 1000.0))           # pixels por metro
+    palette = b"".join(struct.pack("<BBBB", i, i, i, 0) for i in range(256))
+    off = 14 + 40 + len(palette)
+    size = off + data.size
+    head = struct.pack("<2sIHHI", b"BM", size, 0, 0, off)
+    info = struct.pack("<IiiHHIIiiII", 40, w, h, 1, 8, 0, data.size, ppm, ppm, 256, 0)
+    tmp = path + ".tmp"
+    with open(tmp, "wb") as fh:
+        fh.write(head + info + palette + data.tobytes())
+    os.replace(tmp, path)
+    return path
 
 
 def write_dxf(result: PhotoResult, p: PhotoParams, path: str, outline: Optional[tuple] = None) -> str:

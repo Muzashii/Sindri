@@ -23,10 +23,12 @@ class ExportMixin:
 
     def export_photo(self):
         """Aba Gravação de foto: grava o DXF da foto e abre no RDWorks com a potência de cada nível."""
-        from ...core.photo import write_dxf
+        from ...core.photo import write_bmp, write_dxf
         pp = self.photo_panel
-        if pp.result is None or not pp.result.count:
+        if pp.result is None or not pp.btn_export.isEnabled():
             return
+        rp = pp._result_params or pp.params()
+        ext = ".bmp" if rp.mode == "imagem" else ".dxf"
         st = settings()
         folder = st.value("photo/last_dir", "") or (os.path.dirname(pp.image_path) if pp.image_path else "")
         if not folder or not os.path.isdir(folder):
@@ -39,16 +41,20 @@ class ExportMixin:
         import re
         stem = re.sub(r"[^\w\-]+", "_", stem).strip("_") or "foto"
         base, k = f"{stem}_foto", 2
-        while os.path.exists(os.path.join(folder, base + ".dxf")):
+        while os.path.exists(os.path.join(folder, base + ext)):
             base = f"{stem}_foto_{k}"
             k += 1
-        path = os.path.join(folder, base + ".dxf")
+        path = os.path.join(folder, base + ext)
         p = pp.params()
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             w, h = pp.plate_size()
-            outline = (w, h) if st.value("export/outline2", "true") == "true" else None
-            write_dxf(pp.result, pp._result_params or p, path, outline=outline)
+            outline = None
+            if rp.mode == "imagem":
+                write_bmp(pp.result, path)
+            else:
+                outline = (w, h) if st.value("export/outline2", "true") == "true" else None
+                write_dxf(pp.result, rp, path, outline=outline)
         except Exception as e:
             QApplication.restoreOverrideCursor()
             QMessageBox.critical(self, "Erro ao exportar", f"Não foi possível salvar o arquivo da foto:\n{e}")
@@ -59,8 +65,13 @@ class ExportMixin:
         from urllib.parse import quote
         txt = (f"<b>Foto exportada:</b> {os.path.basename(path)} · "
                f'<a href="open:{quote(folder)}">Abrir pasta</a>')
-        powers = ", ".join(f"{pw:g}%" for pw in p.level_powers())
-        txt += f"<br>Níveis (do escuro ao claro): {powers} a {p.speed:g} mm/s."
+        if rp.mode == "imagem":
+            txt += (f"<br>Imagem em tons de cinza ({pp.result.width_mm:.0f} × {pp.result.height_mm:.0f} mm): "
+                    f"camada preta com {p.power_min:g}% (claros) a {p.power_max:g}% (escuros) a {p.speed:g} mm/s. "
+                    "No RDWorks deixe a camada em <b>modo varredura (scan)</b> e posicione a imagem na placa.")
+        else:
+            powers = ", ".join(f"{pw:g}%" for pw in p.level_powers())
+            txt += f"<br>Níveis (do escuro ao claro): {powers} a {p.speed:g} mm/s."
         if opened:
             txt += "<br>" + opened.replace("\n", "<br>")
         if outline:

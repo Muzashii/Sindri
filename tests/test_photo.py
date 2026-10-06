@@ -8,7 +8,7 @@ from app.core.photo import LEVEL_ACI, PhotoParams, trace, write_dxf
 
 def test_degrade_vira_niveis_e_branco_nao_grava(tmp_path):
     img = np.tile(np.linspace(0, 1, 400), (100, 1))           # preto à esquerda, branco à direita
-    p = PhotoParams(width_mm=100, line_mm=0.5, levels=4, dither=False, white_cut=0.05)
+    p = PhotoParams(width_mm=100, line_mm=0.5, levels=4, dither=False, white_cut=0.05, mode="linhas")
     r = trace(img, p)
     assert r.levels.shape == (50, 200)
     row = r.levels[10]
@@ -25,7 +25,7 @@ def test_degrade_vira_niveis_e_branco_nao_grava(tmp_path):
 
 def test_pontilhado_preserva_o_tom_medio():
     img = np.full((80, 80), 0.5)
-    p = PhotoParams(width_mm=40, line_mm=0.5, levels=2, dither=True, white_cut=0.0)
+    p = PhotoParams(width_mm=40, line_mm=0.5, levels=2, dither=True, white_cut=0.0, mode="linhas")
     lv = trace(img, p).levels
     # metade escura: a média dos patamares gravados fica perto de 0.5
     dark = np.where(lv < 0, 0.0, np.where(lv == 0, 1.0, 0.5))
@@ -51,6 +51,7 @@ def test_aba_foto_gera_e_exporta(tmp_path):
     assert w.mode_stack.currentWidget() is w.photo_panel and not w.nest_actions.isVisibleTo(w)
     pp = w.photo_panel
     pp.w.setValue(60)
+    pp.mode.setCurrentIndex(pp.mode.findData("linhas"))
     assert pp.open_image(src) and pp.wait_idle()
     assert pp.result.count > 0 and pp.h_lbl.text() == "40.0 mm"
     vals = pp.laser_values()
@@ -60,9 +61,19 @@ def test_aba_foto_gera_e_exporta(tmp_path):
     st = settings()
     st.setValue("photo/last_dir", str(out))
     st.setValue("export/open_rdworks", "false")
+    pp.mode.setCurrentIndex(pp.mode.findData("imagem"))
+    assert pp.wait_idle() and not pp.levels.isEnabled()
+    vals = pp.laser_values()
+    assert list(vals.values()) == [(pp.speed.value(), pp.pmin.value(), pp.pmax.value())]
     w.export_photo()
-    assert os.listdir(out) == ["foto_foto.dxf"]
-    assert "Foto exportada" in pp.msg.text()
+    assert os.listdir(out) == ["foto_foto.bmp"]
+    q = QImage(str(out / "foto_foto.bmp"))
+    assert q.width() == round(60 / pp.line.value()) and abs(q.width() / q.dotsPerMeterX() * 1000 - 60) < 0.5
+    assert "Foto exportada" in pp.msg.text() and "varredura" in pp.msg.text()
+    pp.mode.setCurrentIndex(pp.mode.findData("linhas"))
+    assert pp.wait_idle() and pp.levels.isEnabled()
+    w.export_photo()
+    assert sorted(os.listdir(out)) == ["foto_foto.bmp", "foto_foto.dxf"]
     w.set_mode(0)
     assert w.nest_actions.isVisibleTo(w)
     w.close()

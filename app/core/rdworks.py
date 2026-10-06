@@ -98,7 +98,8 @@ def files_to_open(files: list[str]) -> list[str]:
     dxfs = [f for f in files if f.lower().endswith(".dxf")]
     combined = sorted((f for f in dxfs if f.lower().endswith("_todas_placas.dxf")),
                       key=lambda f: len(os.path.basename(f)))
-    return combined[:1] or dxfs[:1]
+    images = [f for f in files if f.lower().endswith((".bmp", ".png", ".jpg", ".jpeg"))]
+    return combined[:1] or dxfs[:1] or images[:1]
 
 
 def _shell_execute(exe: str, path: str) -> None:
