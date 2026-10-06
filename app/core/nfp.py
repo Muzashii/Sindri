@@ -75,6 +75,11 @@ class NFPCache:
         self._hole_ifp: dict[tuple, list] = {}
         self.hits = 0
         self.misses = 0
+        self.max_entries = 4096
+
+    def _trim(self, cache):
+        while len(cache) > self.max_entries:
+            cache.pop(next(iter(cache)))
 
     # ------------------------------------------------------------------
     def variant(self, pid: str, rot: float, mirror: bool = False) -> Variant:
@@ -110,6 +115,7 @@ class NFPCache:
                         hole_areas.append(abs(pyclipper.Area(s)))
         v = Variant(key, path, bbox, holes, hole_areas, abs(pyclipper.Area(path)))
         self._variants[key] = v
+        self._trim(self._variants)
         return v
 
     def _base_outline(self, pid: str) -> np.ndarray:
@@ -179,6 +185,7 @@ class NFPCache:
         min_hole = MIN_NFP_HOLE_MM2 * CLIPPER_SCALE ** 2
         res = [p for p in res if pyclipper.Orientation(p) or abs(pyclipper.Area(p)) >= min_hole]
         self._nfp[key] = res
+        self._trim(self._nfp)
         return res
 
     def nfp_np(self, a: Variant, b: Variant) -> tuple[list[np.ndarray], tuple[int, int, int, int]]:
@@ -194,6 +201,7 @@ class NFPCache:
                 bb = (0, 0, -1, -1)
             r = (paths, bb)
             self._nfp_np[key] = r
+            self._trim(self._nfp_np)
         else:
             self.hits += 1
         return r
@@ -247,6 +255,7 @@ class NFPCache:
                     if hpoly.covers(test):
                         res.append(comp)
         self._hole_ifp[key] = res
+        self._trim(self._hole_ifp)
         return res
 
     def stats(self) -> dict:

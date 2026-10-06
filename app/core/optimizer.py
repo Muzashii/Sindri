@@ -60,8 +60,10 @@ def shapes_from_parts(parts: list[Part], params: NestParams) -> dict[str, PartSh
 _W: dict = {}
 
 
-def _worker_init(shapes, params, locked, instances, cache_state=None):
+def _worker_init(shapes, params, locked, instances, cache_state=None, cancel=None):
     _W["decoder"] = Decoder(shapes, params)
+    if cancel is not None:
+        _W["decoder"].cancelled = cancel.is_set
     if cache_state is not None:
         _W["decoder"].cache.import_state(cache_state)
     _W["locked"] = locked
@@ -85,13 +87,15 @@ class GeneticNester:
     def __init__(self, parts: list[Part], params: NestParams,
                  locked: Optional[list[Placement]] = None, seed: Optional[int] = None,
                  workers: Optional[int] = None):
+        params.validate()
         self.params = params
         self.parts = {p.id: p for p in parts}
         self.locked = list(locked or [])
         self.rng = random.Random(seed)
         self.shapes = shapes_from_parts(parts, params)
         self.decoder = Decoder(self.shapes, params)
-        self.workers = (max(1, (os.cpu_count() or 2) - 1) if workers is None else workers)
+        self.workers = (min(8, params.population, max(1, (os.cpu_count() or 2) - 1))
+                        if workers is None else max(0, min(workers, params.population)))
 
         locked_keys = {(lp.part_id, lp.instance) for lp in self.locked}
         mirror_opts = (False, True) if params.allow_mirror else (False,)
@@ -175,6 +179,8 @@ class GeneticNester:
     def _consider(self, ind: Individual, res, on_best) -> None:
         self.evaluated += 1
         self._seen[ind.key()] = res.fitness
+        if len(self._seen) > 4096:
+            self._seen.pop(next(iter(self._seen)))
         if self.best is None or res.fitness < self.best.fitness - 1e-9:
             self.last_improve = time.time()
             self.best = self._to_result(res, ind)
@@ -244,7 +250,8 @@ class GeneticNester:
                 on_best(self.best)
             return self.best
 
-        # 1) solução rápida no próprio processo
+        self.decoder.cancelled = should_stop
+        # 1) solução rápida no próprio processo, também interrompível
         first = self.first_individual()
         self._consider(first, self.evaluate_local(first), on_best)
         if on_progress:
@@ -255,13 +262,15 @@ class GeneticNester:
         limit_ni = self.params.max_generations_without_improvement
 
         executor = None
-        if self.workers and self.workers >= 1:
+        cancel = None
+        if self.workers and self.workers >= 1 and not should_stop():
             ctx = mp.get_context("spawn")
+            cancel = ctx.Event()
             executor = ProcessPoolExecutor(max_workers=self.workers, mp_context=ctx,
                                            initializer=_worker_init,
                                            initargs=(self.shapes, self.params, self.locked,
                                                      self.instances,
-                                                     self.decoder.cache.export_state()))
+                                                     self.decoder.cache.export_state(), cancel))
         try:
             while not should_stop():
                 while pause_event is not None and pause_event.is_set() and not stop_event.is_set():
@@ -316,7 +325,9 @@ class GeneticNester:
                 pop = self.next_generation(scored)
         finally:
             if executor is not None:
+                cancel.set()
                 executor.shutdown(wait=False, cancel_futures=True)
+            self.decoder.cancelled = lambda: False
         if on_progress:
             on_progress(self._progress(t0, finished=True))
         return self.best

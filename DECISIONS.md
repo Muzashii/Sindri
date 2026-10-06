@@ -75,8 +75,10 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
 22. Fitness: `100·peças_sem_lugar + 2·(placas−1) + área_bbox_última/área_placa + 0,1·largura_última/largura_placa +
     0,05·Σ área_bbox_outras/área_placa`. Peças sem lugar vêm antes do nº de placas (só ocorrem quando o número máximo de
     placas é atingido ou "abrir nova placa" está desligado).
-23. Paralelismo com `ProcessPoolExecutor` (contexto *spawn*, igual ao Windows), um processo por núcleo − 1; cada
-    processo tem seu cache de NFP. A primeira solução é calculada antes de abrir os processos (aparece em ~1–2 s).
+23. Paralelismo com `ProcessPoolExecutor` (contexto *spawn*), limitado por padrão ao menor entre 8,
+    tamanho da população e núcleos disponíveis menos 1. Cada processo tem seu cache de NFP.
+    A primeira solução é calculada antes de abrir os processos. O decodificador verifica cancelamento
+    entre peças e operações; uma chamada nativa em andamento precisa terminar antes de parar.
 
 ## Interface
 24. As placas ficam lado a lado no canvas; arrastar uma peça para outra placa a move para lá. ◀ ▶ centralizam cada placa.
@@ -90,9 +92,20 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
     transformadas. **R12** não tem LWPOLYLINE/ELLIPSE/SPLINE/MTEXT: polilinhas viram POLYLINE com bulge (arcos
     preservados), elipses e splines viram POLYLINE fina (0,01 mm) e MTEXT vira TEXT por linha. R12 também não tem campo
     de unidade — o RDWorks deve ser configurado para mm na importação.
-30. Ordem de corte: dentro de cada peça, contornos internos antes do externo; entre peças, vizinho mais próximo a partir
-    da origem.
-31. O relatório é PDF (resumo + uma página por placa) e PNG por placa, gerados com o próprio Qt (sem dependências extras).
+30. Ordem de corte: contornos internos antes do externo. Peças contidas em outras precedem a hospedeira;
+    entre peças sem dependência, usa-se o vizinho mais próximo quando a opção de otimização está ligada.
+31. O relatório é PDF (resumo + uma página por placa), gerado com Qt. A interface prepara DXF e PDF
+    em temporários antes de publicar os dois arquivos; não gera PNG por placa nesse fluxo.
+32. Projetos v2 incorporam as primitivas e contornos, unidades por arquivo, avisos e hashes SHA-256 das fontes.
+    Fontes alteradas ou ausentes geram aviso; a geometria salva é mantida. Projetos v1 ainda abrem,
+    mas o encaixe precisa ser refeito porque não há identidade verificável dos desenhos antigos.
+33. O agrupamento usa equivalência de 0,001 mm e compara cor efetiva RGB e camada. Auto-interseções
+    significativas recebem um envoltório conservador, com aviso, sem descartar trechos do desenho.
+34. A validação final confere sobreposição separadamente do espaçamento, além de instâncias,
+    quantidades, placas e materiais. A interface bloqueia exportação inválida; a CLI retorna 3 nesse caso.
+    Encaixe incompleto retorna 4 e só exporta com `--permitir-parcial`.
+35. Caches de variantes/NFP/IFP e soluções avaliadas têm limite de entradas (4096); isso não equivale
+    a um limite rígido de RAM. O benchmark em `tools/benchmark.py` registra uma base repetível.
 
 ## Pendências conhecidas / a validar no laboratório
 - Testar R12 × R2000 no RDWorks real e manter como padrão o que importar melhor (hoje: R2000).

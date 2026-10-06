@@ -32,7 +32,7 @@ class UpdatesMixin:
         if not updater.can_self_update():
             if not silent:
                 QMessageBox.information(self, "Atualizações",
-                                        "Esta versão (.exe) não se atualiza sozinha. Baixe a nova no GitHub.")
+                                        "Esta instalação usa um pacote ou executável. Instale a nova versão pelo mesmo método.")
             return
         if silent and not get_bool("update/auto_check", True):
             return
@@ -75,6 +75,8 @@ class UpdatesMixin:
             return
         self.banner.hide()
         self._applying_update = True
+        self.centralWidget().setEnabled(False)
+        self.menuBar().setEnabled(False)
         self.statusBar().showMessage("Baixando atualização…")
         b = self._upd_bridge()
 
@@ -88,6 +90,8 @@ class UpdatesMixin:
 
     def _update_installed(self, summary, error):
         self._applying_update = False
+        self.centralWidget().setEnabled(True)
+        self.menuBar().setEnabled(True)
         if error is not None:
             QMessageBox.warning(self, "Atualizar", f"A atualização não foi concluída:\n{error}")
             self.statusBar().clearMessage()

@@ -12,7 +12,7 @@ compacta possível nas placas e entrega um único DXF pronto para o **RDWorks**,
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
 ![PySide6](https://img.shields.io/badge/Qt-PySide6-41CD52?logo=qt&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows&logoColor=white)
-![Testes](https://img.shields.io/badge/testes-95%20pytest-success)
+![Testes](https://img.shields.io/badge/testes-125%20pytest-success)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-MIT-blue)
 
 [Como funciona](#-como-funciona) · [Recursos](#-recursos) · [Instalação](#-instalação-windows) ·
@@ -166,6 +166,11 @@ flowchart LR
 
 A versão instalada fica em `versao.txt`. Para desligar: *Ajuda › Procurar atualizações ao abrir*.
 
+Cada atualização guarda um backup separado em `_backup_atualizacao/<data-id>`. Falhas de troca
+dos arquivos acionam a restauração da versão anterior; eventuais falhas de restauração são informadas
+com o caminho do backup. O programa impede o fechamento durante a instalação. O lançador verifica
+também as versões mínimas das bibliotecas.
+
 ---
 
 ## ⌨️ Atalhos
@@ -304,9 +309,18 @@ pip install pytest pytest-cov
 python -m pytest --cov=app/core
 ```
 
-95 testes cobrem importação, geometria, NFP, posicionamento sem sobreposição, otimizador paralelo, exportação R12/R2000
+125 testes cobrem importação, geometria, NFP, posicionamento sem sobreposição, otimizador paralelo, exportação R12/R2000
 com reimportação, projetos, intranet (com página simulada), limpeza, atualização, CLI e um fluxo completo da interface
 em modo sem tela.
+
+Os testes isolam preferências, salvamento automático, perfil de navegador e área de transferência.
+O wheel pode ser conferido fora da árvore fonte com `python tools/check_wheel.py docs/dist` após
+`python -m pip wheel . --no-deps --wheel-dir docs/dist`. A configuração de CI cobre Windows e Linux.
+O registro das correções e limites de validação está em [`docs/MELHORIAS_IMPLEMENTADAS.md`](docs/MELHORIAS_IMPLEMENTADAS.md).
+
+A CLI bloqueia layouts inválidos (retorno 3) e informa encaixe incompleto com retorno 4.
+Use `--permitir-parcial` quando quiser exportar as peças que couberam; o retorno continua sendo 4.
+`--unidade auto` usa a unidade declarada no arquivo; a correção heurística por arquivo pertence à interface.
 
 ---
 
@@ -314,7 +328,8 @@ em modo sem tela.
 
 - [ ] Abrir os DXF exportados no **RDWorks** (R2000 e R12) e cortar uma placa de teste
 - [ ] Comparar o aproveitamento com o encaixe manual de um arquivo real
-- [ ] Gerar o `.exe` no Windows com `build_exe.bat`
+- [x] Gerar o `.exe` no Windows com `build_exe.bat` e verificar a inicialização ([registro](docs/COMPILACAO_WINDOWS.md))
+- [ ] Validar o fluxo completo de produção no executável
 
 ---
 

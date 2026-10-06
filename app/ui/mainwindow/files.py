@@ -197,7 +197,7 @@ class FilesMixin:
         self.unplaced = []
         self.undo_stack.clear()
         self.redo_stack.clear()
-        self.dirty = True
+        self.mark_changed()
         self.reconcile_state()
         self.schedule_autosave()
         self._rebuild_checker()
@@ -256,6 +256,24 @@ class FilesMixin:
                                ("\n…" if len(important) > 12 else ""))
         box.exec()
 
+    def show_import_details(self):
+        if self.report is None:
+            QMessageBox.information(self, "Importação", "Abra um DXF primeiro.")
+            return
+        details = []
+        for path in self.files:
+            details.append(os.path.basename(path) + ": " + self.report.unit_notes.get(path, "desenho incorporado"))
+            for part in self.parts:
+                if part.source_file == path:
+                    w, h = part.size
+                    details.append(f"  {part.name}: {w:.3f} × {h:.3f} mm; {part.quantity} cópia(s)")
+        details += ["", "Avisos:"] + (self.report.warnings or ["Nenhum aviso de importação."])
+        box = QMessageBox(self)
+        box.setWindowTitle("Arquivos e avisos da importação")
+        box.setTextFormat(Qt.PlainText)
+        box.setText("\n".join(details))
+        box.exec()
+
     def confirm_discard(self, add: bool = False) -> bool:
         if add or not self.files or not self.dirty:
             return True
@@ -295,6 +313,7 @@ class FilesMixin:
         self.checker = None
         self.project_path = None
         self.dirty = False
+        self.project_state.setText("")
         self.generation = 0
         self.settings_panel.reset_file_options()
         self.settings_panel.set_layers({})

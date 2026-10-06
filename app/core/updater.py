@@ -132,7 +132,7 @@ def apply_zip(data: bytes, root: str, sha: str) -> dict:
     backup = os.path.join(root, BACKUP_DIR, stamp)
     allowed_files = {"sindri.py", "executar.bat", "requirements.txt", "pyproject.toml", "readme.md",
                      "license", "decisions.md", "instalar.bat", "reparar.bat", "requirements-compat.txt",
-                     "build_exe.bat", "dxfnest.py"}
+                     "build_exe.bat", "dxfnest.py", "requirements-build.txt"}
     changed, applied = [], []
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as z, tempfile.TemporaryDirectory(prefix=".sindri-stage-", dir=root) as stage:
@@ -229,5 +229,7 @@ def restart(root: Optional[str] = None) -> None:
 
 
 def can_self_update() -> bool:
-    """O .exe (PyInstaller) não se atualiza copiando os .py."""
-    return not getattr(sys, "frozen", False)
+    """Somente a distribuição por pasta usa troca de arquivos; wheel/exe têm outro instalador."""
+    root = app_root()
+    return (not getattr(sys, "frozen", False) and os.path.isfile(os.path.join(root, "sindri.py"))
+            and os.path.isfile(os.path.join(root, "executar.bat")))

@@ -12,6 +12,15 @@ from .common import MAX_UNDO
 
 
 class EditingMixin:
+    def _invalidate_cut_for(self, placements):
+        changed = {pl.sheet_index for pl in placements} & self.cut_sheets
+        if not changed:
+            return
+        self.cut_sheets.difference_update(changed)
+        self.done_parts.difference_update(pl.part_id for pl in self.placements if pl.sheet_index in changed)
+        self.canvas.set_cut(self.cut_sheets)
+        self._refresh_cut_panel()
+
     def _snapshot(self):
         return (copy.deepcopy(self.placements), self.n_sheets, {p.id: p.quantity for p in self.parts},
                 list(self.unplaced), set(self.cut_sheets), set(self.done_parts),
@@ -102,6 +111,7 @@ class EditingMixin:
             return
         self._push_undo()
         grow = False
+        self._invalidate_cut_for([it.placement for it, *_ in moved])
         for it, s, x, y in moved:
             it.placement.sheet_index = s
             it.placement.x = x
@@ -142,6 +152,7 @@ class EditingMixin:
         steps = len(p.rotations())
         step = 360.0 / steps
         self._push_undo()
+        self._invalidate_cut_for(sel)
         for pl in sel:
             if self.pmap[pl.part_id].rotation_locked:
                 self.statusBar().showMessage("Esta peça está com rotação travada.", 4000)
@@ -162,6 +173,7 @@ class EditingMixin:
         self._push_undo()
         for pl in sel:
             pl.mirrored = not pl.mirrored
+        self._invalidate_cut_for(sel)
         self.mark_changed()
         self._redraw(keep_view=True)
 
@@ -184,6 +196,7 @@ class EditingMixin:
         if not sel:
             return
         self._push_undo()
+        self._invalidate_cut_for(sel)
         for pl in sorted(sel, key=lambda q: -q.instance):
             self.placements.remove(pl)
             part = self.pmap[pl.part_id]
@@ -208,6 +221,7 @@ class EditingMixin:
         if not sel:
             return
         self._push_undo()
+        self._invalidate_cut_for(sel + [pl for pl in self.placements if pl.sheet_index == target])
         for pl in sel:
             pl.sheet_index = target
         self._compact_sheets()

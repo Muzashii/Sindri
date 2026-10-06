@@ -389,7 +389,11 @@ def safe_name(text: str, max_len: int = 80) -> str:
     text = unicodedata.normalize("NFC", str(text)).strip()
     text = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", text)
     text = re.sub(r"\s+", " ", text).strip(" .")
-    return (text or "sem_nome")[:max_len]
+    text = (text or "sem_nome")[:max_len].rstrip(" .") or "sem_nome"
+    if text.split(".")[0].upper() in {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"} | \
+            {f"{prefix}{n}" for prefix in ("COM", "LPT") for n in range(1, 10)}:
+        text = "_" + text
+    return text[:max_len].rstrip(" .")
 
 
 def request_folder(base: str, detail: RequestDetail) -> str:
@@ -405,7 +409,17 @@ def target_path(base: str, detail: RequestDetail, f: RequestFile) -> str:
 
 
 def default_base_folder() -> str:
+    if os.environ.get("SINDRI_DATA_DIR"):
+        return os.path.join(os.environ["SINDRI_DATA_DIR"], "Solicitações")
     docs = os.path.join(os.path.expanduser("~"), "Documents")
+    if os.name == "nt":
+        try:
+            import ctypes
+            folder = ctypes.create_unicode_buffer(32768)
+            if ctypes.windll.shell32.SHGetFolderPathW(None, 5, None, 0, folder) == 0:
+                docs = folder.value
+        except (OSError, AttributeError):
+            pass
     if not os.path.isdir(docs):
         docs = os.path.expanduser("~")
     return os.path.join(docs, "Sindri", "Solicitações")

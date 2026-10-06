@@ -7,7 +7,7 @@ echo   Sindri
 echo ==========================================
 echo Pasta: %~dp0
 echo.
-set "CHECK=import numpy, shapely, shapely.geometry, pyclipper, ezdxf, pypdf, PySide6.QtWidgets"
+set "CHECK=from app.runtime_check import check; check()"
 set "LOG=%TEMP%\sindri_check.txt"
 
 REM Se ja ficou combinado usar o Anaconda (o Windows nao bloqueia o numpy dele), vai direto

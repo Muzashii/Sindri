@@ -202,12 +202,12 @@ def build_contours(prims: list[Prim], join_tol: float, curve_tol: float) -> list
 
     for c in contours:
         if c.closed:
-            c.repaired = len(c.pts) >= 3 and not Polygon(c.pts).is_valid
             poly = ring_to_polygon(c.pts)
             if poly is None:
                 c.closed = False
             else:
                 c.polygon = poly
+                c.repaired = abs(poly.area - Polygon(c.pts).area) > 1e-6 and not Polygon(c.pts).is_valid
     return contours
 
 

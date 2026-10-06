@@ -210,6 +210,9 @@ class UIBuildMixin:
         sb = QStatusBar()
         sb.setSizeGripEnabled(False)
         self.setStatusBar(sb)
+        self.project_state = QLabel("")
+        self.project_state.setObjectName("Muted")
+        sb.addWidget(self.project_state)
         hint = QLabel("Roda: zoom  ·  botão do meio / Alt+arrastar: mover vista  ·  R girar  ·  "
                       "L travar  ·  Del remover  ·  F1 atalhos")
         hint.setObjectName("Muted")
@@ -428,6 +431,7 @@ class UIBuildMixin:
         self.canvas.show_labels = self.a_labels.isChecked()
 
         act(m_help, "Atalhos de teclado", self.show_shortcuts, "F1")
+        act(m_help, "Arquivos e avisos da importação…", self.show_import_details)
         act(m_help, "Procurar atualizações", lambda: self.check_updates(silent=False))
         a_auto = act(m_help, "Procurar atualizações ao abrir", lambda: None)
         a_auto.setCheckable(True)

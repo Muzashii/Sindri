@@ -55,9 +55,13 @@ if __name__ == "__main__":
         from app.main import main
         code = main()
     except ImportError:
-        _report(traceback.format_exc() + "\n\nAs bibliotecas do Python estão danificadas ou faltando.\n"
-                "Feche esta janela e rode o executar.bat de novo: ele conserta a instalação sozinho.\n"
-                "Se continuar, apague a pasta .venv e rode o executar.bat outra vez.")
+        if getattr(sys, "frozen", False):
+            help_text = ("\n\nNão foi possível carregar uma biblioteca do executável.\n"
+                         "Consulte o log para identificar a causa. Este executável não usa a pasta .venv.\n")
+        else:
+            help_text = ("\n\nNão foi possível carregar uma biblioteca do Python.\n"
+                         "Execute reparar.bat e consulte o log se o problema continuar.\n")
+        _report(traceback.format_exc() + help_text)
         sys.exit(1)
     except Exception:
         _report(traceback.format_exc())

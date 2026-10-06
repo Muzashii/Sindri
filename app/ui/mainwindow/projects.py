@@ -17,6 +17,7 @@ from .common import APP_NAME, now_txt
 class ProjectMixin:
     def mark_changed(self):
         self.dirty = True
+        self.project_state.setText("Alterações não salvas")
         self.schedule_autosave()
 
     def reconcile_state(self):
@@ -54,6 +55,7 @@ class ProjectMixin:
             return
         self.project_path = path
         self.dirty = False
+        self.project_state.setText("Projeto salvo")
         self.statusBar().showMessage(f"Projeto salvo em {path}", 6000)
 
     def _write_project(self, path: str):
@@ -62,7 +64,7 @@ class ProjectMixin:
                      multipliers=self.file_multipliers, label=self.request_label,
                      materials=self.file_materials, request=self.request_info, tags=self.file_tags,
                      checklist={"cut": sorted(self.cut_sheets), "done": sorted(self.done_parts)},
-                     file_units=self.file_units, source_hashes=self.source_hashes)
+                     file_units=self.file_units, source_hashes=self.source_hashes, report=self.report)
 
     @staticmethod
     def autosave_path() -> str:
@@ -80,7 +82,7 @@ class ProjectMixin:
 
     def autosave(self):
         """Guarda o trabalho atual (encaixe + checklist) para recuperar se o programa fechar sem salvar."""
-        if not self.files or self.worker is not None:
+        if not self.files or not self.dirty or self.worker is not None:
             return
         try:
             path = self.autosave_path()
@@ -88,6 +90,7 @@ class ProjectMixin:
             self._write_project(path)
             settings().setValue("autosave/clean", "false")
             settings().setValue("autosave/when", now_txt())
+            self.project_state.setText("Alterações não salvas · recuperação: " + now_txt())
         except Exception as e:
             self.statusBar().showMessage(f"Falha no salvamento automático: {e}", 15000)
 
@@ -158,6 +161,7 @@ class ProjectMixin:
         self.redo_stack.clear()
         self.project_path = path
         self.dirty = False
+        self.project_state.setText("Projeto aberto")
         self._rebuild_checker()
         self.parts_panel.set_parts(self.parts, self.too_big)
         self.settings_panel.set_layers((proj.report.extra or {}).get("layers", {}) if proj.report else {})

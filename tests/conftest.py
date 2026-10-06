@@ -26,6 +26,29 @@ def fx(name: str) -> str:
 def isolated_preferences(tmp_path, monkeypatch):
     monkeypatch.setenv("SINDRI_SETTINGS_FILE", str(tmp_path / "settings.ini"))
     monkeypatch.setenv("SINDRI_DATA_DIR", str(tmp_path / "data"))
+    from PySide6.QtWidgets import QApplication
+    from types import SimpleNamespace
+    clipboard = SimpleNamespace(value="")
+    clipboard.setText = lambda value: setattr(clipboard, "value", value)
+    clipboard.text = lambda: clipboard.value
+    monkeypatch.setattr(QApplication, "clipboard", staticmethod(lambda: clipboard))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def qt_lifetime():
+    """Destrói páginas antes do perfil e mantém QApplication viva durante toda a suíte."""
+    from PySide6.QtCore import QCoreApplication, QEvent
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    yield app
+    for widget in app.topLevelWidgets():
+        widget.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+    module = sys.modules.get("app.ui.intranet")
+    if module is not None and module._PROFILE is not None:
+        module._PROFILE.deleteLater()
+        module._PROFILE = None
+    QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
 
 
 @pytest.fixture(scope="session", autouse=True)

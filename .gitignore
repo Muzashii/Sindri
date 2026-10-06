@@ -1,4 +1,5 @@
 .venv/
+.venv-build/
 libs/
 __pycache__/
 *.pyc
@@ -13,3 +14,6 @@ sindri_erro.log
 versao.txt
 _backup_atualizacao/
 *.novo
+*.egg-info/
+docs/dist/
+docs/exe-check-*/

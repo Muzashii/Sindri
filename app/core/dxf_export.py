@@ -31,7 +31,7 @@ def placed_prims(part: Part, pl: Placement, dx: float = 0.0, inner_first: bool =
     return [transform_prim(part.prims[i], tf) for i in idx]
 
 
-def order_placements(parts: dict[str, Part], placements: list[Placement]) -> list[Placement]:
+def order_placements(parts: dict[str, Part], placements: list[Placement], nearest: bool = True) -> list[Placement]:
     """Caminho do vizinho mais próximo partindo da origem (reduz deslocamentos do laser)."""
     from .validate import placed_geometry
     rest = list(range(len(placements)))
@@ -43,7 +43,7 @@ def order_placements(parts: dict[str, Part], placements: list[Placement]) -> lis
     cx, cy = 0.0, 0.0
     while rest:
         eligible = [i for i in rest if not dependencies[i].intersection(rest)]
-        k = min(eligible, key=lambda i: (placements[i].x - cx) ** 2 + (placements[i].y - cy) ** 2)
+        k = min(eligible, key=lambda i: (placements[i].x - cx) ** 2 + (placements[i].y - cy) ** 2) if nearest else eligible[0]
         rest.remove(k)
         pl = placements[k]
         out.append(pl)
@@ -262,7 +262,7 @@ def export_sheets(parts: list[Part] | dict[str, Part], placements: list[Placemen
     files = []
 
     def emit(msp, pls, dx):
-        seq = order_placements(pmap, pls) if sort_path else pls
+        seq = order_placements(pmap, pls, nearest=sort_path) if inner_first or sort_path else pls
         for pl in seq:
             for pr in placed_prims(pmap[pl.part_id], pl, dx, inner_first):
                 write_prim(msp, pr, version)
@@ -322,7 +322,7 @@ def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Plac
                 hh = min(40.0, max(12.0, 0.05 * params.sheet_height))
                 _stroke_text(msp, f"PLACA {n_sheet}", dx, params.sheet_height + hh * 0.6, hh, PLATE_LAYER, 8)
             pls = [pl for pl in placements if pl.sheet_index == si]
-            seq = order_placements(pmap, pls) if sort_path else pls
+            seq = order_placements(pmap, pls, nearest=sort_path) if inner_first or sort_path else pls
             for pl in seq:
                 for pr in placed_prims(pmap[pl.part_id], pl, dx, inner_first):
                     write_prim(msp, pr, version)

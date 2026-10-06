@@ -288,6 +288,10 @@ def ring_to_polygon(pts: np.ndarray) -> Optional[Polygon]:
             poly = merged.convex_hull
             if not isinstance(poly, Polygon):
                 return None
+        # Nenhum trecho original pode ficar de fora, inclusive componentes pequenos.
+        from shapely.geometry import LineString
+        if not poly.buffer(1e-6).covers(LineString(pts)):
+            poly = Polygon(pts).convex_hull
     if poly.area <= 1e-9:
         return None
     return Polygon(poly.exterior.coords)

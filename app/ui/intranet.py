@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from typing import Optional
 
 from PySide6.QtCore import QStandardPaths, Qt, QTimer, QUrl
@@ -44,7 +45,7 @@ def shared_profile():
     global _PROFILE
     if _PROFILE is None:
         from PySide6.QtWebEngineCore import QWebEngineProfile
-        base = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation) or os.path.expanduser("~/.sindri")
+        base = os.environ.get("SINDRI_DATA_DIR") or QStandardPaths.writableLocation(QStandardPaths.AppDataLocation) or os.path.expanduser("~/.sindri")
         path = os.path.join(base, "navegador")
         os.makedirs(path, exist_ok=True)
         prof = QWebEngineProfile("dxfnest", QApplication.instance())   # nome mantido: preserva o login salvo
@@ -459,8 +460,7 @@ class IntranetDialog(QDialog):
         """Registro da leitura das páginas (ajuda a diagnosticar se o site mudar)."""
         lines = [f"== {status}: {len(data.get('rows') or [])} linhas lidas"]
         if data.get("error"):
-            lines.append(f"erro: {data['error']}")
-        lines += list(data.get("log") or [])
+            lines.append("erro durante a leitura da página")
         self._logs = getattr(self, "_logs", {})
         self._logs[status] = "\n".join(lines)
         self._flush_log()
@@ -802,18 +802,17 @@ class IntranetDialog(QDialog):
                                       "curta em “Pasta…”")
                     f.local_path = path
                     os.makedirs(os.path.dirname(path), exist_ok=True)
-                    if os.path.exists(path):
-                        os.remove(path)
                     self._dl_seq = getattr(self, "_dl_seq", 0) + 1
-                    key = f"sindri{self._dl_seq}_{os.path.basename(path)}"
+                    key = f"sindri{self._dl_seq}_{uuid.uuid4().hex}"
                     self._pending[key] = (d, f)
                     lab = self.file_rows.get(self._fkey(d, f))
                     if lab:
                         lab.setText("baixando…")
-                    self._log_dl(f"pedido {key}  <- {f.url}")
+                    self._log_dl(f"pedido {key}")
                     self.page.download(QUrl(f.url), key)
         except OSError as e:
             self._pending = {}
+            self._cancel_downloads()
             self._sending = None
             self._set_buttons(True)
             for d, fs in plan:
@@ -849,14 +848,14 @@ class IntranetDialog(QDialog):
     def _download_requested(self, req):
         key = self._match(req) if self._sending else None
         if self._sending:
-            self._log_dl(f"chegou nome={req.downloadFileName()!r} url={req.url().toString()} -> "
-                         + (key or "NÃO RECONHECIDO"))
+            self._log_dl("download recebido: " + (key or "NÃO RECONHECIDO"))
         if key is None:
             return  # download feito pelo usuário na página: comportamento padrão
         self._claimed.add(key)
         _, f = self._pending[key]
         req.setDownloadDirectory(os.path.dirname(f.local_path))
-        req.setDownloadFileName(os.path.basename(f.local_path))
+        req._sindri_temp = os.path.join(os.path.dirname(f.local_path), f".{key}.part")
+        req.setDownloadFileName(os.path.basename(req._sindri_temp))
         req.isFinishedChanged.connect(lambda r=req, k=key: self._download_finished(r, k))
         self._downloads.append(req)
         req.accept()
@@ -864,12 +863,23 @@ class IntranetDialog(QDialog):
     def _download_finished(self, req, key):
         from PySide6.QtWebEngineCore import QWebEngineDownloadRequest
         item = self._pending.pop(key, None)
+        if req in self._downloads:
+            self._downloads.remove(req)
         if item is None:
+            self._remove_partial(req)
             return
         d, f = item
-        ok = req.state() == QWebEngineDownloadRequest.DownloadCompleted and os.path.isfile(f.local_path)
+        temp = getattr(req, "_sindri_temp", "")
+        ok = req.state() == QWebEngineDownloadRequest.DownloadCompleted and os.path.isfile(temp)
+        if ok:
+            try:
+                from ..core.fileutil import replace_file
+                replace_file(temp, f.local_path)
+            except OSError:
+                ok = False
+        self._remove_partial(req)
         self._log_dl(f"fim {key}: {'ok' if ok else 'ERRO estado=' + str(req.state())} "
-                     f"{req.receivedBytes()} bytes -> {f.local_path}")
+                     f"{req.receivedBytes()} bytes")
         lab = self.file_rows.get(self._fkey(d, f))
         if lab:
             lab.setText("✓ baixado" if ok else "erro")
@@ -891,7 +901,24 @@ class IntranetDialog(QDialog):
             if lab:
                 lab.setText("sem resposta")
         self._pending = {}
+        self._cancel_downloads()
         self._finish_send()
+
+    @staticmethod
+    def _remove_partial(req):
+        path = getattr(req, "_sindri_temp", "")
+        if path and os.path.isfile(path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+    def _cancel_downloads(self):
+        pending, self._downloads = self._downloads, []
+        for req in pending:
+            if not req.isFinished():
+                req.cancel()
+            self._remove_partial(req)
 
     def _finish_send(self):
         material = self._sending
@@ -1077,6 +1104,7 @@ class IntranetDialog(QDialog):
                     f.local_path = None
         self._sending = None
         self._pending = {}
+        self._cancel_downloads()
         self._fetch_queue = []
         self._set_buttons(True)
         if getattr(self, "_dl_connected", False):

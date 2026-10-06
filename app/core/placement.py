@@ -73,6 +73,7 @@ class Decoder:
     def __init__(self, shapes: dict[str, PartShape], params: NestParams,
                  cache: Optional[NFPCache] = None):
         self.shapes = shapes
+        self.cancelled = lambda: False
         self.params = params
         self.cache = cache or NFPCache(shapes, params.spacing, params.curve_tolerance,
                                        params.part_in_part, getattr(params, "detail", 1))
@@ -97,6 +98,8 @@ class Decoder:
 
     # ------------------------------------------------------------------
     def _try_place(self, sheet: _Sheet, v: Variant, criterion: str):
+        if self.cancelled():
+            return None
         if v.key in sheet.failed or v.area_int > sheet.free_area * 1.0001:
             return None
         pos = self._try_place_inner(sheet, v, criterion)
@@ -115,6 +118,8 @@ class Decoder:
             ix0, iy0 = ifp[0]
             ix1, iy1 = ifp[2]
             for pl in sheet.placed:
+                if self.cancelled():
+                    return None
                 paths, bb = self.cache.nfp_np(pl.variant, v)
                 if (bb[2] + pl.x < ix0 or bb[0] + pl.x > ix1 or
                         bb[3] + pl.y < iy0 or bb[1] + pl.y > iy1):
@@ -132,6 +137,8 @@ class Decoder:
         # part-in-part: furos das peças já colocadas
         if self.params.part_in_part:
             for j, host in enumerate(sheet.placed):
+                if self.cancelled():
+                    return None
                 hv = host.variant
                 for hi, harea in enumerate(hv.hole_areas):
                     if harea <= v.area_int:
@@ -215,6 +222,9 @@ class Decoder:
         mirror_opts = (False, True) if p.allow_mirror else (False,)
 
         for idx, (pid, inst) in enumerate(order):
+            if self.cancelled():
+                unplaced.extend(order[idx:])
+                break
             shape = self.shapes[pid]
             allowed = shape.rotations
             first = rots[idx] if idx < len(rots) else allowed[0]
@@ -241,6 +251,8 @@ class Decoder:
                     continue
                 for m in m_try:
                     for r in rot_try:
+                        if self.cancelled():
+                            break
                         v = self.cache.variant(pid, r, m)
                         pos = self._try_place(sheet, v, criterion)
                         if pos is not None:

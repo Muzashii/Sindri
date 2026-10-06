@@ -16,6 +16,7 @@ def main() -> int:
         import PySide6.QtWebEngineWidgets  # noqa: F401
     except Exception:
         pass
+    import numpy  # carrega explicitamente para preservar o diagnóstico de falhas nas DLLs
     from app.ui.main_window import MainWindow
 
     app = QApplication(sys.argv)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
@@ -28,15 +29,15 @@ class ExportMixin:
         p = self.settings_panel.params()
         # problemas numa única confirmação (só aparece se houver algum)
         problems = []
-        if self._mark_collisions():
-            problems.append("Há peças sobrepostas ou fora da placa (em vermelho).")
-        else:
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-            try:
-                issues = validate_layout(self.pmap, self.placements, p)
-            finally:
-                QApplication.restoreOverrideCursor()
-            problems += ["Verificação final: " + i for i in issues[:8]]
+        self._mark_collisions()
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            issues = validate_layout(self.pmap, self.placements, p)
+        finally:
+            QApplication.restoreOverrideCursor()
+        if issues:
+            QMessageBox.warning(self, "Encaixe inválido", "Corrija o encaixe antes de exportar:\n\n" + "\n".join(issues[:8]))
+            return
         missing = sum(pt.quantity for pt in self.parts) - len(self.placements)
         if missing > 0:
             problems.append(f"{missing} peça(s) não estão no encaixe (ficam de fora do arquivo).")
@@ -71,14 +72,27 @@ class ExportMixin:
         self._compact_sheets()
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            # só dois arquivos: todas as placas organizadas num DXF (abre no RDWorks) + relatório
-            files = [export_all_sheets(self.parts, self.placements, p, o["folder"], o["base"], o["version"],
-                                       sheet_outline=o["outline"], inner_first=o["inner"], sort_path=o["path"])]
-            res = NestResult(self.placements, self.n_sheets, self._utilization(), 0.0, self.unplaced)
-            pdf = os.path.join(o["folder"], f"{o['base']}_relatorio.pdf")
-            export_pdf(pdf, o["base"], self.pmap, res, p, header=self._report_header(),
-                       requests=self._report_requests())
-            files.append(pdf)
+            os.makedirs(o["folder"], exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix=".sindri-export-", dir=o["folder"]) as stage:
+                dxf = export_all_sheets(self.parts, self.placements, p, stage, o["base"], o["version"],
+                                        sheet_outline=o["outline"], inner_first=o["inner"], sort_path=o["path"])
+                res = NestResult(self.placements, self.n_sheets, self._utilization(), 0.0, self.unplaced)
+                staged_pdf = os.path.join(stage, f"{o['base']}_relatorio.pdf")
+                export_pdf(staged_pdf, o["base"], self.pmap, res, p, header=self._report_header(),
+                           requests=self._report_requests())
+                files = []
+                try:
+                    for source in (dxf, staged_pdf):
+                        target = os.path.join(o["folder"], os.path.basename(source))
+                        if os.path.exists(target):
+                            raise FileExistsError(target)
+                        os.rename(source, target)
+                        files.append(target)
+                except OSError:
+                    for target in files:
+                        os.remove(target)
+                    raise
+                pdf = files[1]
             hist = get_list_value(st.value("export/history", []))
             st.setValue("export/history", (hist + [f for f in files if f not in hist])[-500:])
         except Exception as e:

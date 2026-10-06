@@ -20,24 +20,16 @@ if not defined PY (
     pause
     exit /b 1
 )
-if not exist ".venv\Scripts\python.exe" (
-    %PY% -m venv .venv
+if not exist ".venv-build\Scripts\python.exe" (
+    %PY% -m venv .venv-build
     if errorlevel 1 goto :fail
 )
-set "VPY=%~dp0.venv\Scripts\python.exe"
+set "VPY=%~dp0.venv-build\Scripts\python.exe"
 "%VPY%" -m pip install --upgrade pip
-"%VPY%" -m pip install -r requirements.txt pyinstaller
+"%VPY%" -m pip install -r requirements-build.txt
 if errorlevel 1 goto :fail
 
-"%VPY%" -m PyInstaller --noconfirm --clean --onefile --windowed ^
-  --name Sindri --icon assets\sindri.ico ^
-  --collect-data ezdxf ^
-  --collect-submodules ezdxf ^
-  --hidden-import pyclipper ^
-  --hidden-import shapely ^
-  --exclude-module tkinter ^
-  --exclude-module matplotlib ^
-  sindri.py
+"%VPY%" -m app.build_windows
 if errorlevel 1 goto :fail
 
 echo.

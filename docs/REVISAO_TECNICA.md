@@ -1,5 +1,8 @@
 # Revisão técnica do Sindri
 
+> Registro do estado anterior às correções. Consulte [MELHORIAS_IMPLEMENTADAS.md](MELHORIAS_IMPLEMENTADAS.md)
+> para a implementação, testes atuais e recomendações ainda pendentes.
+
 Data: 05/10/2026. Projeto analisado: `C:\Users\user\Downloads\projeto`.
 
 ## Parecer

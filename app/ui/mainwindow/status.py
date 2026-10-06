@@ -92,6 +92,8 @@ class StatusMixin:
                                      else str(sheets))
             self.chip_sheets.setToolTip("\n".join(f"{m or 'sem material'}: {len(sis)} placa(s)" for m, sis in groups))
         self.chip_parts.setText(f"{placed}/{total}" if total else "—")
+        cut = sum(pl.sheet_index in self.cut_sheets for pl in self.placements)
+        self.chip_parts.setToolTip(f"Solicitadas: {total}\nEncaixadas: {placed}\nEm placas cortadas: {cut}\nSem encaixe: {max(0, total - placed)}")
         ev = getattr(self, "evaluated", 0)
         self.chip_gen.setText(f"{ev:,}".replace(",", ".") if (self.worker is not None or ev) else "—")
         missing = total - placed

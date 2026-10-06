@@ -86,7 +86,7 @@ def save_project(path: str, files: list[str], params: NestParams, parts: list[Pa
                  label: Optional[str] = None, materials: Optional[dict] = None,
                  request: Optional[dict] = None, tags: Optional[dict] = None,
                  checklist: Optional[dict] = None, file_units: Optional[dict] = None,
-                 source_hashes: Optional[dict] = None) -> None:
+                 source_hashes: Optional[dict] = None, report: Optional[ImportReport] = None) -> None:
     params.validate()
     base = os.path.dirname(os.path.abspath(path))
     data = {
@@ -106,6 +106,9 @@ def save_project(path: str, files: list[str], params: NestParams, parts: list[Pa
         "checklist": checklist or {},
         "tags": [[relative_path(k, base), v] for k, v in (tags or {}).items()],
         "geometry": [_part_json(p) for p in parts],
+        "import_report": {"preview": [[p.to_json(), issue] for p, issue in report.preview],
+                          "warnings": report.warnings, "unit_notes": report.unit_notes,
+                          "extra": report.extra} if report else None,
         # por arquivo, na mesma ordem de "files" (não depende do nome: num lote, vários alunos
         # mandam arquivos com o mesmo nome)
         "file_info": [{"mult": int(_get(multipliers, f, 1)), "material": _get(materials, f, ""),
@@ -191,6 +194,12 @@ def _load_project(path: str) -> Project:
         for p in parts:
             p.source_file = paths.get(p.source_file, p.source_file)
         report = ImportReport(parts, [(p, False) for part in parts for p in part.prims], [], files)
+        saved_report = data.get("import_report")
+        if saved_report:
+            report.preview = [(Prim.from_json(p), bool(issue)) for p, issue in saved_report.get("preview", [])]
+            report.warnings = list(saved_report.get("warnings", []))
+            report.unit_notes = {paths.get(k, k): v for k, v in saved_report.get("unit_notes", {}).items()}
+            report.extra = dict(saved_report.get("extra", {}))
     else:
         report = import_files(files, params.join_tolerance, params.curve_tolerance, **params.import_kwargs(),
                               multipliers=multipliers, file_materials=materials, file_tags=tags, file_units=units)
@@ -202,6 +211,8 @@ def _load_project(path: str) -> Project:
         if abs(s.get("area", p.area) - p.area) > max(1.0, 0.01 * p.area):
             warnings.append("Os arquivos de origem mudaram desde que o projeto foi salvo.")
         p.quantity = int(s.get("quantity", p.quantity))
+        if type(s.get("quantity", p.quantity)) is not int or p.quantity < 0:
+            raise ProjectError("Quantidade inválida no projeto.")
         p.rotation_locked = bool(s.get("rotation_locked", False))
     if set(saved) != {p.id for p in report.parts}:
         warnings.append("As peças dos arquivos de origem não correspondem exatamente ao projeto salvo.")

@@ -1,0 +1,25 @@
+{
+  "python": "3.11.9 (tags/v3.11.9:de54cf5, Apr  2 2024, 10:12:12) [MSC v.1938 64 bit (AMD64)]",
+  "files": [
+    "exemplo_lab.dxf"
+  ],
+  "seed": 17,
+  "workers": 0,
+  "population": 4,
+  "max_generations": 2,
+  "part_types": 5,
+  "requested": 35,
+  "import_seconds": 1.3398921999614686,
+  "first_solution_seconds": 0.22366860002512112,
+  "optimization_seconds": 1.2829767999937758,
+  "python_peak_bytes": 917355,
+  "memory_note": "tracemalloc: apenas alocações Python durante encaixe; não mede toda a RAM nativa",
+  "nfp_entries": 103,
+  "cache_hits": 3101,
+  "cache_misses": 103,
+  "evaluated": 3,
+  "sheets": 2,
+  "utilization": 0.34075018848307487,
+  "unplaced": 0,
+  "validation_issues": []
+}
