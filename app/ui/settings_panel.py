@@ -72,6 +72,7 @@ def _dspin(lo, hi, step, dec, suffix, tip):
 class SettingsPanel(QWidget):
     paramsChanged = Signal()
     reimportNeeded = Signal()
+    laserChanged = Signal(str, float, float)      # "material|cor", velocidade, potência (0 = não definir)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -129,6 +130,23 @@ class SettingsPanel(QWidget):
         f1.addRow("Altura", self.h)
         f1.addRow("Margem da borda", self.margin)
         lay.addWidget(g1)
+
+        gl = _Section("Laser (RDWorks)", "zap")
+        self.laser_box = gl
+        gv = QVBoxLayout(gl.body)
+        gv.setContentsMargins(0, 0, 0, 0)
+        gv.setSpacing(6)
+        tip = QLabel("Velocidade e potência de cada camada. O Sindri preenche no RDWorks ao exportar "
+                     "(o RDWorks precisa estar fechado). Em branco = não mexer.")
+        tip.setObjectName("Muted")
+        tip.setWordWrap(True)
+        gv.addWidget(tip)
+        self.laser_rows = QVBoxLayout()
+        self.laser_rows.setSpacing(8)
+        gv.addLayout(self.laser_rows)
+        self._laser_keys: list[str] = []
+        gl.setVisible(False)
+        lay.addWidget(gl)
 
         g2 = _Section("Encaixe", "layers")
         f2 = QFormLayout(g2.body)
@@ -268,6 +286,60 @@ class SettingsPanel(QWidget):
         self.layers.setVisible(self.layers.count() > 0)
         self.layers_label.setVisible(self.layers.count() > 0)
         self._filling = False
+
+    def set_laser_groups(self, groups: list, values: dict):
+        """Uma linha por camada (material × cor): cor, nome, velocidade e potência."""
+        keys = [g.key for g in groups]
+        if keys == self._laser_keys:
+            return
+        self._laser_keys = keys
+        while self.laser_rows.count():
+            w = self.laser_rows.takeAt(0).widget()
+            if w:
+                w.setParent(None)
+                w.deleteLater()
+        for g in groups:
+            row = QWidget()
+            v = QVBoxLayout(row)
+            v.setContentsMargins(0, 0, 0, 0)
+            v.setSpacing(3)
+            head = QHBoxLayout()
+            head.setSpacing(6)
+            sw = QLabel()
+            pm = QPixmap(14, 14)
+            pm.fill(Qt.transparent)
+            pa = QPainter(pm)
+            pa.setRenderHint(QPainter.Antialiasing)
+            c = aci_to_rgb(int(g.aci))
+            pa.setBrush(QColor(*c))
+            pa.setPen(QColor(120, 120, 120))
+            pa.drawEllipse(1, 1, 12, 12)
+            pa.end()
+            sw.setPixmap(pm)
+            name = QLabel(f"<b>{g.material or 'Sem material'}</b> · {', '.join(g.layers) or 'camada'}")
+            name.setWordWrap(True)
+            head.addWidget(sw)
+            head.addWidget(name, 1)
+            v.addLayout(head)
+            vals = QHBoxLayout()
+            vals.setSpacing(6)
+            sp = _dspin(0, 2000, 1, 1, " mm/s", "Velocidade do laser nesta camada (0 = não mexer no RDWorks)")
+            pw = _dspin(0, 100, 1, 1, " %", "Potência do laser nesta camada (mín. = máx.; 0 = não mexer)")
+            sp.setSpecialValueText("velocidade —")
+            pw.setSpecialValueText("potência —")
+            cur = values.get(g.key) or [0, 0]
+            sp.setValue(float(cur[0]))
+            pw.setValue(float(cur[1]))
+            emit = lambda *_, k=g.key, a=sp, b=pw: self.laserChanged.emit(k, a.value(), b.value())
+            sp.valueChanged.connect(emit)
+            pw.valueChanged.connect(emit)
+            vals.addWidget(sp, 1)
+            vals.addWidget(pw, 1)
+            v.addLayout(vals)
+            row.setToolTip("Camada do RDWorks com esta cor. Num lote com materiais diferentes, cada material "
+                           "vai para uma cor própria no arquivo exportado.")
+            self.laser_rows.addWidget(row)
+        self.laser_box.setVisible(bool(groups))
 
     def reset_file_options(self):
         """Arquivo novo: volta unidade para automática e reativa todas as camadas."""

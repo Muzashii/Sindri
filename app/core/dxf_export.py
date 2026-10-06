@@ -11,6 +11,7 @@ from __future__ import annotations
 import math
 import os
 from functools import lru_cache
+from typing import Optional
 
 import ezdxf
 from ezdxf import bbox as ezbbox
@@ -301,9 +302,10 @@ def export_sheets(parts: list[Part] | dict[str, Part], placements: list[Placemen
 def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Placement], params: NestParams,
                       out_dir: str, base_name: str = "projeto", version: str = "R2000",
                       sheet_outline: bool = False, inner_first: bool = True, sort_path: bool = True,
-                      gap: float = 20.0) -> str:
+                      gap: float = 20.0, color_map: Optional[dict] = None) -> str:
     """Um arquivo só (<nome>_todas_placas.dxf) com TODAS as placas de todos os materiais lado a lado,
-    na mesma ordem do relatório (materiais separados por um espaço maior). É o que abre no RDWorks."""
+    na mesma ordem do relatório (materiais separados por um espaço maior). É o que abre no RDWorks.
+    ``color_map``: {(material, cor ACI original): cor ACI a gravar} — separa materiais em camadas."""
     pmap = parts if isinstance(parts, dict) else {p.id: p for p in parts}
     os.makedirs(out_dir, exist_ok=True)
     doc = _new_doc(version)
@@ -324,7 +326,13 @@ def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Plac
             pls = [pl for pl in placements if pl.sheet_index == si]
             seq = order_placements(pmap, pls, nearest=sort_path) if inner_first or sort_path else pls
             for pl in seq:
-                for pr in placed_prims(pmap[pl.part_id], pl, dx, inner_first):
+                part = pmap[pl.part_id]
+                for pr in placed_prims(part, pl, dx, inner_first):
+                    if color_map:
+                        from .laser import export_aci
+                        target = color_map.get((part.material or "", export_aci(pr)))
+                        if target:
+                            pr.color, pr.rgb = target, None
                     write_prim(msp, pr, version)
             dx += params.sheet_width + gap
     path = os.path.join(out_dir, f"{base_name}_todas_placas.dxf")

@@ -182,6 +182,7 @@ class UIBuildMixin:
         self.settings_panel = SettingsPanel()
         self.settings_panel.paramsChanged.connect(self._params_debounced)
         self.settings_panel.reimportNeeded.connect(self.reimport)
+        self.settings_panel.laserChanged.connect(self.set_laser_value)
 
         split = QSplitter(Qt.Horizontal)
         self.parts_panel.doneChanged.connect(self.on_part_done)

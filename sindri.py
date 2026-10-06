@@ -45,6 +45,10 @@ if __name__ == "__main__":
     here = os.path.dirname(os.path.abspath(__file__))
     if here not in sys.path:
         sys.path.insert(0, here)
+    if len(sys.argv) > 2 and sys.argv[1] == "--rdworks-helper":
+        # chamado como administrador pelo próprio Sindri: grava velocidade/potência e abre o RDWorks
+        from app.core.laser import run_helper
+        sys.exit(run_helper(sys.argv[2]))
     try:  # travamentos nativos (Qt/navegador/placa de vídeo) ficam registrados mesmo sem console
         import faulthandler
         _crash = open(os.path.join(_log_dir(), "sindri_travamentos.log"), "a", encoding="utf-8")  # noqa: SIM115

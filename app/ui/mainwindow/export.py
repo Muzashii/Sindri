@@ -7,6 +7,7 @@ import tempfile
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
+from ...core import laser
 from ...core.dxf_export import export_all_sheets
 from ...core.models import NestResult
 from ...core.rdworks import files_to_open, find_rdworks, launch
@@ -70,12 +71,14 @@ class ExportMixin:
         o["base"] = base
         st.setValue("export/last_dir", o["folder"])
         self._compact_sheets()
+        groups = self._laser_plan()
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             os.makedirs(o["folder"], exist_ok=True)
             with tempfile.TemporaryDirectory(prefix=".sindri-export-", dir=o["folder"]) as stage:
                 dxf = export_all_sheets(self.parts, self.placements, p, stage, o["base"], o["version"],
-                                        sheet_outline=o["outline"], inner_first=o["inner"], sort_path=o["path"])
+                                        sheet_outline=o["outline"], inner_first=o["inner"], sort_path=o["path"],
+                                        color_map=laser.color_map(groups))
                 res = NestResult(self.placements, self.n_sheets, self._utilization(), 0.0, self.unplaced)
                 staged_pdf = os.path.join(stage, f"{o['base']}_relatorio.pdf")
                 export_pdf(staged_pdf, o["base"], self.pmap, res, p, header=self._report_header(),
@@ -101,7 +104,7 @@ class ExportMixin:
             return
         QApplication.restoreOverrideCursor()
         self._redraw(keep_view=True)
-        opened = self._open_in_rdworks(files) if o.get("open_rdworks") else ""
+        opened = self._open_in_rdworks(files, groups) if o.get("open_rdworks") else ""
         from urllib.parse import quote
         links = (f' · <a href="open:{quote(o["folder"])}">Abrir pasta</a>'
                  f' · <a href="open:{quote(pdf)}">Abrir relatório</a>'
@@ -115,7 +118,87 @@ class ExportMixin:
         self.statusBar().showMessage(f"Exportado em {o['folder']}", 8000)
         self.schedule_autosave()
 
-    def _open_in_rdworks(self, files: list[str]) -> str:
+    # ------------------------------------------------------------------ velocidade/potência
+    def laser_values(self) -> dict:
+        """{"material|cor": [velocidade mm/s, potência %]} lembrados entre usos."""
+        import json
+        try:
+            v = json.loads(settings().value("laser/params", "{}") or "{}")
+            return v if isinstance(v, dict) else {}
+        except ValueError:
+            return {}
+
+    def set_laser_value(self, key: str, speed: float, power: float):
+        import json
+        v = self.laser_values()
+        if speed > 0 and power > 0:
+            v[key] = [round(float(speed), 2), round(float(power), 1)]
+        else:
+            v.pop(key, None)
+        settings().setValue("laser/params", json.dumps(v, ensure_ascii=False))
+
+    def _laser_palette(self):
+        exe = find_rdworks(settings().value("rdworks/exe", "") or None)
+        return laser.read_palette(exe) if exe else None
+
+    def _laser_plan(self) -> list:
+        """Camadas do arquivo exportado (material × cor) e a camada do RDWorks de cada uma."""
+        placed = {pl.part_id for pl in self.placements}
+        groups = laser.groups_from_parts(pt for pt in self.parts if pt.id in placed)
+        order = [m for m, _ in self.sheet_index().groups]
+        return laser.plan_layers(groups, self._laser_palette(), order)
+
+    def _laser_report_lines(self) -> list[str]:
+        vals = self.laser_values()
+        lines = []
+        for g in self._laser_plan():
+            v = vals.get(g.key)
+            if v:
+                lines.append(f"Laser · {g.material or 'sem material'} · {', '.join(g.layers) or 'camada'}: "
+                             f"{v[0]:g} mm/s · {v[1]:g}%")
+        return lines
+
+    def _apply_laser(self, exe: str, path: str, groups: list) -> tuple[bool, str]:
+        """Grava velocidade/potência no RDWorks antes de abrir. Devolve (já abriu o RDWorks?, aviso)."""
+        vals = self.laser_values()
+        values = {g.rd_index: tuple(vals[g.key]) for g in groups if vals.get(g.key)}
+        if not values:
+            return False, ""
+        cfg = laser.config_path(exe)
+        if not os.path.isfile(cfg):
+            return False, "Velocidade/potência não aplicadas: não achei o arquivo de configuração do RDWorks."
+        while laser.rdworks_running():
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Warning)
+            box.setWindowTitle("Feche o RDWorks")
+            box.setText("O RDWorks já está aberto.")
+            box.setInformativeText("Para o Sindri preencher velocidade e potência, feche o RDWorks e clique em "
+                                   "“Tentar de novo”. (Com ele aberto, os valores seriam perdidos.)")
+            again = box.addButton("Tentar de novo", QMessageBox.AcceptRole)
+            box.addButton("Abrir sem aplicar", QMessageBox.RejectRole)
+            box.setDefaultButton(again)
+            box.exec()
+            if box.clickedButton() != again:
+                return False, "Velocidade/potência NÃO aplicadas (o RDWorks estava aberto)."
+        try:
+            laser.apply_to_config(cfg, values)
+            return False, ""
+        except PermissionError:
+            pass                                    # pasta do RDWorks protegida: ajudante como administrador
+        except (OSError, ValueError) as e:
+            return False, f"Velocidade/potência não aplicadas: {e}"
+        import json
+        job = os.path.join(tempfile.gettempdir(), f"sindri_rdworks_{os.getpid()}.json")
+        with open(job, "w", encoding="utf-8") as fh:
+            json.dump({"config": cfg, "values": {str(k): v for k, v in values.items()},
+                       "exe": exe, "file": os.path.abspath(path)}, fh)
+        try:
+            laser.launch_elevated_helper(job)
+        except OSError as e:
+            return False, f"Velocidade/potência não aplicadas: {e}"
+        return True, ""
+
+    def _open_in_rdworks(self, files: list[str], groups: list | None = None) -> str:
         """Abre o DXF exportado no RDWorks. Devolve uma frase para a mensagem final."""
         targets = files_to_open(files)
         if not targets:
@@ -134,8 +217,10 @@ class ExportMixin:
         st.setValue("rdworks/exe", exe)
         path = targets[0]
         QApplication.clipboard().setText(os.path.abspath(path))
+        opened, laser_msg = self._apply_laser(exe, path, groups or [])
         try:
-            launch(exe, path)
+            if not opened:
+                launch(exe, path)
         except OSError as e:
             if not os.path.isfile(exe):
                 st.remove("rdworks/exe")
@@ -144,9 +229,19 @@ class ExportMixin:
                "(o Windows pode pedir permissão — o RDWorks roda como administrador).")
         msg += ("\nSe ele abrir vazio: Arquivo › Importar (Ctrl+I), Ctrl+V e Enter "
                 "— o caminho do arquivo já está copiado.")
+        applied = [g for g in (groups or []) if self.laser_values().get(g.key)]
+        if laser_msg:
+            msg += "\n⚠ " + laser_msg
+        elif applied:
+            msg += "\nVelocidade/potência preenchidas no RDWorks: " + "; ".join(
+                f"{g.material or 'sem material'} {self.laser_values()[g.key][0]:g} mm/s "
+                f"{self.laser_values()[g.key][1]:g}%" for g in applied) + "."
         return msg
 
     def _report_header(self) -> list[str]:
+        return self._request_header() + self._laser_report_lines()
+
+    def _request_header(self) -> list[str]:
         i = self.request_info
         if not i:
             return []
