@@ -302,10 +302,12 @@ def export_sheets(parts: list[Part] | dict[str, Part], placements: list[Placemen
 def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Placement], params: NestParams,
                       out_dir: str, base_name: str = "projeto", version: str = "R2000",
                       sheet_outline: bool = False, inner_first: bool = True, sort_path: bool = True,
-                      gap: float = 20.0, color_map: Optional[dict] = None) -> str:
+                      gap: float = 20.0, color_map: Optional[dict] = None,
+                      only_sheets: Optional[set] = None, file_suffix: str = "_todas_placas") -> str:
     """Um arquivo só (<nome>_todas_placas.dxf) com TODAS as placas de todos os materiais lado a lado,
     na mesma ordem do relatório (materiais separados por um espaço maior). É o que abre no RDWorks.
-    ``color_map``: {(material, cor ACI original): cor ACI a gravar} — separa materiais em camadas."""
+    ``color_map``: {(material, cor ACI original): cor ACI a gravar} — separa materiais em camadas.
+    ``only_sheets``: exporta só essas placas (índices), mantendo o nº delas ("PLACA 3")."""
     pmap = parts if isinstance(parts, dict) else {p.id: p for p in parts}
     os.makedirs(out_dir, exist_ok=True)
     doc = _new_doc(version)
@@ -313,9 +315,14 @@ def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Plac
     dx = 0.0
     from .sheets import SheetIndex
     idx = SheetIndex(pmap, placements)
-    for g, (mat, sis) in enumerate(idx.groups):
-        if g:
+    first = True
+    for mat, sis in idx.groups:
+        sis = [si for si in sis if only_sheets is None or si in only_sheets]
+        if not sis:
+            continue
+        if not first:
             dx += 3 * gap
+        first = False
         for si in sis:
             n_sheet = idx.number[si]
             if sheet_outline:
@@ -335,6 +342,6 @@ def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Plac
                             pr.color, pr.rgb = target, None
                     write_prim(msp, pr, version)
             dx += params.sheet_width + gap
-    path = os.path.join(out_dir, f"{base_name}_todas_placas.dxf")
+    path = os.path.join(out_dir, f"{base_name}{file_suffix}.dxf")
     _finish(doc, path)
     return path

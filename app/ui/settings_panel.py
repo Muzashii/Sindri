@@ -69,6 +69,30 @@ def _dspin(lo, hi, step, dec, suffix, tip):
     return s
 
 
+def _num(edit, top: float = 10000) -> float:
+    try:
+        return min(top, float(edit.text().strip().replace(",", ".") or 0))
+    except ValueError:
+        return 0.0
+
+
+def _num_edit(placeholder: str, top: float, value: float, tip: str):
+    """Campo numérico que pode ficar em branco (em branco = não definir)."""
+    from PySide6.QtCore import QRegularExpression
+    from PySide6.QtGui import QRegularExpressionValidator
+    from PySide6.QtWidgets import QLineEdit
+    e = QLineEdit()
+    e.setPlaceholderText(placeholder)
+    e.setToolTip(tip)
+    e.setMinimumWidth(60)
+    e.setClearButtonEnabled(True)
+    digits = len(str(int(top)))
+    e.setValidator(QRegularExpressionValidator(QRegularExpression(rf"^\d{{0,{digits}}}([.,]\d{{0,2}})?$"), e))
+    if value and value > 0:
+        e.setText(f"{value:g}".replace(".", ","))
+    return e
+
+
 class SettingsPanel(QWidget):
     paramsChanged = Signal()
     reimportNeeded = Signal()
@@ -323,16 +347,14 @@ class SettingsPanel(QWidget):
             v.addLayout(head)
             vals = QHBoxLayout()
             vals.setSpacing(6)
-            sp = _dspin(0, 2000, 1, 1, " mm/s", "Velocidade do laser nesta camada (0 = não mexer no RDWorks)")
-            pw = _dspin(0, 100, 1, 1, " %", "Potência do laser nesta camada (mín. = máx.; 0 = não mexer)")
-            sp.setSpecialValueText("velocidade —")
-            pw.setSpecialValueText("potência —")
             cur = values.get(g.key) or [0, 0]
-            sp.setValue(float(cur[0]))
-            pw.setValue(float(cur[1]))
-            emit = lambda *_, k=g.key, a=sp, b=pw: self.laserChanged.emit(k, a.value(), b.value())
-            sp.valueChanged.connect(emit)
-            pw.valueChanged.connect(emit)
+            sp = _num_edit("velocidade (mm/s)", 2000, cur[0],
+                           "Velocidade do laser nesta camada, em mm/s. Em branco = não mexer no RDWorks.")
+            pw = _num_edit("potência (%)", 100, cur[1],
+                           "Potência do laser nesta camada, em % (mínima = máxima). Em branco = não mexer.")
+            emit = lambda *_, k=g.key, a=sp, b=pw: self.laserChanged.emit(k, _num(a, 2000), _num(b, 100))
+            sp.textChanged.connect(emit)
+            pw.textChanged.connect(emit)
             vals.addWidget(sp, 1)
             vals.addWidget(pw, 1)
             v.addLayout(vals)

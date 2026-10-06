@@ -114,6 +114,7 @@ class NestingMixin:
         if not self._best_timer.isActive():
             self._best_timer.start(0 if not self._layout_shown_once else 200)
         self.btn_export.setEnabled(bool(self.placements))
+        self.btn_export_menu.setEnabled(bool(self.placements))
         self._update_status()
 
     def _show_best(self):

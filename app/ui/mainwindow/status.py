@@ -139,6 +139,7 @@ class StatusMixin:
         self.btn_pause.setEnabled(running)
         self.btn_stop.setVisible(False)
         self.btn_export.setEnabled(bool(self.placements))
+        self.btn_export_menu.setEnabled(bool(self.placements))
         self.btn_save.setEnabled(has_parts)
         self.parts_panel.btn_clear.setEnabled(has_parts)
         self.a_undo.setEnabled(bool(self.undo_stack) and not running)

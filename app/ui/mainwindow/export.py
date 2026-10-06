@@ -21,26 +21,63 @@ class ExportMixin:
     def export_with_options(self):
         self.export(ask=True)
 
-    def export(self, ask: bool = False):
-        """Exporta direto com as opções da última vez (Ctrl+E). Ctrl+Shift+E abre a janela de opções."""
+    def _fill_export_menu(self):
+        """Menu da seta ao lado de Exportar: tudo, a placa da tela, ou uma placa escolhida."""
+        m = self._export_menu
+        m.clear()
+        if not self.placements:
+            m.addAction("Encaixe primeiro").setEnabled(False)
+            return
+        a = m.addAction("Todas as placas + relatório\tCtrl+E")
+        a.triggered.connect(lambda: self.export())
+        idx = self.sheet_index()
+        if self.canvas.mode == "layout":
+            cur = self.canvas.current_sheet()
+            if cur in idx.number:
+                a = m.addAction(f"Só a placa da tela (Placa {idx.number[cur]})\tCtrl+Alt+E")
+                a.triggered.connect(lambda _=False, s=cur: self.export(sheet=s))
+        m.addSeparator()
+        head = m.addAction("Só uma placa:")
+        head.setEnabled(False)
+        for si in idx.ordered:
+            n = idx.count(si)
+            mat = idx.material.get(si) or "sem material"
+            mark = "✓ cortada · " if si in self.cut_sheets else ""
+            a = m.addAction(f"   Placa {idx.number[si]} · {mat} · {n} peça(s)  {mark}".rstrip(" ·"))
+            a.triggered.connect(lambda _=False, s=si: self.export(sheet=s))
+
+    def export_current_sheet(self):
+        """Só a placa que está no centro da tela."""
+        if self.placements and self.canvas.mode == "layout":
+            self.export(sheet=self.canvas.current_sheet())
+
+    def export(self, ask: bool = False, sheet: int | None = None):
+        """Exporta direto com as opções da última vez (Ctrl+E). Ctrl+Shift+E abre a janela de opções.
+        ``sheet``: exporta só essa placa (um DXF com o nº dela, sem relatório)."""
         if self.worker is not None:                 # exportar durante o encaixe: para e usa a melhor solução
             self.stop_nest(wait=True)
         if not self.placements:
             return
+        sheet_no = None
+        if sheet is not None:
+            sheet_no = self.sheet_index().number.get(sheet)
+            if sheet_no is None:
+                return
         p = self.settings_panel.params()
         # problemas numa única confirmação (só aparece se houver algum)
         problems = []
         self._mark_collisions()
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            issues = validate_layout(self.pmap, self.placements, p)
+            check = [pl for pl in self.placements if sheet is None or pl.sheet_index == sheet]
+            issues = validate_layout(self.pmap, check, p)
         finally:
             QApplication.restoreOverrideCursor()
         if issues:
             QMessageBox.warning(self, "Encaixe inválido", "Corrija o encaixe antes de exportar:\n\n" + "\n".join(issues[:8]))
             return
         missing = sum(pt.quantity for pt in self.parts) - len(self.placements)
-        if missing > 0:
+        if missing > 0 and sheet is None:
             problems.append(f"{missing} peça(s) não estão no encaixe (ficam de fora do arquivo).")
         if problems:
             r = QMessageBox.warning(self, "Exportar mesmo assim?", "\n\n".join("• " + x for x in problems),
@@ -63,29 +100,40 @@ class ExportMixin:
                  "path": st.value("export/path", "true") == "true",
                  "open_rdworks": st.value("export/open_rdworks", "true") == "true"}
         # nomes livres: em vez de perguntar, acrescenta _2, _3…
+        if sheet_no is not None:
+            o["base"] = f"{o['base']}_placa{sheet_no}"
+        suffix = "" if sheet_no is not None else "_todas_placas"
         base, k = o["base"], 2
         while any(os.path.exists(os.path.join(o["folder"], f"{base}{suf}"))
-                  for suf in ("_todas_placas.dxf", "_relatorio.pdf")):
+                  for suf in (f"{suffix}.dxf", "_relatorio.pdf")):
             base = f"{o['base']}_{k}"
             k += 1
         o["base"] = base
         st.setValue("export/last_dir", o["folder"])
         self._compact_sheets()
-        groups = self._laser_plan()
+        only = None
+        if sheet_no is not None:                     # índice da placa depois de renumerar
+            idx = self.sheet_index()
+            only = {si for si in idx.ordered if idx.number[si] == sheet_no}
+        groups = self._laser_plan(only)
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             os.makedirs(o["folder"], exist_ok=True)
             with tempfile.TemporaryDirectory(prefix=".sindri-export-", dir=o["folder"]) as stage:
                 dxf = export_all_sheets(self.parts, self.placements, p, stage, o["base"], o["version"],
                                         sheet_outline=o["outline"], inner_first=o["inner"], sort_path=o["path"],
-                                        color_map=laser.color_map(groups))
-                res = NestResult(self.placements, self.n_sheets, self._utilization(), 0.0, self.unplaced)
-                staged_pdf = os.path.join(stage, f"{o['base']}_relatorio.pdf")
-                export_pdf(staged_pdf, o["base"], self.pmap, res, p, header=self._report_header(),
-                           requests=self._report_requests())
+                                        color_map=laser.color_map(groups), only_sheets=only,
+                                        file_suffix=suffix)
+                sources = [dxf]
+                if only is None:                     # relatório só na exportação completa
+                    res = NestResult(self.placements, self.n_sheets, self._utilization(), 0.0, self.unplaced)
+                    staged_pdf = os.path.join(stage, f"{o['base']}_relatorio.pdf")
+                    export_pdf(staged_pdf, o["base"], self.pmap, res, p, header=self._report_header(),
+                               requests=self._report_requests())
+                    sources.append(staged_pdf)
                 files = []
                 try:
-                    for source in (dxf, staged_pdf):
+                    for source in sources:
                         target = os.path.join(o["folder"], os.path.basename(source))
                         if os.path.exists(target):
                             raise FileExistsError(target)
@@ -95,7 +143,7 @@ class ExportMixin:
                     for target in files:
                         os.remove(target)
                     raise
-                pdf = files[1]
+                pdf = files[1] if len(files) > 1 else None
             hist = get_list_value(st.value("export/history", []))
             st.setValue("export/history", (hist + [f for f in files if f not in hist])[-500:])
         except Exception as e:
@@ -107,9 +155,10 @@ class ExportMixin:
         opened = self._open_in_rdworks(files, groups) if o.get("open_rdworks") else ""
         from urllib.parse import quote
         links = (f' · <a href="open:{quote(o["folder"])}">Abrir pasta</a>'
-                 f' · <a href="open:{quote(pdf)}">Abrir relatório</a>'
-                 ' · <a href="opts:">Opções de exportação…</a>')
-        txt = f"<b>Exportado:</b> {os.path.basename(files[0])} + relatório" + links
+                 + (f' · <a href="open:{quote(pdf)}">Abrir relatório</a>' if pdf else "")
+                 + ' · <a href="opts:">Opções de exportação…</a>')
+        what = (f"só a placa {sheet_no}" if sheet_no is not None else "todas as placas + relatório")
+        txt = f"<b>Exportado ({what}):</b> {os.path.basename(files[0])}" + links
         if opened:
             txt += "<br>" + opened.replace("\n", "<br>")
         if o["outline"]:
@@ -141,9 +190,9 @@ class ExportMixin:
         exe = find_rdworks(settings().value("rdworks/exe", "") or None)
         return laser.read_palette(exe) if exe else None
 
-    def _laser_plan(self) -> list:
+    def _laser_plan(self, only: set | None = None) -> list:
         """Camadas do arquivo exportado (material × cor) e a camada do RDWorks de cada uma."""
-        placed = {pl.part_id for pl in self.placements}
+        placed = {pl.part_id for pl in self.placements if only is None or pl.sheet_index in only}
         groups = laser.groups_from_parts(pt for pt in self.parts if pt.id in placed)
         order = [m for m, _ in self.sheet_index().groups]
         return laser.plan_layers(groups, self._laser_palette(), order)

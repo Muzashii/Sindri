@@ -88,11 +88,25 @@ class UIBuildMixin:
         self.btn_export.setObjectName("success")
         self.btn_export.setToolTip("Gera o arquivo com todas as placas + relatório e abre no RDWorks (Ctrl+E).\n"
                                    "Ctrl+Shift+E: escolher pasta e opções.")
-        self.btn_export.clicked.connect(self.export)
+        self.btn_export.clicked.connect(lambda: self.export())
+        # seta ao lado: escolher uma placa só
+        from PySide6.QtWidgets import QMenu
+        self.btn_export_menu = QPushButton("▾")
+        self.btn_export_menu.setObjectName("success")
+        self.btn_export_menu.setFixedWidth(34)
+        self.btn_export_menu.setToolTip("Exportar só uma placa (Ctrl+Alt+E: a placa que está na tela)")
+        self._export_menu = QMenu(self)
+        self._export_menu.aboutToShow.connect(self._fill_export_menu)
+        self.btn_export_menu.setMenu(self._export_menu)
+        self.btn_export_menu.setStyleSheet("QPushButton::menu-indicator { image: none; width: 0; }")
         for w in (self.btn_nest, self.btn_pause, self.btn_stop):
             tl.addWidget(w)
         tl.addWidget(self._vsep())
-        tl.addWidget(self.btn_export)
+        exp = QHBoxLayout()
+        exp.setSpacing(2)
+        exp.addWidget(self.btn_export)
+        exp.addWidget(self.btn_export_menu)
+        tl.addLayout(exp)
         tl.addWidget(self._vsep())
         self.btn_theme = QToolButton()
         self.btn_theme.setToolTip("Alternar tema claro/escuro (Ctrl+T)")
@@ -388,6 +402,7 @@ class UIBuildMixin:
         m_file.addSeparator()
         act(m_file, "Exportar para RDWorks", self.export, "Ctrl+E")
         act(m_file, "Exportar com opções…", self.export_with_options, "Ctrl+Shift+E")
+        act(m_file, "Exportar só a placa da tela", self.export_current_sheet, "Ctrl+Alt+E")
         m_file.addSeparator()
         act(m_file, "Recuperar último trabalho (salvo automaticamente)", self.recover_autosave)
         act(m_file, "Limpar arquivos baixados e relatórios…", self.cleanup_files)
@@ -473,6 +488,7 @@ class UIBuildMixin:
             "Esc\tParar encaixe\n"
             "Ctrl+E\tExportar (direto, opções da última vez)\n"
             "Ctrl+Shift+E\tExportar com opções\n"
+            "Ctrl+Alt+E\tExportar só a placa da tela\n"
             "C\tMarcar placa da tela como cortada → próxima\n"
             "Alt+1…9 / Alt+0\tSó a solicitação N do lote / todas\n"
             "N\tMostrar/ocultar nº nas peças\n"

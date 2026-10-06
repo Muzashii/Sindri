@@ -84,7 +84,8 @@ def test_ajudante_grava_config(tmp_path):
 def test_painel_mostra_camadas_e_lembra(tmp_path):
     import os
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtWidgets import QApplication, QDoubleSpinBox
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication, QLineEdit
     QApplication.instance() or QApplication([])
     from app.ui.main_window import MainWindow
     w = MainWindow(workers=0)
@@ -92,12 +93,52 @@ def test_painel_mostra_camadas_e_lembra(tmp_path):
     w.pmap = {p.id: p for p in w.parts}
     w._refresh_cut_panel()
     assert w.settings_panel.laser_box.isVisibleTo(w.settings_panel)
-    spins = w.settings_panel.laser_box.findChildren(QDoubleSpinBox)
-    assert len(spins) == 4
-    spins[0].setValue(16)
-    spins[1].setValue(85)
-    assert w.laser_values() == {"MDF 3mm|7": [16.0, 85.0]}
+    edits = w.settings_panel.laser_box.findChildren(QLineEdit)
+    assert len(edits) == 4
+    QTest.keyClicks(edits[0], "16,5")                  # digitar de verdade (vírgula ou ponto)
+    QTest.keyClicks(edits[1], "85")
+    assert w.laser_values() == {"MDF 3mm|7": [16.5, 85.0]}
+    QTest.keyClicks(edits[1], "9")                     # 859 não passa de 100%
+    assert w.laser_values()["MDF 3mm|7"][1] == 100.0
+    edits[1].clear()                                   # em branco = não mexer
+    assert w.laser_values() == {}
+    edits[1].setText("85")
     w.placements = [Placement("P1", 0, 0, 40, 40, 0)]
-    assert w._laser_report_lines() == ["Laser · MDF 3mm · CORTE: 16 mm/s · 85%"]
+    assert w._laser_report_lines() == ["Laser · MDF 3mm · CORTE: 16.5 mm/s · 85%"]
+    w.dirty = False
+    w.close()
+
+
+def test_exporta_so_uma_placa(tmp_path, monkeypatch):
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication([])
+    from app.ui.dialogs import settings
+    from app.ui.main_window import MainWindow
+    w = MainWindow(workers=0)
+    w.parts = [_part("P1", "MDF 3mm", 7), _part("P2", "MDF 3mm", 7), _part("P3", "MDF 3mm", 7)]
+    w.pmap = {p.id: p for p in w.parts}
+    w.files = ["a.dxf"]
+    w.placements = [Placement("P1", 0, 0, 40, 40, 0), Placement("P2", 0, 1, 40, 40, 0),
+                    Placement("P3", 0, 2, 40, 40, 0)]
+    w.n_sheets = 3
+    w.request_label = "lote"
+    st = settings()
+    out_dir = tmp_path / "saida"
+    out_dir.mkdir()
+    st.setValue("export/last_dir", str(out_dir))
+    st.setValue("export/open_rdworks", "false")
+    st.setValue("export/outline2", "true")
+    w.export(sheet=1)
+    out = sorted(os.listdir(out_dir))
+    assert out == ["lote_placa2.dxf"]                   # só a placa 2, sem relatório
+    doc = ezdxf.readfile(str(out_dir / "lote_placa2.dxf"))
+    assert len([e for e in doc.modelspace() if e.dxf.layer == "CORTE"]) == 1
+    w.export()
+    assert sorted(os.listdir(out_dir)) == ["lote_placa2.dxf", "lote_relatorio.pdf", "lote_todas_placas.dxf"]
+    w._fill_export_menu()
+    texts = [a.text() for a in w._export_menu.actions()]
+    assert any(t.startswith("   Placa 3") for t in texts)
     w.dirty = False
     w.close()
