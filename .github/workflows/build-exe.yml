@@ -1,7 +1,7 @@
 name: Compilar Sindri.exe
 on:
   push:
-    tags: ["exe-*"]
+    branches: ["exe"]          # empurrar para a branch "exe" compila e publica uma versão nova
   workflow_dispatch:
 permissions:
   contents: write
@@ -34,11 +34,13 @@ jobs:
             dist/Sindri.exe
             dist/Sindri.exe.sha256
       - name: Publicar na página de versões (Releases)
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: exe-${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          make_latest: true
           files: |
             dist/Sindri.exe
             dist/Sindri.exe.sha256
-          name: Sindri ${{ github.ref_name }}
+          name: Sindri.exe nº ${{ github.run_number }}
           body: "Executável único para Windows (compilado automaticamente). Baixe o Sindri.exe e abra."
