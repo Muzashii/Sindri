@@ -234,7 +234,8 @@ class PhotoPanel(QWidget):
         self.pmax = _dspin(1, 100, 1, 1, " %", "Potência do tom mais escuro")
         self.pmin = _dspin(1, 100, 1, 1, " %", "Potência do tom mais claro gravado")
         f4.addRow("Velocidade", self.speed)
-        f4.addRow("Potência (escuro)", self.pmax)
+        self.pmax_label = QLabel("Potência (escuro)")
+        f4.addRow(self.pmax_label, self.pmax)
         f4.addRow("Potência (claro)", self.pmin)
         self.levels_lbl = QLabel("")
         self.levels_lbl.setObjectName("Muted")
@@ -378,7 +379,9 @@ class PhotoPanel(QWidget):
         from ..core import laser
         p = self.params()
         pal = palette or laser.DEFAULT_PALETTE
-        if p.mode == "imagem":                       # bitmap na camada preta: mín. = claro, máx. = escuro
+        if p.mode == "imagem":                       # bitmap na camada preta
+            if p.dither:                             # pontilhado: um ponto é queimado ou não, potência única
+                return {laser.nearest_layer((0, 0, 0), pal): (p.speed, p.power_max, p.power_max)}
             return {laser.nearest_layer((0, 0, 0), pal): (p.speed, p.power_min, p.power_max)}
         n = max(1, min(MAX_LEVELS, int(p.levels)))
         return {laser.nearest_layer(laser.aci_rgb(LEVEL_ACI[k]), pal): (p.speed, pw)
@@ -420,7 +423,20 @@ class PhotoPanel(QWidget):
     def _mode_ui(self):
         lines = (self.mode.currentData() or "imagem") == "linhas"
         self.levels.setEnabled(lines)
-        self.dither.setEnabled(lines)
+        if lines:
+            self.dither.setText("Pontilhado (mais tons)")
+            self.dither.setToolTip("Mistura os níveis vizinhos para dar a impressão de mais tons de cinza")
+        else:
+            self.dither.setText("Pontilhado (recomendado)")
+            self.dither.setToolTip(
+                "Ligado: a imagem sai em pontos pretos e brancos e os tons vêm da quantidade de pontos —\n"
+                "funciona em qualquer RDWorks e fica melhor em MDF/madeira (use 0,1–0,15 mm entre linhas).\n"
+                "Desligado: tons de cinza, e o RDWorks precisa estar configurado para variar a potência\n"
+                "(senão a foto sai só com 2 tons).")
+        single = not lines and self.dither.isChecked()
+        self.pmin.setEnabled(not single)
+        if hasattr(self, "pmax_label"):
+            self.pmax_label.setText("Potência" if single else "Potência (escuro)")
         for wdg in (self.x, self.y, self.btn_center):
             wdg.setToolTip(wdg.toolTip().split("\n(Imagem")[0] + ("" if lines else
                            "\n(Imagem: só para ver na placa — no RDWorks a imagem entra onde você colocar)"))
@@ -558,7 +574,10 @@ class PhotoPanel(QWidget):
         p = self.params()
         n = max(1, min(MAX_LEVELS, int(p.levels)))
         pw = p.level_powers()
-        if p.mode == "imagem":
+        if p.mode == "imagem" and p.dither:
+            self.levels_lbl.setText(f"Camada preta do RDWorks: {p.power_max:g}% a {p.speed:g} mm/s, em modo "
+                                    "varredura (scan). Os tons vêm da densidade dos pontos.")
+        elif p.mode == "imagem":
             self.levels_lbl.setText(f"Camada preta do RDWorks: potência {p.power_min:g}% nos claros até "
                                     f"{p.power_max:g}% nos escuros. Deixe a camada em modo varredura (scan).")
         else:
@@ -580,6 +599,8 @@ class PhotoPanel(QWidget):
             txt = (f"{self.result.width_mm:.0f} × {self.result.height_mm:.0f} mm · imagem {cols} × {rows} px · "
                    f"≈ {mins:.0f} min a {p.speed:g} mm/s")
             ok = bool((self.result.dark is not None) and (self.result.dark > 0).any())
+            if rp.dither and rp.line_mm > 0.18:
+                txt += "  ·  dica: para pontilhado use 0,1–0,15 mm entre linhas (pontos mais finos)"
         else:
             mins = estimate_minutes(self.result, p)
             txt = (f"{self.result.width_mm:.0f} × {self.result.height_mm:.0f} mm · "

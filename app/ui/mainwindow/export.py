@@ -65,7 +65,11 @@ class ExportMixin:
         from urllib.parse import quote
         txt = (f"<b>Foto exportada:</b> {os.path.basename(path)} · "
                f'<a href="open:{quote(folder)}">Abrir pasta</a>')
-        if rp.mode == "imagem":
+        if rp.mode == "imagem" and rp.dither:
+            txt += (f"<br>Imagem pontilhada ({pp.result.width_mm:.0f} × {pp.result.height_mm:.0f} mm): camada preta "
+                    f"com {p.power_max:g}% a {p.speed:g} mm/s. No RDWorks deixe a camada em <b>modo varredura "
+                    "(scan)</b> e posicione a imagem na placa.")
+        elif rp.mode == "imagem":
             txt += (f"<br>Imagem em tons de cinza ({pp.result.width_mm:.0f} × {pp.result.height_mm:.0f} mm): "
                     f"camada preta com {p.power_min:g}% (claros) a {p.power_max:g}% (escuros) a {p.speed:g} mm/s. "
                     "No RDWorks deixe a camada em <b>modo varredura (scan)</b> e posicione a imagem na placa.")

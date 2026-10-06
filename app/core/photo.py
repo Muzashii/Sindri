@@ -161,6 +161,39 @@ def quantize(dark: np.ndarray, p: PhotoParams) -> np.ndarray:
     return np.where(out == 0, -1, n - out).astype(np.int8)
 
 
+def dither_binary(dark: np.ndarray) -> np.ndarray:
+    """Difusão de erro (Floyd–Steinberg, em serpentina) para 1 bit: 0 = queima, -1 = não queima."""
+    d = np.clip(dark.astype(np.float64), 0, 1)
+    rows, cols = d.shape
+    out = np.full((rows, cols), -1, dtype=np.int8)
+    carry = np.zeros(cols + 2)                       # erro que desce para a linha seguinte
+    for y in range(rows):
+        row = (d[y] + carry[1:-1]).tolist()
+        nxt = [0.0] * (cols + 2)
+        res = out[y]
+        burn = []
+        if y % 2 == 0:
+            xs, step = range(cols), 1
+        else:
+            xs, step = range(cols - 1, -1, -1), -1
+        err_right = 0.0
+        for x in xs:
+            v = row[x] + err_right
+            if v >= 0.5:
+                burn.append(x)
+                e = v - 1.0
+            else:
+                e = v
+            err_right = e * 0.4375
+            nxt[x + 1 - step] += e * 0.1875
+            nxt[x + 1] += e * 0.3125
+            nxt[x + 1 + step] += e * 0.0625
+        if burn:
+            res[burn] = 0
+        carry = np.asarray(nxt)
+    return out
+
+
 def segments(levels: np.ndarray, line_mm: float, min_seg_mm: float = 0.0) -> list:
     """Trechos contínuos do mesmo nível em cada linha -> [(nível, y, x0, x1)] (mm, y para cima)."""
     rows, cols = levels.shape
@@ -197,7 +230,14 @@ def trace(gray: np.ndarray, p: PhotoParams, max_cols: int = 2400) -> PhotoResult
         dark[:, :fc] = dark[:, -fc:] = 1.0
     dark = np.where(dark < float(p.white_cut), 0.0, dark).astype(np.float32)
     if p.mode == "imagem":
-        lv = np.where(dark > 0, 0, -1).astype(np.int8)
+        if p.dither:
+            # pontilhado feito aqui: a imagem sai só com preto e branco e os tons vêm da densidade de
+            # pontos — funciona com qualquer configuração do RDWorks (que costuma tratar o bitmap como
+            # 1 bit, deixando a foto com 2 tons) e é o que dá melhor resultado em MDF/madeira
+            lv = dither_binary(dark)
+            dark = (lv == 0).astype(np.float32)
+        else:
+            lv = np.where(dark > 0, 0, -1).astype(np.int8)
         return PhotoResult(lv, width, rows * line, line, [], dark)
     lv = quantize(dark, p)
     segs = segments(lv, line, p.min_seg_mm)

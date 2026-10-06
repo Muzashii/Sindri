@@ -63,13 +63,19 @@ def test_aba_foto_gera_e_exporta(tmp_path):
     st.setValue("export/open_rdworks", "false")
     pp.mode.setCurrentIndex(pp.mode.findData("imagem"))
     assert pp.wait_idle() and not pp.levels.isEnabled()
-    vals = pp.laser_values()
-    assert list(vals.values()) == [(pp.speed.value(), pp.pmin.value(), pp.pmax.value())]
+    pp.dither.setChecked(False)                       # tons de cinza: potência mín./máx.
+    assert pp.wait_idle() and pp.pmin.isEnabled()
+    assert list(pp.laser_values().values()) == [(pp.speed.value(), pp.pmin.value(), pp.pmax.value())]
+    pp.dither.setChecked(True)                        # pontilhado: só preto e branco, potência única
+    assert pp.wait_idle() and not pp.pmin.isEnabled()
+    assert list(pp.laser_values().values()) == [(pp.speed.value(), pp.pmax.value(), pp.pmax.value())]
+    assert set(np.unique(pp.result.dark)) <= {0.0, 1.0}
     w.export_photo()
     assert os.listdir(out) == ["foto_foto.bmp"]
     q = QImage(str(out / "foto_foto.bmp"))
     assert q.width() == round(60 / pp.line.value()) and abs(q.width() / q.dotsPerMeterX() * 1000 - 60) < 0.5
-    assert "Foto exportada" in pp.msg.text() and "varredura" in pp.msg.text()
+    assert "Foto exportada" in pp.msg.text() and "pontilhada" in pp.msg.text()
+    assert {q.pixelColor(x, y).red() for x in range(0, q.width(), 7) for y in range(0, q.height(), 7)} <= {0, 255}
     pp.mode.setCurrentIndex(pp.mode.findData("linhas"))
     assert pp.wait_idle() and pp.levels.isEnabled()
     w.export_photo()
@@ -77,3 +83,11 @@ def test_aba_foto_gera_e_exporta(tmp_path):
     w.set_mode(0)
     assert w.nest_actions.isVisibleTo(w)
     w.close()
+
+
+def test_pontilhado_binario_reproduz_os_tons():
+    from app.core.photo import dither_binary
+    d = np.tile(np.linspace(0, 1, 500), (300, 1))
+    burn = (dither_binary(d) == 0).astype(float)
+    for i in range(5):
+        assert abs(burn[:, i * 100:(i + 1) * 100].mean() - (0.1 + 0.2 * i)) < 0.03
