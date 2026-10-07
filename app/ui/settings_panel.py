@@ -363,6 +363,8 @@ class SettingsPanel(QWidget):
                            "vai para uma cor própria no arquivo exportado.")
             self.laser_rows.addWidget(row)
         self.laser_box.setVisible(bool(groups))
+        from .nowheel import protect
+        protect(self.laser_box)
 
     def reset_file_options(self):
         """Arquivo novo: volta unidade para automática e reativa todas as camadas."""

@@ -1149,6 +1149,8 @@ class IntranetDialog(QDialog):
 
     def showEvent(self, e):
         super().showEvent(e)
+        from .nowheel import protect
+        protect(self)
         if not getattr(self, "_dl_connected", False):
             shared_profile().downloadRequested.connect(self._download_requested)
             self._dl_connected = True
