@@ -89,6 +89,7 @@ def test_painel_mostra_camadas_e_lembra(tmp_path):
     QApplication.instance() or QApplication([])
     from app.ui.main_window import MainWindow
     w = MainWindow(workers=0)
+    w.set_material_mode(False)                         # modo antigo: uma linha por cor do desenho
     w.parts = [_part("P1", "MDF 3mm", 7), _part("P2", "MDF 6mm", 1)]
     w.pmap = {p.id: p for p in w.parts}
     w._refresh_cut_panel()
@@ -105,6 +106,7 @@ def test_painel_mostra_camadas_e_lembra(tmp_path):
     edits[1].setText("85")
     w.placements = [Placement("P1", 0, 0, 40, 40, 0)]
     assert w._laser_report_lines() == ["Laser · MDF 3mm · CORTE: 16.5 mm/s · 85%"]
+    w.set_material_mode(True)
     w.dirty = False
     w.close()
 
@@ -140,5 +142,112 @@ def test_exporta_so_uma_placa(tmp_path, monkeypatch):
     w._fill_export_menu()
     texts = [a.text() for a in w._export_menu.actions()]
     assert any(t.startswith("   Placa 3") for t in texts)
+    w.dirty = False
+    w.close()
+
+
+# ------------------------------------------------------------ uma cor por material + números
+def _mpart(pid, material, colors=(7,), size=40, tag=""):
+    h = size / 2
+    prims = [Prim("POLY", {"pts": [(-h, -h), (h, -h), (h, h), (-h, h)], "closed": True}, "CORTE", c)
+             for c in colors]
+    return Part(pid, pid, "x.dxf", box(-h, -h, h, h), [], prims, [0], material=material, tag=tag)
+
+
+def test_cores_por_material_distintas_e_sem_a_dos_numeros():
+    cols = laser.default_material_colors(["MDF 3mm", "MDF 6mm"], {}, 1)
+    assert cols == {"MDF 3mm": 7, "MDF 6mm": 5}
+    cols = laser.default_material_colors(["MDF 3mm", "MDF 6mm"], {"MDF 6mm": {"color": 7}}, 1)
+    assert cols["MDF 6mm"] == 7 and cols["MDF 3mm"] not in (7, 1)
+
+
+def test_material_color_map_junta_todas_as_cores_do_material():
+    parts = [_mpart("a", "MDF 3mm", (7, 1, 5)), _mpart("b", "MDF 6mm", (7,))]
+    cmap = laser.material_color_map(parts, {"MDF 3mm": 3, "MDF 6mm": 5})
+    assert cmap == {("MDF 3mm", 7): 3, ("MDF 3mm", 1): 3, ("MDF 3mm", 5): 3, ("MDF 6mm", 7): 5}
+
+
+def test_material_values_vai_para_a_camada_certa():
+    cfg = {"MDF 3mm": {"speed": 20, "power": 60}, "MDF 6mm": {"speed": 8, "power": 0}}
+    vals = laser.material_values({"MDF 3mm": 7, "MDF 6mm": 5}, cfg,
+                                 {"on": True, "color": 1, "speed": 300, "power": 15}, PALETTE)
+    assert vals == {0: (20.0, 60.0), 2: (300.0, 15.0)}          # 6 mm sem potência: não mexe
+    vals = laser.material_values({"MDF 3mm": 3}, {"MDF 3mm": {"speed": 5, "power": 70}}, None, PALETTE)
+    assert vals == {3: (5.0, 70.0)}
+
+
+def test_numeros_no_canto_das_pecas(tmp_path):
+    from app.core.dxf_export import export_all_sheets, LABEL_LAYER
+    from shapely.geometry import Point
+    parts = [_mpart("a", "MDF 3mm", tag="10"), _mpart("b", "MDF 3mm", tag="11"), _mpart("c", "MDF 3mm", size=3)]
+    pls = [Placement("a", 0, 0, 50, 50, 0, False), Placement("b", 0, 0, 120, 50, 0, False),
+           Placement("c", 0, 0, 200, 50, 0, False)]
+    params = NestParams(sheet_width=300, sheet_height=200, margin=0, spacing=2)
+    stats = {}
+    out = export_all_sheets(parts, pls, params, str(tmp_path), "t", stats=stats,
+                            color_map=laser.material_color_map(parts, {"MDF 3mm": 5}),
+                            part_labels={"a": "1", "b": "2", "c": "3"}, label_aci=1, label_height=3)
+    assert stats["labels"] == 2 and stats["labels_skipped"] == 1   # a peça de 3 mm não cabe número
+    msp = ezdxf.readfile(out).modelspace()
+    nums = [e for e in msp if e.dxf.layer == LABEL_LAYER]
+    assert nums and all(e.dxf.color in (1, 256) for e in nums)
+    cuts = [e for e in msp if e.dxf.layer != LABEL_LAYER and e.dxf.layer.upper() not in ("CONTORNO", "PLACAS")]
+    assert cuts and all(e.dxf.color == 5 for e in cuts if e.dxf.color != 256)
+    # todos os pontos dos números ficam dentro das peças a ou b
+    xs = [p[0] for e in nums if e.dxftype() == "LWPOLYLINE" for p in e.get_points()] + \
+         [v for e in nums if e.dxftype() == "LINE" for v in (e.dxf.start.x, e.dxf.end.x)]
+    assert xs and all(30 <= x <= 140 for x in xs)
+
+
+def test_painel_por_material_e_numeros_do_lote(tmp_path, monkeypatch):
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit, QMessageBox
+    QApplication.instance() or QApplication([])
+    from app.ui.dialogs import settings
+    from app.ui.main_window import MainWindow
+    from app.core.dxf_export import LABEL_LAYER
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: 0)
+    for k in ("laser/materials", "laser/numbers", "laser/params", "laser/material_mode"):
+        settings().remove(k)
+    w = MainWindow(workers=0)
+    w.parts = [_mpart("A1", "MDF 3mm", (7, 1), tag="8787"), _mpart("A2", "MDF 6mm", tag="8787"),
+               _mpart("B1", "MDF 3mm", tag="8790")]
+    w.pmap = {p.id: p for p in w.parts}
+    w.request_info = {"batch": True, "materials": ["MDF 3mm", "MDF 6mm"],
+                      "requests": [{"code": "8787", "nome": "Aluno A"}, {"code": "8790", "nome": "Aluno B"}]}
+    w._refresh_cut_panel()
+    sp = w.settings_panel
+    edits = [e for e in sp.laser_box.findChildren(QLineEdit) if e.objectName() != "qt_spinbox_lineedit"]
+    assert len(edits) == 6                                   # 3 mm, 6 mm e números (vel + pot cada)
+    QTest.keyClicks(edits[0], "20")
+    QTest.keyClicks(edits[1], "60")
+    QTest.keyClicks(edits[4], "300")
+    QTest.keyClicks(edits[5], "15")
+    assert w.material_cfg()["MDF 3mm"] == {"color": 7, "speed": 20.0, "power": 60.0}
+    assert w.numbers_cfg()["speed"] == 300 and w.numbers_cfg()["power"] == 15
+    assert w._material_colors() == {"MDF 3mm": 7, "MDF 6mm": 5}
+    assert w._part_labels() == {"A1": "1", "A2": "1", "B1": "2"}
+    combos = [c for c in sp.laser_box.findChildren(QComboBox)]
+    combos[1].setCurrentIndex(combos[1].findData(3))        # 6 mm em verde
+    assert w._material_colors()["MDF 6mm"] == 3
+    w.placements = [Placement("A1", 0, 0, 50, 50, 0), Placement("A2", 0, 1, 50, 50, 0),
+                    Placement("B1", 0, 0, 120, 50, 0)]
+    w.n_sheets = 2
+    _, cmap, vals = w._material_plan()
+    assert cmap[("MDF 3mm", 1)] == 7 and cmap[("MDF 6mm", 7)] == 3
+    assert vals[0] == (20.0, 60.0) and vals[2] == (300.0, 15.0)
+    lines = w._laser_report_lines()
+    assert any("1 = nº 8787 Aluno A" in x and "2 = nº 8790 Aluno B" in x for x in lines)
+    settings().setValue("export/last_dir", str(tmp_path))
+    settings().setValue("export/open_rdworks", "false")
+    w.files = [str(tmp_path / "x.dxf")]
+    w.export()
+    dxf = next(tmp_path.glob("*_todas_placas.dxf"))
+    msp = ezdxf.readfile(str(dxf)).modelspace()
+    assert any(e.dxf.layer == LABEL_LAYER for e in msp)
+    for k in ("laser/materials", "laser/numbers"):
+        settings().remove(k)
     w.dirty = False
     w.close()

@@ -180,6 +180,10 @@ class ExportMixin:
             idx = self.sheet_index()
             only = {si for si in idx.ordered if idx.number[si] == sheet_no}
         groups = self._laser_plan(only)
+        cmap, rd_values, labels, numbers = laser.color_map(groups), None, {}, self.numbers_cfg()
+        if self.material_mode():
+            _, cmap, rd_values = self._material_plan()
+            labels = self._part_labels()
         export_stats: dict = {}
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
@@ -187,8 +191,10 @@ class ExportMixin:
             with tempfile.TemporaryDirectory(prefix=".sindri-export-", dir=o["folder"]) as stage:
                 dxf = export_all_sheets(self.parts, self.placements, p, stage, o["base"], o["version"],
                                         sheet_outline=o["outline"], inner_first=o["inner"], sort_path=o["path"],
-                                        color_map=laser.color_map(groups), only_sheets=only,
-                                        file_suffix=suffix, stats=export_stats)
+                                        color_map=cmap, only_sheets=only,
+                                        file_suffix=suffix, stats=export_stats,
+                                        part_labels=labels or None, label_aci=int(numbers["color"]),
+                                        label_height=float(numbers.get("height") or 3.0))
                 sources = [dxf]
                 if only is None:                     # relatório só na exportação completa
                     res = NestResult(self.placements, self.n_sheets, self._utilization(), 0.0, self.unplaced)
@@ -217,7 +223,10 @@ class ExportMixin:
             return
         QApplication.restoreOverrideCursor()
         self._redraw(keep_view=True)
-        opened = self._open_in_rdworks(files, groups) if o.get("open_rdworks") else ""
+        if rd_values is not None:
+            opened = self._open_in_rdworks(files, [], rd_values) if o.get("open_rdworks") else ""
+        else:
+            opened = self._open_in_rdworks(files, groups) if o.get("open_rdworks") else ""
         from urllib.parse import quote
         links = (f' · <a href="open:{quote(o["folder"])}">Abrir pasta</a>'
                  + (f' · <a href="open:{quote(pdf)}">Abrir relatório</a>' if pdf else "")
@@ -228,6 +237,12 @@ class ExportMixin:
         if export_stats.get("overlaps"):
             txt += (f"<br>{export_stats['overlaps']} linha(s) repetida(s) ou sobreposta(s) removida(s) — "
                     "o laser passa uma vez só em cada trecho.")
+        if labels:
+            n_ok, n_skip = export_stats.get("labels", 0), export_stats.get("labels_skipped", 0)
+            txt += (f"<br>Nº da solicitação gravado em {n_ok} peça(s), em "
+                    f"{laser.color_name(int(numbers['color'])).lower()}"
+                    + (f" ({n_skip} pequena(s) demais ficaram sem número)" if n_skip else "")
+                    + ". No RDWorks deixe a camada dos números <b>antes</b> das de corte.")
         if opened:
             txt += "<br>" + opened.replace("\n", "<br>")
         if o["outline"]:
@@ -255,6 +270,99 @@ class ExportMixin:
             v.pop(key, None)
         settings().setValue("laser/params", json.dumps(v, ensure_ascii=False))
 
+    # ---- uma cor por material + nº das solicitações
+    def _json_setting(self, key: str, default):
+        import json
+        try:
+            v = json.loads(settings().value(key, "") or "null")
+        except ValueError:
+            v = None
+        return v if isinstance(v, type(default)) else default
+
+    def material_mode(self) -> bool:
+        return str(settings().value("laser/material_mode", "true")).lower() == "true"
+
+    def set_material_mode(self, on: bool):
+        settings().setValue("laser/material_mode", "true" if on else "false")
+        self._refresh_laser_panel(force=True)
+
+    def material_cfg(self) -> dict:
+        """{material: {"color", "speed", "power"}} lembrados entre usos."""
+        return self._json_setting("laser/materials", {})
+
+    def numbers_cfg(self) -> dict:
+        return {**laser.NUMBERS_DEFAULT, **self._json_setting("laser/numbers", {})}
+
+    def set_material_value(self, material: str, data: dict):
+        import json
+        cfg = self.material_cfg()
+        old = (cfg.get(material) or {}).get("color")
+        cur = self._material_colors().get(material)
+        cfg[material] = {"color": int(data.get("color", cur or 7)),
+                         "speed": round(float(data.get("speed") or 0), 2),
+                         "power": round(float(data.get("power") or 0), 1)}
+        settings().setValue("laser/materials", json.dumps(cfg, ensure_ascii=False))
+        if cfg[material]["color"] != (old if old is not None else cur):
+            self._refresh_laser_panel(force=True)    # outra cor: os outros materiais podem mudar
+
+    def set_numbers_value(self, data: dict):
+        import json
+        old = self.numbers_cfg()
+        new = {**old, **data}
+        settings().setValue("laser/numbers", json.dumps(new))
+        if (new["on"], new["color"]) != (old["on"], old["color"]):
+            self._refresh_laser_panel(force=True)
+
+    def _materials_in_use(self) -> list[str]:
+        order = [m for m, _ in self.sheet_index().groups] if self.placements else []
+        for pt in self.parts:
+            m = pt.material or ""
+            if pt.quantity > 0 and m not in order:
+                order.append(m)
+        return [m for m in order if any((pt.material or "") == m and pt.quantity > 0 for pt in self.parts)]
+
+    def _material_colors(self) -> dict[str, int]:
+        n = self.numbers_cfg()
+        return laser.default_material_colors(self._materials_in_use(), self.material_cfg(),
+                                             int(n["color"]) if n.get("on") and self.request_info else -1)
+
+    def _refresh_laser_panel(self, force: bool = False):
+        from ...core.laser import groups_from_parts
+        self.settings_panel.set_laser_state(groups_from_parts(self.parts), self.laser_values(),
+                                            self.material_mode(), self._material_colors(), self.material_cfg(),
+                                            self.numbers_cfg(), bool(self.request_info), force=force)
+
+    def _request_numbers(self) -> list[tuple[str, dict]]:
+        """[(nº da solicitação, dados)] na ordem do lote: a 1ª leva o número 1, a 2ª o 2…"""
+        i = self.request_info
+        if not i:
+            return []
+        reqs = list(i.get("requests", [])) if i.get("batch") else [i]
+        return [(str(r.get("code", "")), r) for r in reqs]
+
+    def _part_labels(self) -> dict[str, str]:
+        """id da peça -> número gravado nela (só peças de solicitações do portal)."""
+        if not self.material_mode() or not self.numbers_cfg().get("on"):
+            return {}
+        reqs = self._request_numbers()
+        if not reqs:
+            return {}
+        num = {code: str(k + 1) for k, (code, _) in enumerate(reqs)}
+        out = {}
+        for pt in self.parts:
+            if pt.tag and pt.tag in num:
+                out[pt.id] = num[pt.tag]
+            elif len(reqs) == 1:                     # solicitação única: todas as peças são dela
+                out[pt.id] = "1"
+        return out
+
+    def _numbers_legend(self) -> list[str]:
+        if not self._part_labels():
+            return []
+        return ["Números gravados nas peças: " + "  ·  ".join(
+            f"{k + 1} = nº {code}" + (f" {r.get('nome', '')}" if r.get("nome") else "")
+            for k, (code, r) in enumerate(self._request_numbers()))]
+
     def _laser_palette(self):
         exe = find_rdworks(settings().value("rdworks/exe", "") or None)
         return laser.read_palette(exe) if exe else None
@@ -266,7 +374,29 @@ class ExportMixin:
         order = [m for m, _ in self.sheet_index().groups]
         return laser.plan_layers(groups, self._laser_palette(), order)
 
+    def _material_plan(self) -> tuple[dict, dict, dict]:
+        """(cores por material, color_map do DXF, {camada do RDWorks: (vel, pot)})."""
+        colors = self._material_colors()
+        placed = {pl.part_id for pl in self.placements}
+        cmap = laser.material_color_map((pt for pt in self.parts if pt.id in placed), colors)
+        n = self.numbers_cfg() if self._part_labels() else None
+        values = laser.material_values(colors, self.material_cfg(), n, self._laser_palette())
+        return colors, cmap, values
+
     def _laser_report_lines(self) -> list[str]:
+        if self.material_mode():
+            cfg, lines = self.material_cfg(), []
+            for m, aci in self._material_colors().items():
+                c = cfg.get(m) or {}
+                v = (f"{float(c['speed']):g} mm/s · {float(c['power']):g}%"
+                     if float(c.get("speed") or 0) > 0 and float(c.get("power") or 0) > 0 else "valores do RDWorks")
+                lines.append(f"Laser · {m or 'sem material'} · corte em {laser.color_name(aci).lower()}: {v}")
+            if self._part_labels():
+                n = self.numbers_cfg()
+                v = (f"{float(n['speed']):g} mm/s · {float(n['power']):g}%"
+                     if float(n.get("speed") or 0) > 0 and float(n.get("power") or 0) > 0 else "valores do RDWorks")
+                lines.append(f"Laser · números em {laser.color_name(int(n['color'])).lower()}: {v}")
+            return lines + self._numbers_legend()
         vals = self.laser_values()
         lines = []
         for g in self._laser_plan():
@@ -358,6 +488,8 @@ class ExportMixin:
             msg += "\nVelocidade/potência preenchidas no RDWorks: " + "; ".join(
                 f"{g.material or 'sem material'} {self.laser_values()[g.key][0]:g} mm/s "
                 f"{self.laser_values()[g.key][1]:g}%" for g in applied) + "."
+        elif values:
+            msg += f"\nVelocidade/potência preenchidas no RDWorks em {len(values)} camada(s)."
         return msg
 
     def _report_header(self) -> list[str]:

@@ -21,6 +21,7 @@ from .models import NestParams, Part, Placement, Prim
 
 VERSIONS = {"R12": "R12", "R2000": "R2000"}
 PLATE_LAYER = "PLACA"
+LABEL_LAYER = "NUMEROS"      # nº da solicitação gravado em cada peça
 
 
 def placed_prims(part: Part, pl: Placement, dx: float = 0.0, inner_first: bool = True) -> list[Prim]:
@@ -267,6 +268,33 @@ def _stroke_text(msp, text: str, x: float, y: float, height: float, layer: str, 
         cx += sx + height * 0.3
 
 
+def text_size(text: str, height: float) -> tuple[float, float]:
+    """Largura × altura do texto escrito por _stroke_text."""
+    n = len(text)
+    return (n * height * 0.55 + max(0, n - 1) * height * 0.3, height)
+
+
+def label_spot(solid, text: str, height: float, margin: float = 0.8, min_height: float = 1.5):
+    """Lugar para gravar ``text`` dentro da peça já posicionada, o mais perto possível do canto
+    inferior esquerdo, sem encostar nas bordas nem nos furos. Devolve (x, y, altura) do canto
+    inferior esquerdo do texto, ou None se a peça for pequena demais."""
+    from shapely.geometry import Point
+    from shapely.ops import nearest_points
+    if solid is None or solid.is_empty:
+        return None
+    x0, y0, _, _ = solid.bounds
+    h = float(height)
+    while h >= min_height - 1e-9:
+        w, hh = text_size(text, h)
+        r = 0.5 * (w * w + hh * hh) ** 0.5 + margin
+        inner = solid.buffer(-r)
+        if not inner.is_empty:
+            c = nearest_points(inner, Point(x0, y0))[0]
+            return (c.x - w / 2, c.y - hh / 2, h)
+        h *= 0.75
+    return None
+
+
 def material_tag(material: str) -> str:
     """'MDF 3mm' -> 'MDF3mm' (para nomes de arquivo)."""
     import re
@@ -337,7 +365,9 @@ def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Plac
                       sheet_outline: bool = False, inner_first: bool = True, sort_path: bool = True,
                       gap: float = 20.0, color_map: Optional[dict] = None,
                       only_sheets: Optional[set] = None, file_suffix: str = "_todas_placas",
-                      remove_overlap: bool = True, stats: Optional[dict] = None) -> str:
+                      remove_overlap: bool = True, stats: Optional[dict] = None,
+                      part_labels: Optional[dict] = None, label_aci: int = 1,
+                      label_height: float = 3.0) -> str:
     """Um arquivo só (<nome>_todas_placas.dxf) com TODAS as placas de todos os materiais lado a lado,
     na mesma ordem do relatório (materiais separados por um espaço maior). É o que abre no RDWorks.
     ``color_map``: {(material, cor ACI original): cor ACI a gravar} — separa materiais em camadas.
@@ -350,6 +380,7 @@ def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Plac
     from .sheets import SheetIndex
     idx = SheetIndex(pmap, placements)
     first = True
+    solid_cache: dict = {}
     for mat, sis in idx.groups:
         sis = [si for si in sis if only_sheets is None or si in only_sheets]
         if not sis:
@@ -377,6 +408,27 @@ def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Plac
                         if target:
                             pr.color, pr.rgb = target, None
                     sheet_prims.append(pr)
+            if part_labels:
+                # números primeiro: gravar antes de cortar (a peça solta pode se mexer)
+                from .validate import fine_solid, placed_geometry
+                if LABEL_LAYER not in doc.layers:
+                    doc.layers.add(LABEL_LAYER, color=label_aci)
+                for pl in seq:
+                    text = part_labels.get(pl.part_id)
+                    if not text:
+                        continue
+                    if pl.part_id not in solid_cache:
+                        solid_cache[pl.part_id] = fine_solid(pmap[pl.part_id])
+                    g = placed_geometry(solid_cache[pl.part_id], pl)
+                    from shapely import affinity
+                    spot = label_spot(affinity.translate(g, dx, 0), text, label_height)
+                    if spot is None:
+                        if stats is not None:
+                            stats["labels_skipped"] = stats.get("labels_skipped", 0) + 1
+                        continue
+                    _stroke_text(msp, text, spot[0], spot[1], spot[2], LABEL_LAYER, label_aci)
+                    if stats is not None:
+                        stats["labels"] = stats.get("labels", 0) + 1
             if remove_overlap:
                 from .overlap import remove_overlaps
                 sheet_prims, n_rm = remove_overlaps(sheet_prims)

@@ -217,6 +217,9 @@ class UIBuildMixin:
         self.settings_panel.paramsChanged.connect(self._params_debounced)
         self.settings_panel.reimportNeeded.connect(self.reimport)
         self.settings_panel.laserChanged.connect(self.set_laser_value)
+        self.settings_panel.materialModeChanged.connect(self.set_material_mode)
+        self.settings_panel.materialChanged.connect(self.set_material_value)
+        self.settings_panel.numbersChanged.connect(self.set_numbers_value)
 
         split = QSplitter(Qt.Horizontal)
         self.split = split
