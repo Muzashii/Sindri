@@ -482,6 +482,8 @@ class PartsPanel(QWidget):
         self._update_empty()
         self.update_summary(too_big=too_big)
         self.refresh_icons()
+        from .nowheel import protect
+        protect(self)
 
     def set_quantity(self, pid: str, q: int):
         for r in self.rows:

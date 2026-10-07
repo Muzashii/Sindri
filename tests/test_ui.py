@@ -211,11 +211,14 @@ def test_roda_do_mouse_nao_muda_campos(app):
     w = MainWindow(workers=0)
     w.show()
     sp = w.settings_panel
-    before = (sp.w.value(), sp.rot.currentIndex(), sp.spacing.value())
-    for widget in (sp.w, sp.rot, sp.spacing):
+    w.load_files([fx("simples.dxf")])
+    from PySide6.QtWidgets import QSpinBox
+    row_spin = w.parts_panel.findChildren(QSpinBox)[0]          # quantidade de uma peça na lista
+    before = (sp.w.value(), sp.rot.currentIndex(), sp.spacing.value(), row_spin.value())
+    for widget in (sp.w, sp.rot, sp.spacing, row_spin):
         ev = QWheelEvent(QPointF(5, 5), QPointF(widget.mapToGlobal(QPoint(5, 5))), QPoint(0, 0), QPoint(0, 120),
                          Qt.NoButton, Qt.NoModifier, Qt.NoScrollPhase, False)
         QApplication.sendEvent(widget, ev)
-    assert (sp.w.value(), sp.rot.currentIndex(), sp.spacing.value()) == before
+    assert (sp.w.value(), sp.rot.currentIndex(), sp.spacing.value(), row_spin.value()) == before
     w.dirty = False
     w.close()

@@ -39,6 +39,11 @@ def save_presets(presets: list[dict]):
 
 
 class PresetsDialog(QDialog):
+    def showEvent(self, e):
+        super().showEvent(e)
+        from .nowheel import protect
+        protect(self)                    # roda do mouse não muda os campos
+
     def __init__(self, presets: list[dict], current_w: float, current_h: float, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Placas salvas")
@@ -96,6 +101,11 @@ class PresetsDialog(QDialog):
 
 
 class ExportDialog(QDialog):
+    def showEvent(self, e):
+        super().showEvent(e)
+        from .nowheel import protect
+        protect(self)                    # roda do mouse não muda os campos
+
     def __init__(self, folder: str, base: str, n_sheets: int, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Exportar para RDWorks")
