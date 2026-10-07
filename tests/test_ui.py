@@ -200,3 +200,22 @@ def test_filtro_por_solicitacao(app, tmp_path, monkeypatch):
                                              for i in range(len(w.parts_panel.rows)))
     w.dirty = False
     w.close()
+
+
+def test_roda_do_mouse_nao_muda_campos(app):
+    """A roda passa por cima dos campos sem mudar valores (só rola o painel)."""
+    from PySide6.QtCore import QPoint, QPointF, Qt
+    from PySide6.QtGui import QWheelEvent
+    from PySide6.QtWidgets import QApplication
+    from app.ui.main_window import MainWindow
+    w = MainWindow(workers=0)
+    w.show()
+    sp = w.settings_panel
+    before = (sp.w.value(), sp.rot.currentIndex(), sp.spacing.value())
+    for widget in (sp.w, sp.rot, sp.spacing):
+        ev = QWheelEvent(QPointF(5, 5), QPointF(widget.mapToGlobal(QPoint(5, 5))), QPoint(0, 0), QPoint(0, 120),
+                         Qt.NoButton, Qt.NoModifier, Qt.NoScrollPhase, False)
+        QApplication.sendEvent(widget, ev)
+    assert (sp.w.value(), sp.rot.currentIndex(), sp.spacing.value()) == before
+    w.dirty = False
+    w.close()

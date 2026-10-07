@@ -7,7 +7,7 @@ import json
 from typing import Optional
 
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QMainWindow, QMessageBox
+from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox
 
 from ..core.collision import CollisionChecker
 from ..core.models import ImportReport, NestParams, Part, Placement
@@ -64,6 +64,8 @@ class MainWindow(UIBuildMixin, FilesMixin, ProjectMixin, NestingMixin, EditingMi
         self.evaluated = 0
         self._layout_shown_once = False
 
+        from .nowheel import install as _no_wheel
+        _no_wheel(QApplication.instance())          # roda do mouse não muda valores dos campos
         self._build_ui()
         self._build_actions()
         params = NestParams()
