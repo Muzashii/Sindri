@@ -18,8 +18,7 @@ class ChecklistMixin:
         self.parts_panel.set_done(self.done_parts, per_part)
         if self.request_info:
             self.parts_panel.set_request(self.request_info, done_tags, per_tag)
-        from ...core.laser import groups_from_parts
-        self.settings_panel.set_laser_groups(groups_from_parts(self.parts), self.laser_values())
+        self._refresh_laser_panel()
         self.canvas.done_parts = self.done_parts
         if self.canvas.mode == "layout":
             for it in self.canvas.part_items:

@@ -125,6 +125,64 @@ def color_map(groups: list[LaserGroup]) -> dict[tuple, int]:
     return {(g.material, g.aci): g.target_aci for g in groups if g.target_aci != g.aci}
 
 
+# ------------------------------------------------------------ uma cor por material + números
+# cores que existem igualzinho no DXF (ACI) e na paleta do RDWorks: dá para mandar cada coisa para
+# uma camada certa do RDWorks
+COLOR_CHOICES = [("Preto", 7), ("Azul", 5), ("Vermelho", 1), ("Verde", 3), ("Amarelo", 2)]
+NUMBERS_DEFAULT = {"on": True, "color": 1, "height": 3.0, "speed": 0.0, "power": 0.0}
+
+
+def default_material_colors(materials: list[str], cfg: dict, numbers_color: int) -> dict[str, int]:
+    """Cor de cada material: a escolhida, ou a próxima livre (preto, azul, verde, amarelo…)."""
+    out: dict[str, int] = {}
+    used = {numbers_color}
+    for m in materials:
+        c = (cfg.get(m) or {}).get("color")
+        if c in [a for _, a in COLOR_CHOICES]:
+            out[m] = int(c)
+            used.add(int(c))
+    for m in materials:
+        if m in out:
+            continue
+        free = [a for _, a in COLOR_CHOICES if a not in used] or [a for _, a in COLOR_CHOICES]
+        out[m] = free[0]
+        used.add(free[0])
+    return out
+
+
+def material_color_map(parts: Iterable[Part], colors: dict[str, int]) -> dict[tuple, int]:
+    """(material, cor original) -> cor do material: todo o corte de um material numa cor só."""
+    cmap: dict[tuple, int] = {}
+    for part in parts:
+        target = colors.get(part.material or "")
+        if target is None:
+            continue
+        for p in part.prims:
+            if p.kind not in ("TEXT", "MTEXT"):
+                cmap[(part.material or "", export_aci(p))] = target
+    return cmap
+
+
+def material_values(colors: dict[str, int], cfg: dict, numbers: Optional[dict],
+                    palette: Optional[list] = None) -> dict[int, tuple]:
+    """{camada do RDWorks: (velocidade, potência)} dos materiais (e dos números) que têm valores."""
+    pal = palette or DEFAULT_PALETTE
+    out: dict[int, tuple] = {}
+    for m, aci in colors.items():
+        c = cfg.get(m) or {}
+        if float(c.get("speed") or 0) > 0 and float(c.get("power") or 0) > 0:
+            out[nearest_layer(aci_rgb(aci), pal)] = (float(c["speed"]), float(c["power"]))
+    if numbers and numbers.get("on") and float(numbers.get("speed") or 0) > 0 \
+            and float(numbers.get("power") or 0) > 0:
+        out[nearest_layer(aci_rgb(int(numbers["color"])), pal)] = (float(numbers["speed"]),
+                                                                   float(numbers["power"]))
+    return out
+
+
+def color_name(aci: int) -> str:
+    return next((n for n, a in COLOR_CHOICES if a == aci), f"cor {aci}")
+
+
 # --------------------------------------------------------------------------- arquivo do RDWorks
 @dataclass
 class LayerTable:

@@ -97,6 +97,9 @@ class SettingsPanel(QWidget):
     paramsChanged = Signal()
     reimportNeeded = Signal()
     laserChanged = Signal(str, float, float)      # "material|cor", velocidade, potência (0 = não definir)
+    materialModeChanged = Signal(bool)            # uma cor por material liga/desliga
+    materialChanged = Signal(str, dict)           # material, {"color", "speed", "power"}
+    numbersChanged = Signal(dict)                 # {"on", "color", "height", "speed", "power"}
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -165,6 +168,12 @@ class SettingsPanel(QWidget):
         tip.setObjectName("Muted")
         tip.setWordWrap(True)
         gv.addWidget(tip)
+        self.material_mode = QCheckBox("Uma cor por material (3 mm, 6 mm…)")
+        self.material_mode.setToolTip("Ligado: todos os cortes de um material saem numa cor só no DXF, e você\n"
+                                      "define velocidade/potência por material. Desligado: cada cor do\n"
+                                      "desenho do aluno vira uma camada separada.")
+        self.material_mode.toggled.connect(lambda on: self.materialModeChanged.emit(bool(on)))
+        gv.addWidget(self.material_mode)
         self.laser_rows = QVBoxLayout()
         self.laser_rows.setSpacing(8)
         gv.addLayout(self.laser_rows)
@@ -312,17 +321,148 @@ class SettingsPanel(QWidget):
         self.layers_label.setVisible(self.layers.count() > 0)
         self._filling = False
 
+    def _clear_laser_rows(self):
+        while self.laser_rows.count():
+            w = self.laser_rows.takeAt(0).widget()
+            if w:
+                w.setParent(None)
+                w.deleteLater()
+
+    @staticmethod
+    def _swatch(aci: int) -> QPixmap:
+        pm = QPixmap(14, 14)
+        pm.fill(Qt.transparent)
+        pa = QPainter(pm)
+        pa.setRenderHint(QPainter.Antialiasing)
+        pa.setBrush(QColor(*aci_to_rgb(int(aci))))
+        pa.setPen(QColor(120, 120, 120))
+        pa.drawEllipse(1, 1, 12, 12)
+        pa.end()
+        return pm
+
+    def _color_combo(self, current: int, tip: str) -> QComboBox:
+        from ..core.laser import COLOR_CHOICES
+        cb = QComboBox()
+        for name, aci in COLOR_CHOICES:
+            cb.addItem(QIcon(self._swatch(aci)), name, aci)
+        i = cb.findData(int(current))
+        cb.setCurrentIndex(max(0, i))
+        cb.setToolTip(tip)
+        return cb
+
+    def set_laser_state(self, groups: list, values: dict, mode: bool, colors: dict, mat_cfg: dict,
+                        numbers: dict, has_requests: bool, force: bool = False):
+        """Cartão do laser. ``mode`` ligado: uma linha por material (cor, velocidade, potência) e,
+        se houver solicitações do portal, a linha dos números gravados. Desligado: uma linha por
+        camada (material × cor), como antes."""
+        self.material_mode.blockSignals(True)
+        self.material_mode.setChecked(bool(mode))
+        self.material_mode.blockSignals(False)
+        if not mode:
+            if force:
+                self._laser_keys = []
+            self.set_laser_groups(groups, values)
+            return
+        key = ["mat", has_requests] + [f"{m}={c}" for m, c in colors.items()] + [numbers.get("color")]
+        if key == self._laser_keys and not force:
+            return
+        self._laser_keys = key
+        self._clear_laser_rows()
+        tip_color = ("Cor do corte deste material no DXF. Cada cor vira uma camada no RDWorks — "
+                     "por isso cada material precisa de uma cor diferente.")
+        for m, aci in colors.items():
+            cfg = mat_cfg.get(m) or {}
+            row = QWidget()
+            v = QVBoxLayout(row)
+            v.setContentsMargins(0, 0, 0, 0)
+            v.setSpacing(3)
+            head = QHBoxLayout()
+            head.setSpacing(6)
+            name = QLabel(f"<b>{m or 'Sem material'}</b> · corte")
+            name.setWordWrap(True)
+            head.addWidget(name, 1)
+            cb = self._color_combo(aci, tip_color)
+            head.addWidget(cb)
+            v.addLayout(head)
+            vals = QHBoxLayout()
+            vals.setSpacing(6)
+            sp = _num_edit("velocidade (mm/s)", 2000, float(cfg.get("speed") or 0),
+                           "Velocidade do corte deste material, em mm/s. Em branco = não mexer no RDWorks.")
+            pw = _num_edit("potência (%)", 100, float(cfg.get("power") or 0),
+                           "Potência do corte deste material, em % (mínima = máxima). Em branco = não mexer.")
+
+            def emit(*_, mat=m, c=cb, a=sp, b=pw):
+                self.materialChanged.emit(mat, {"color": int(c.currentData()), "speed": _num(a, 2000),
+                                                "power": _num(b, 100)})
+            sp.textChanged.connect(emit)
+            pw.textChanged.connect(emit)
+            cb.currentIndexChanged.connect(emit)
+            vals.addWidget(sp, 1)
+            vals.addWidget(pw, 1)
+            v.addLayout(vals)
+            self.laser_rows.addWidget(row)
+        if has_requests:
+            row = QWidget()
+            v = QVBoxLayout(row)
+            v.setContentsMargins(0, 0, 0, 0)
+            v.setSpacing(3)
+            head = QHBoxLayout()
+            head.setSpacing(6)
+            on = QCheckBox("Gravar nº da solicitação")
+            on.setChecked(bool(numbers.get("on")))
+            on.setToolTip("Grava um número pequeno no canto de cada peça: todas as peças do 1º aluno do\n"
+                          "lote levam 1, as do 2º levam 2… A legenda sai no relatório.")
+            head.addWidget(on, 1)
+            cb = self._color_combo(int(numbers.get("color", 1)),
+                                   "Cor dos números no DXF (uma camada própria no RDWorks, de gravação).")
+            head.addWidget(cb)
+            v.addLayout(head)
+            vals = QHBoxLayout()
+            vals.setSpacing(6)
+            hs = _dspin(1.5, 20, 0.5, 1, " mm", "Altura dos números. Em peças pequenas o Sindri diminui até caber.")
+            hs.setValue(float(numbers.get("height") or 3.0))
+            sp = _num_edit("velocidade (mm/s)", 2000, float(numbers.get("speed") or 0),
+                           "Velocidade da gravação dos números, em mm/s. Em branco = não mexer.")
+            pw = _num_edit("potência (%)", 100, float(numbers.get("power") or 0),
+                           "Potência da gravação dos números, em %. Em branco = não mexer.")
+
+            def emit_n(*_, o=on, c=cb, h=hs, a=sp, b=pw):
+                for w in (c, h, a, b):
+                    w.setEnabled(o.isChecked())
+                self.numbersChanged.emit({"on": o.isChecked(), "color": int(c.currentData()),
+                                          "height": float(h.value()), "speed": _num(a, 2000),
+                                          "power": _num(b, 100)})
+            for w in (cb, hs, sp, pw):
+                w.setEnabled(on.isChecked())
+            on.toggled.connect(emit_n)
+            cb.currentIndexChanged.connect(emit_n)
+            hs.valueChanged.connect(emit_n)
+            sp.textChanged.connect(emit_n)
+            pw.textChanged.connect(emit_n)
+            vals.addWidget(hs, 1)
+            vals.addWidget(sp, 1)
+            vals.addWidget(pw, 1)
+            v.addLayout(vals)
+            self.laser_rows.addWidget(row)
+        used = list(colors.values()) + ([int(numbers.get("color", 1))]
+                                        if has_requests and numbers.get("on") else [])
+        if len(used) != len(set(used)):
+            warn = QLabel("⚠ Duas camadas com a mesma cor: no RDWorks elas ficariam juntas "
+                          "(mesma velocidade e potência). Escolha cores diferentes.")
+            warn.setWordWrap(True)
+            warn.setStyleSheet("color:#d97706;")
+            self.laser_rows.addWidget(warn)
+        self.laser_box.setVisible(bool(colors))
+        from .nowheel import protect
+        protect(self.laser_box)
+
     def set_laser_groups(self, groups: list, values: dict):
         """Uma linha por camada (material × cor): cor, nome, velocidade e potência."""
         keys = [g.key for g in groups]
         if keys == self._laser_keys:
             return
         self._laser_keys = keys
-        while self.laser_rows.count():
-            w = self.laser_rows.takeAt(0).widget()
-            if w:
-                w.setParent(None)
-                w.deleteLater()
+        self._clear_laser_rows()
         for g in groups:
             row = QWidget()
             v = QVBoxLayout(row)
