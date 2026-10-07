@@ -13,6 +13,7 @@ from ..core.collision import CollisionChecker
 from ..core.models import ImportReport, NestParams, Part, Placement
 from ..workers.nest_worker import NestWorker
 from .dialogs import settings
+from .mainwindow.boxes import BoxMixin
 from .mainwindow.checklist import ChecklistMixin
 from .mainwindow.common import APP_NAME
 from .mainwindow.editing import EditingMixin
@@ -26,7 +27,7 @@ from .mainwindow.ui_build import UIBuildMixin
 
 
 class MainWindow(UIBuildMixin, FilesMixin, ProjectMixin, NestingMixin, EditingMixin, ChecklistMixin,
-                 StatusMixin, ExportMixin, UpdatesMixin, QMainWindow):
+                 StatusMixin, ExportMixin, UpdatesMixin, BoxMixin, QMainWindow):
     def __init__(self, workers: Optional[int] = None):
         super().__init__()
         self.setWindowTitle(APP_NAME)

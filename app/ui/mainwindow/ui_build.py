@@ -43,6 +43,7 @@ class UIBuildMixin:
         mark.setPixmap(app_icon().pixmap(30, 30))
         logo = QLabel("Sindri")
         logo.setObjectName("Logo")
+        self.logo_lbl = logo
         tl.addWidget(mark)
         tl.addWidget(logo)
         tl.addSpacing(10)
@@ -51,8 +52,12 @@ class UIBuildMixin:
         self.mode_tabs.setDrawBase(False)
         self.mode_tabs.addTab("Encaixe")
         self.mode_tabs.addTab("Gravação de foto")
+        self.mode_tabs.addTab("Caixa")
         self.mode_tabs.setTabToolTip(0, "Encaixar peças DXF nas placas")
         self.mode_tabs.setTabToolTip(1, "Transformar uma foto em linhas com potências diferentes")
+        self.mode_tabs.setTabToolTip(2, "Gerar uma caixa com encaixe de dentes, divisórias e tampa")
+        self.mode_tabs.setUsesScrollButtons(False)       # as 3 abas sempre inteiras (nunca "· ·")
+        self.mode_tabs.setElideMode(Qt.ElideNone)
         self.mode_tabs.currentChanged.connect(self.set_mode)
         tl.addWidget(self.mode_tabs)
         tl.addWidget(self._vsep())
@@ -238,6 +243,12 @@ class UIBuildMixin:
         self.mode_stack = QStackedWidget()
         self.mode_stack.addWidget(split)
         self.mode_stack.addWidget(self.photo_panel)
+        from ..box_panel import BoxPanel
+        self.box_panel = BoxPanel()
+        self.box_panel.sendRequested.connect(self.send_box_to_nest)
+        self.box_panel.saveRequested.connect(self.save_box_dxf)
+        self.box_panel.msg.linkActivated.connect(self._banner_link)
+        self.mode_stack.addWidget(self.box_panel)
 
         root = QWidget()
         rl = QVBoxLayout(root)
@@ -467,6 +478,7 @@ class UIBuildMixin:
         act(m_view, "Tema claro/escuro", lambda: self.set_dark(not self.dark), "Ctrl+T")
         act(m_view, "Encaixe de peças", lambda: self.mode_tabs.setCurrentIndex(0), "Ctrl+1")
         act(m_view, "Gravação de foto", lambda: self.mode_tabs.setCurrentIndex(1), "Ctrl+2")
+        act(m_view, "Gerador de caixas", lambda: self.mode_tabs.setCurrentIndex(2), "Ctrl+3")
         self.a_params = act(m_view, "Painel de parâmetros", lambda: None, "Ctrl+P")
         self.a_params.setCheckable(True)
         self.a_params.setChecked(settings().value("ui/params_visible", "true") == "true")
@@ -492,7 +504,7 @@ class UIBuildMixin:
     def apply_width(self, w: int, force: bool = False):
         """Ajusta a janela à largura da tela: em telas menores (ou com zoom do Windows em 125–150%)
         os botões ficam só com ícone e os painéis laterais estreitam, sem cortar nada."""
-        compact, tiny = w < 1500, w < 1250
+        compact, tiny = w < 1600, w < 1250
         if not force and (compact, tiny) == getattr(self, "_width_mode", None):
             return
         self._width_mode = (compact, tiny)
@@ -502,10 +514,12 @@ class UIBuildMixin:
         self.preset_combo.setMinimumWidth(130 if tiny else (170 if compact else 230))
         self.plate_lbl.setVisible(not compact)
         self.btn_nest.setMinimumWidth(0 if compact else 130)
-        self.mode_tabs.setTabText(1, "Foto" if tiny else "Gravação de foto")
+        self.mode_tabs.setTabText(1, "Foto" if compact else "Gravação de foto")
+        self.logo_lbl.setVisible(not tiny)          # telas pequenas: só o ícone (sobra lugar para as 3 abas)
         self.parts_panel.setMinimumWidth(270)
         self.settings_panel.setMinimumWidth(290 if tiny else 300)
         self.photo_panel.set_compact(tiny)
+        self.box_panel.set_compact(tiny)
         self.status_hint.setText("F1 atalhos" if compact else
                                  "Roda: zoom  ·  botão do meio / Alt+arrastar: mover vista  ·  R girar  ·  "
                                  "L travar  ·  Del remover  ·  F1 atalhos")
@@ -523,7 +537,7 @@ class UIBuildMixin:
         self.split.setSizes([side_l, max(300, w - side_l - side_r), side_r])
 
     def set_mode(self, i: int):
-        """0 = encaixe de peças, 1 = gravação de foto."""
+        """0 = encaixe de peças, 1 = gravação de foto, 2 = gerador de caixas."""
         if self.mode_tabs.currentIndex() != i:
             self.mode_tabs.setCurrentIndex(i)
             return
@@ -544,6 +558,8 @@ class UIBuildMixin:
         self._redraw(keep_view=True)
         if getattr(self, "photo_panel", None) is not None:
             self.photo_panel.refresh_theme()
+        if getattr(self, "box_panel", None) is not None:
+            self.box_panel.refresh_theme()
 
     def toggle_params(self, on: bool):
         self.settings_panel.setVisible(on)
@@ -571,6 +587,7 @@ class UIBuildMixin:
             "N\tMostrar/ocultar nº nas peças\n"
             "Ctrl+P\tMostrar/ocultar parâmetros\n"
             "Ctrl+T\tTema claro/escuro\n"
+            "Ctrl+1 / 2 / 3\tEncaixe / Gravação de foto / Gerador de caixas\n"
             "Ctrl+A\tSelecionar todas as peças\n"
             "R\tGirar peça selecionada\n"
             "M\tEspelhar peça selecionada\n"

@@ -12,7 +12,7 @@ compacta possível nas placas e entrega um único DXF pronto para o **RDWorks**,
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
 ![PySide6](https://img.shields.io/badge/Qt-PySide6-41CD52?logo=qt&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows&logoColor=white)
-![Testes](https://img.shields.io/badge/testes-125%20pytest-success)
+![Testes](https://img.shields.io/badge/testes-152%20pytest-success)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-MIT-blue)
 
 [Como funciona](#-como-funciona) · [Recursos](#-recursos) · [Instalação](#-instalação-windows) ·
@@ -37,6 +37,7 @@ compacta possível nas placas e entrega um único DXF pronto para o **RDWorks**,
 | 🎨 **Quem é cada peça** | Cada solicitação ganha uma cor; clique numa delas para ver só as peças daquela pessoa |
 | ✅ **Checklist de corte** | Botão **Feito** em cada peça e caixinha por placa cortada, salvos junto com o projeto |
 | 📐 **DXF fiel ao original** | Arcos continuam arcos, camadas e cores preservadas, furos antes do contorno, R2000 ou R12 |
+| 📦 **Gerador de caixas** | Caixa com encaixe de dentes, divisórias e tampa em vista 3D; as peças vão direto para o encaixe |
 | ⚡ **Um clique até o laser** | `Ctrl+E` gera `todas_placas.dxf` + `relatorio.pdf` e abre o RDWorks com o arquivo |
 | 🔄 **Sempre atualizado** | Ao abrir, procura versão nova aqui no GitHub e se atualiza com backup |
 
@@ -184,6 +185,7 @@ também as versões mínimas das bibliotecas.
 | `Ctrl+E` | Exportar | `Ctrl+Z` / `Ctrl+Y` | Desfazer / refazer | `Alt+1…9` | Só a solicitação N |
 | `Ctrl+Shift+E` | Exportar com opções | `C` | Placa cortada → próxima | `Alt+0` | Todas as solicitações |
 | `Ctrl+Shift+Del` | Limpar tudo | `Esc` | Parar o encaixe | `F1` | Todos os atalhos |
+| | | | | `Ctrl+1/2/3` | Encaixe / Foto / Caixa |
 
 Roda do mouse = zoom · botão do meio (ou `Alt` + arrastar) = mover a vista.
 
@@ -223,6 +225,31 @@ transforma em **linhas horizontais com potências diferentes**, prontas para gra
 - **Velocidade e potência** do tom mais escuro e do mais claro; cada nível vira uma cor/camada no RDWorks
   (preto, azul, vermelho, verde, amarelo) e o Sindri preenche a potência de cada uma ao exportar.
 - A pré-visualização mostra como fica na madeira, com o número de traços e o tempo estimado.
+
+---
+
+## 📦 Gerador de caixas
+
+Na aba **Caixa** (topo da janela, ou `Ctrl+3`), monte uma caixa para cortar sem desenhar nada:
+
+<div align="center">
+<img src="docs/tela_caixa.png" alt="Sindri — gerador de caixas com divisórias e tampa solta" width="900">
+</div>
+
+- **Medidas** externas (tamanho final) ou internas (espaço útil), em mm.
+- **Encaixe de dentes** (*finger joint*): espessura do material, largura do dente (o Sindri ajusta para caber um
+  número ímpar em cada aresta) e **kerf** para um encaixe justo, sem cola.
+- **Tampa:** aberta, fechada (com dentes) ou **solta** — placa de cima + uma guia colada por baixo que encaixa na
+  boca da caixa, com furo para o dedo.
+- **Divisórias** em grade (2×2, 3×2…), cruzadas por meia-madeira e com dentes que entram em furos na base.
+- **Vista 3D** para girar e ver de qualquer lado, com o controle **Montagem** que separa as peças; a vista
+  **Peças para cortar** mostra exatamente o que vai para o laser.
+- **Enviar para o encaixe** grava o DXF em `Documentos\Sindri\Caixas\` e coloca as peças na aba Encaixe (com a
+  quantidade de caixas e o material), juntando ao que já estiver aberto se você quiser. **Salvar DXF…** grava só o
+  arquivo.
+
+Arcos e furos redondos saem como `CIRCLE`, os contornos como `LWPOLYLINE` fechada, em mm. Peças iguais (frente e
+fundo, as duas laterais) são agrupadas no encaixe.
 
 ---
 
@@ -290,6 +317,7 @@ app/
     placement.py        decodificador (posicionamento)
     optimizer.py        algoritmo genético paralelo
     sheets.py           índice das placas (numeração, material, andamento)
+    boxgen.py           gerador de caixas (dentes, divisórias, tampas, DXF)
     validate.py         verificação final com geometria fina
     collision.py        colisão para o ajuste manual
     dxf_export.py       DXF final (todas as placas + nº das placas)
@@ -302,7 +330,8 @@ app/
   ui/
     main_window.py      janela principal
     mainwindow/         ui_build, files, projects, nesting, editing,
-                        checklist, status, export, updates
+                        checklist, status, export, updates, boxes
+    box_panel.py        aba Caixa (controles, vista 3D, peças planificadas)
     canvas.py           desenho das placas e peças
     parts_panel.py      peças, placas cortadas e solicitações
     intranet.py         janela da intranet
@@ -327,9 +356,9 @@ pip install pytest pytest-cov
 python -m pytest --cov=app/core
 ```
 
-125 testes cobrem importação, geometria, NFP, posicionamento sem sobreposição, otimizador paralelo, exportação R12/R2000
-com reimportação, projetos, intranet (com página simulada), limpeza, atualização, CLI e um fluxo completo da interface
-em modo sem tela.
+152 testes cobrem importação, geometria, NFP, posicionamento sem sobreposição, otimizador paralelo, exportação R12/R2000
+com reimportação, projetos, intranet (com página simulada), limpeza, atualização, CLI, o gerador de caixas (montagem
+conferida em 3D, voxel a voxel, sem sobreposição nem buracos) e um fluxo completo da interface em modo sem tela.
 
 Os testes isolam preferências, salvamento automático, perfil de navegador e área de transferência.
 O wheel pode ser conferido fora da árvore fonte com `python tools/check_wheel.py docs/dist` após
@@ -348,6 +377,7 @@ Use `--permitir-parcial` quando quiser exportar as peças que couberam; o retorn
 - [ ] Comparar o aproveitamento com o encaixe manual de um arquivo real
 - [x] Gerar o `.exe` no Windows com `build_exe.bat` e verificar a inicialização ([registro](docs/COMPILACAO_WINDOWS.md))
 - [ ] Validar o fluxo completo de produção no executável
+- [ ] Cortar uma caixa do gerador em MDF 3 mm e ajustar o kerf padrão do laboratório
 
 ---
 

@@ -107,6 +107,23 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
 35. Caches de variantes/NFP/IFP e soluções avaliadas têm limite de entradas (4096); isso não equivale
     a um limite rígido de RAM. O benchmark em `tools/benchmark.py` registra uma base repetível.
 
+## Gerador de caixas
+36. Cada face é desenhada no tamanho externo; a faixa de largura = espessura de cada aresta compartilhada é
+    dividida em um número ímpar de trechos (≈ largura do dente), alternando dono. Os cubos dos cantos pertencem
+    à face de maior prioridade (base > tampa > frente/fundo > laterais), o que mantém as três faces de um canto
+    coerentes sem casos especiais. Um teste voxeliza a caixa montada e exige ocupação exatamente 1 nas paredes.
+37. Kerf: cada peça cresce kerf/2 para fora (junção em quina), estreitando rasgos e furos. As divisórias
+    descontam 2·kerf + folga no comprimento para não forçar as paredes.
+38. Divisórias: meia-madeira (A com rasgo de cima, B com rasgo de baixo) e um dente por vão entrando em furo
+    na base. Com tampa solta, ficam uma espessura abaixo da borda (a guia da tampa ocupa esse espaço).
+39. Com o nome gravado, peças idênticas recebem o mesmo texto ("Frente/Fundo", "Lateral") para continuarem
+    agrupadas no encaixe.
+40. Vista 3D em QPainter (sem OpenGL, para não pesar o .exe nem depender da placa de vídeo). A ordem de
+    desenho é topológica pelo eixo que separa as caixas delimitadoras de cada peça (calculada uma vez por
+    octante da câmera); as divisórias são divididas nos cruzamentos só para o desenho.
+41. "Enviar para o encaixe" grava o DXF em `Documentos/Sindri/Caixas` e usa o mesmo caminho de importação dos
+    DXFs comuns (multiplicador = nº de caixas, material = "MDF {espessura}mm" se não informado).
+
 ## Pendências conhecidas / a validar no laboratório
 - Testar R12 × R2000 no RDWorks real e manter como padrão o que importar melhor (hoje: R2000).
 - Comparar o aproveitamento com o encaixe manual de referência (critério de aceite 4) usando arquivos reais.
