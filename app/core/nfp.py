@@ -15,6 +15,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+import math
+
 import numpy as np
 import pyclipper
 from shapely.geometry import Polygon
@@ -55,7 +57,7 @@ DETAIL_LEVELS = {0: (0.0, 0.05), 1: (10.0, 0.2), 2: (20.0, 0.5)}
 # Contornos com muitos vértices (engrenagens, textos vetorizados) deixam o NFP lentíssimo: no modo
 # "Preciso" uma engrenagem de 800 vértices levava ~40 s só para a 1ª solução (agora ~3 s). Acima deste número a
 # simplificação aumenta (até MAX_SIMPLIFY_MM) e a folga da peça cresce junto, então continua seguro.
-MAX_OUTLINE_VERTICES = 150
+MAX_OUTLINE_VERTICES = 100
 MAX_SIMPLIFY_MM = 0.4
 
 
@@ -68,12 +70,17 @@ def _close(poly: Polygon, r: float) -> Polygon:
     if r <= 0:
         return poly
     closed = poly.buffer(r, join_style=2, mitre_limit=5).buffer(-r, join_style=2, mitre_limit=5)
-    if _ok(closed) and closed.covers(poly.buffer(-1e-6)):
-        out = closed.union(poly)
-        if out.geom_type != "Polygon":
-            out = max(out.geoms, key=lambda g: g.area)
-        return Polygon(out.exterior.coords)
-    return poly
+    if not _ok(closed):
+        return poly
+    # a união com o original garante que nada da peça fica de fora (o "chanfro" das quinas vivas
+    # que o buffer com limite de esquadria corta volta pela união)
+    out = closed.union(poly)
+    if out.geom_type != "Polygon":
+        out = max(getattr(out, "geoms", [out]), key=lambda g: g.area)
+    if not _ok(out):
+        return poly
+    out = Polygon(out.exterior.coords)
+    return out if out.covers(poly.buffer(-1e-6)) else poly
 
 
 class NFPCache:
@@ -118,7 +125,10 @@ class NFPCache:
         base = polygon_to_int(simp)
         pco = pyclipper.PyclipperOffset(2.0)
         pco.AddPath(base, pyclipper.JT_MITER, pyclipper.ET_CLOSEDPOLYGON)
-        offset = self.offset + self._simp.get(pid, self.simplify_tol) - self.simplify_tol
+        extra = self._simp.get(pid, self.simplify_tol) - self.simplify_tol
+        # simplificação maior que a do nível de detalhe: folga extra proporcional (garante que o contorno
+        # usado no cálculo contém a peça inteira, mesmo com os arredondamentos do offset)
+        offset = self.offset + (extra * 1.25 + 0.05 if extra > 1e-9 else 0.0)
         off = pco.Execute(offset * CLIPPER_SCALE)
         off = [p for p in off if pyclipper.Orientation(p)]
         path = max(off, key=lambda p: abs(pyclipper.Area(p))) if off else base
@@ -160,13 +170,17 @@ class NFPCache:
         if poly.geom_type != "Polygon":
             poly = max(getattr(poly, "geoms", [poly]), key=lambda g: g.area)
         closes = [self.close_r] + [r for r in (2.0, 5.0, 10.0) if r > self.close_r]
+        x0, y0, x1, y1 = poly.bounds
+        # peças grandes (meio metro ou mais) toleram simplificar mais: 1 mm numa peça de 1 m é nada,
+        # e o NFP entre duas delas é o que mais pesa (vértices × vértices)
+        max_tol = max(MAX_SIMPLIFY_MM, min(1.0, 0.0008 * math.hypot(x1 - x0, y1 - y0)))
         b, tol = None, self.simplify_tol
         for close_r in closes:
             closed = _close(poly, close_r)
             tol = self.simplify_tol
             simp = closed.simplify(tol, preserve_topology=True)
-            while (_ok(simp) and len(simp.exterior.coords) > MAX_OUTLINE_VERTICES and tol < MAX_SIMPLIFY_MM):
-                tol = min(MAX_SIMPLIFY_MM, tol * 1.6)
+            while (_ok(simp) and len(simp.exterior.coords) > MAX_OUTLINE_VERTICES and tol < max_tol):
+                tol = min(max_tol, tol * 1.6)
                 simp = closed.simplify(tol, preserve_topology=True)
             if not _ok(simp):
                 simp, tol = closed, self.simplify_tol
@@ -215,9 +229,35 @@ class NFPCache:
         # remove "furos" minúsculos (artefatos numéricos da soma de Minkowski)
         min_hole = MIN_NFP_HOLE_MM2 * CLIPPER_SCALE ** 2
         res = [p for p in res if pyclipper.Orientation(p) or abs(pyclipper.Area(p)) >= min_hole]
+        if any(not pyclipper.Orientation(p) for p in res):
+            res = self._real_holes(res, a, b)
         self._nfp[key] = res
         self._trim(self._nfp)
         return res
+
+    @staticmethod
+    def _real_holes(res: list, a: Variant, b: Variant) -> list:
+        """Um furo no NFP = posições em que B cabe num recorte de A. Emendas numéricas da soma de
+        Minkowski às vezes deixam "furos" falsos (fendas finíssimas) e o decodificador colocava B em
+        cima de A (lote 8787/8788/8791). Cada furo é conferido: B posicionado num ponto de dentro dele
+        não pode sobrepor A; se sobrepõe, o furo é descartado."""
+        from shapely import affinity
+        A = Polygon(a.path).buffer(0)
+        B = Polygon(b.path).buffer(0)
+        tol = (0.05 * CLIPPER_SCALE) ** 2 * 10
+        out = []
+        for p in res:
+            if pyclipper.Orientation(p):
+                out.append(p)
+                continue
+            hole = Polygon(p).buffer(0)
+            if hole.is_empty:
+                continue
+            q = hole.representative_point()
+            moved = affinity.translate(B, q.x, q.y)
+            if A.intersection(moved).area <= tol:
+                out.append(p)
+        return out
 
     def nfp_np(self, a: Variant, b: Variant) -> tuple[list[np.ndarray], tuple[int, int, int, int]]:
         """NFP como arrays numpy (translação rápida) + caixa delimitadora."""

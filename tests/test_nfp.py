@@ -89,3 +89,29 @@ def test_contorno_com_muitos_vertices_fica_leve_e_seguro():
     assert len(v.path) <= MAX_OUTLINE_VERTICES * 2       # o offset em quina viva pode duplicar alguns
     outline = Polygon(from_int_path(v.path))
     assert outline.buffer(1e-6).covers(Polygon(shapes["G"].outer))
+
+
+def test_furo_falso_do_nfp_e_descartado_e_o_verdadeiro_fica():
+    """Bolsão real (B cabe dentro do recorte de A) continua; fenda numérica que poria B em cima de A sai."""
+    # A: quadrado 100 com um bolsão 40×40 ligado ao lado de fora por uma fenda de 5 mm
+    A = [(0, 0), (100, 0), (100, 100), (52.5, 100), (52.5, 70), (70, 70), (70, 30), (30, 30), (30, 70),
+         (47.5, 70), (47.5, 100), (0, 100)]
+    B = [(0, 0), (30, 0), (30, 30), (0, 30)]
+    shapes = {"A": _shape("A", A), "B": _shape("B", B)}
+    cache = NFPCache(shapes, spacing=0.0, curve_tol=0.01, part_in_part=False, detail=0)
+    a, b = cache.variant("A", 0), cache.variant("B", 0)
+    res = cache.nfp(a, b)
+    holes = [p for p in res if not pyclipper.Orientation(p)]
+    assert holes, "o bolsão onde B cabe precisa continuar como posição possível"
+    # furo inventado no meio da parte maciça de A: precisa ser descartado
+    outer = [p for p in res if pyclipper.Orientation(p)]
+    s = 10 ** 4
+    fake = [(int(-30 * s), int(-30 * s)), (int(-30 * s), int(-29 * s)), (int(-29 * s), int(-29 * s)),
+            (int(-29 * s), int(-30 * s))]
+    from app.core.geometry import CLIPPER_SCALE
+    k = CLIPPER_SCALE / s
+    fake = [(int(x * k), int(y * k)) for x, y in fake]
+    if pyclipper.Orientation(fake):
+        fake = fake[::-1]
+    kept = NFPCache._real_holes(outer + holes + [fake], a, b)
+    assert fake not in kept and all(h in kept for h in holes)

@@ -209,3 +209,39 @@ def test_para_sozinho_sem_melhora():
     t = time.time()
     res = nest(rep.parts, NestParams(stop_after_seconds=1.0, population=4), time_limit=60, workers=0, seed=1)
     assert time.time() - t < 30 and res.placements
+
+
+def test_peca_grande_com_dentes_encaixa_rapido_e_sem_sobrepor(tmp_path):
+    """Setor de anel de ~1 m com 'dentes' miúdos na borda (como o piso do lote 8791): antes o
+    contorno de 1.100 vértices travava o encaixe e um furo falso do NFP deixava peças por cima."""
+    import math
+    import time
+    import ezdxf
+    from app.core.optimizer import GeneticNester
+    from app.core.part_builder import import_files
+    from app.core.validate import validate_layout
+    doc = ezdxf.new("R2000")
+    doc.units = 4
+    msp = doc.modelspace()
+    pts = []
+    for i in range(150):                                    # borda externa com 150 dentes em arco
+        for frac, bulge in ((0.0, 0.0), (0.5, -0.8)):
+            a = math.radians(-60 + 120 * (i + frac) / 150)
+            pts.append((600 * math.cos(a), 600 * math.sin(a), bulge))
+    a = math.radians(60)
+    pts.append((600 * math.cos(a), 600 * math.sin(a), 0.0))
+    for i in range(61):                                     # borda interna lisa
+        a = math.radians(60 - 120 * i / 60)
+        pts.append((150 * math.cos(a), 150 * math.sin(a), 0.0))
+    msp.add_lwpolyline(pts, format="xyb", close=True)
+    msp.add_lwpolyline([(800, 0), (1050, 0), (1050, 43), (800, 43)], close=True)
+    f = tmp_path / "piso.dxf"
+    doc.saveas(f)
+    rep = import_files([str(f)], multipliers={str(f): 2})
+    params = NestParams(sheet_width=1400, sheet_height=900, margin=6, spacing=0.0, rotation_steps=24)
+    g = GeneticNester(rep.parts, params, workers=0, seed=1)
+    t = time.time()
+    res = g.evaluate_local(g.first_individual())
+    assert time.time() - t < 20
+    assert len(res.placements) == 4
+    assert validate_layout({p.id: p for p in rep.parts}, res.placements, params) == []
