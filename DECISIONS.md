@@ -123,11 +123,14 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
     octante da câmera); as divisórias são divididas nos cruzamentos só para o desenho.
 41. "Enviar para o encaixe" grava o DXF em `Documentos/Sindri/Caixas` e usa o mesmo caminho de importação dos
     DXFs comuns (multiplicador = nº de caixas, material = "MDF {espessura}mm" se não informado).
-42. Tampas com dobradiça (baú, porta dupla): o pino fica FORA do corpo, numa orelha da parede (atrás do fundo /
-    ao lado das laterais), à distância vp = (aba − espessura)/2. Com o pino dentro da aba, a parte da tampa
-    sobre a parede desceria ao abrir e bateria nela. Perto do topo a aresta parede/orelha fica lisa (a orelha
-    precisa de material inteiro). A aba da frente do baú, paralela ao eixo, recebe folga ≥ vp²/(2·(D+vp)) para
-    passar por cima da frente. Um teste gira as tampas de 0 a 110° e confere que nada entra no corpo.
+42. Tampas com dobradiça (baú, porta dupla): dobradiça integrada de MDF, mesmo princípio do ChestHinge do
+    boxes.py (substituiu as abas externas com pino/parafuso). Disco p = 2t, nó R = 3t, lingueta
+    t × √((0,9p)² − t²), folga g = max(0,3; 0,1t), folga do disco ≥ kerf + 0,15. Eixo na linha da tampa (Hb), no
+    meio da espessura da parede da dobradiça; essa parede do corpo desce para Hb − ρ − g (ρ = meia diagonal
+    da lingueta) e, perto do topo (acima de Hb − R − 1), a aresta com as paredes do nó fica lisa — senão os
+    dentes ocupariam o lugar do nó/disco. A tampa é uma caixa rasa da mesma largura do corpo, com as paredes
+    no mesmo plano. Testes: montagem sem sobreposição, disco no centro do nó, lingueta no centro do disco e
+    abertura de 0 a 100° sem colisão.
 43. Tampa deslizante: rasgo nas laterais do topo da frente (mais baixa) até UMA espessura antes do fundo; se
     fosse até o fundo, a faixa de cima ficaria presa só nos dentes.
 44. Arestas com encaixe só em parte do comprimento: o vizinho pode ser (nome, a, b); fora do trecho a faixa é

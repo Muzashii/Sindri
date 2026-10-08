@@ -263,12 +263,14 @@ quantidade.
 | Aberta | Só base e paredes |
 | Fechada | Tampa com dentes como as outras faces |
 | Tampa solta | Placa de cima + guia colada por baixo que encaixa na boca da caixa, com furo para o dedo |
-| **Baú** | Tampa rasa que abre para trás, presa por dois pinos numa orelha atrás das laterais |
+| **Baú** | Tampa que abre para trás numa **dobradiça de MDF**: nó redondo nas laterais + disco solto + lingueta da tampa |
 | **Deslizante** | Corre por um rasgo nas laterais; a frente é mais baixa para a tampa passar |
-| **Porta dupla** | Duas abas que abrem para os lados, cada uma presa por dois pinos |
+| **Porta dupla** | Duas portas que abrem para os lados, cada uma na mesma dobradiça de MDF |
 
-Baú e porta dupla usam pinos de 3,2 mm (parafuso M3 com porca, palito ou filamento). O pino fica fora do
-corpo da caixa para a tampa abrir sem bater; a folga da frente do baú é calculada sozinha.
+Baú e porta dupla usam a dobradiça integrada (como a do boxes.py): tudo no plano das paredes, sem parafuso.
+A parede do corpo tem um nó redondo com furo; um disco solto gira dentro dele e a lingueta da parede de trás
+da tampa entra no furo retangular do disco. Montagem: encaixe os discos nas linguetas da tampa e depois
+coloque as laterais do corpo por fora, com os discos dentro dos nós.
 
 Na prévia, **Abrir tampa / gaveta** mostra a tampa girando no pino, deslizando ou levantando e a gaveta saindo; **Separar peças** mostra a
 montagem; **Peças para cortar** mostra exatamente o que vai para o laser.

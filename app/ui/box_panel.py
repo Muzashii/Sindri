@@ -705,11 +705,12 @@ class BoxPanel(QWidget):
         self.lid_opts = QWidget()
         lo = QFormLayout(self.lid_opts)
         lo.setContentsMargins(0, 0, 0, 0)
-        self.lid_h = _dspin(8, 200, 1, 1, " mm", "Altura das abas da tampa (o pino fica no meio da aba)")
+        self.lid_h = _dspin(8, 200, 1, 1, " mm", "Altura da parte que abre (a tampa); a dobradiça de MDF\n"
+                                                 "fica na linha entre a tampa e o corpo")
         self.pin = _dspin(1, 12, 0.1, 1, " mm", "Diâmetro do furo do pino. Para parafuso M3: 3,2 mm")
         self.lid_gap = _dspin(0, 3, 0.1, 1, " mm", "Folga entre a tampa e a caixa")
         self.hole = _dspin(0, 80, 1, 0, " mm", "Diâmetro do furo para o dedo (0 = sem furo)")
-        self.lid_h_lbl, self.pin_lbl = QLabel("Altura das abas"), QLabel("Furo do pino")
+        self.lid_h_lbl, self.pin_lbl = QLabel("Altura da tampa"), QLabel("Furo do pino")
         self.lid_gap_lbl, self.hole_lbl = QLabel("Folga"), QLabel("Furo para o dedo")
         lo.addRow(self.lid_h_lbl, self.lid_h)
         lo.addRow(self.pin_lbl, self.pin)
@@ -1062,12 +1063,14 @@ class BoxPanel(QWidget):
         lid = self.lid() if self.model() == MODEL_BOX else LID_OPEN
         self.lid_help.setText(LID_HELP.get(lid, ""))
         hinged, slide, lift = lid in HINGED, lid == LID_SLIDE, lid == LID_LIFT
-        for wdg, on in ((self.lid_h, hinged), (self.lid_h_lbl, hinged), (self.pin, hinged), (self.pin_lbl, hinged),
+        for wdg, on in ((self.lid_h, hinged), (self.lid_h_lbl, hinged), (self.pin, False), (self.pin_lbl, False),
                         (self.lid_gap, hinged or slide or lift), (self.lid_gap_lbl, hinged or slide or lift),
                         (self.hole, slide or lift), (self.hole_lbl, slide or lift)):
             wdg.setVisible(on)
         self.lid_opts.setVisible(hinged or slide or lift)
         self.lid_gap_lbl.setText("Folga da guia" if lift else ("Folga do rasgo" if slide else "Folga"))
+        self.lid_gap.setVisible(lift or slide)                 # dobradiça de MDF: folgas calculadas sozinhas
+        self.lid_gap_lbl.setVisible(lift or slide)
         finger = self._checked_key(self.joint_tiles, JOINT_FINGER) == JOINT_FINGER
         self.finger.setVisible(finger)
         self.finger_lbl.setVisible(finger)
@@ -1153,7 +1156,7 @@ class BoxPanel(QWidget):
     # ================================================================== ícones e tema
     def refresh_icons(self):
         """Desenha os botões ilustrados com o próprio gerador (mesma geometria da caixa real)."""
-        base = dict(width=100, depth=78, height=56, thickness=4, finger=13, lid_height=19, pin=3.2,
+        base = dict(width=100, depth=78, height=60, thickness=4, finger=13, lid_height=24, pin=3.2,
                     finger_hole=16, lid_clearance=0.8)
         for lid, tile in self.lid_tiles.items():
             opened = {LID_CHEST: 0.6, LID_DOORS: 0.55, LID_SLIDE: 0.45, LID_LIFT: 0.5}.get(lid, 0.0)

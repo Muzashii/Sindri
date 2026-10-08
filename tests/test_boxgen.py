@@ -5,8 +5,8 @@ import pytest
 import shapely
 
 from app.core.boxgen import (JOINT_FINGER, JOINT_FLAT, LID_CHEST, LID_CLOSED, LID_DOORS, LID_LIFT,
-                             LID_SLIDE, LID_TYPES, BoxParams, finger_segments, generate, resolve_dims, validate,
-                             write_dxf)
+                             LID_SLIDE, LID_TYPES, BoxParams, finger_segments, generate, hinge_geom, resolve_dims,
+                             validate, write_dxf)
 
 
 def occupancy(result, res: float, holes: bool = True):
@@ -44,7 +44,7 @@ def test_montagem_sem_sobreposicao_e_sem_buracos(lid, cols, rows, joint):
         pytest.skip("divisórias não dependem do tipo de junta")
     p = BoxParams(width=90, depth=72, height=48, thickness=3, finger=9, lid=lid, cols=cols, rows=rows,
                   joint=joint, divider_clearance=0, lid_clearance=0 if lid == LID_LIFT else 0.75,
-                  finger_hole=0, lid_height=18)
+                  finger_hole=0, lid_height=20)
     r = generate(p)
     cnt, (X, Y, Z) = occupancy(r, 0.75, holes=False)
     assert cnt.max() == 1, "duas peças ocupam o mesmo lugar"
@@ -53,39 +53,63 @@ def test_montagem_sem_sobreposicao_e_sem_buracos(lid, cols, rows, joint):
     shell = body & ((X < t) | (X > d.W - t) | (Y < t) | (Y > d.D - t) | (Z < t))
     if lid == LID_CLOSED:
         shell |= body & (Z > d.H - t)
+    if lid in (LID_CHEST, LID_DOORS):
+        # parede do lado da dobradiça mais baixa (Hbw) e o anel do disco ficam de fora da conferência
+        hg = hinge_geom(t)
+        if lid == LID_CHEST:
+            hw = Y > d.D - t
+            near = ((X < t) | (X > d.W - t)) & ((Y - (d.D - t / 2)) ** 2 + (Z - d.H) ** 2 < (hg["p"] + 0.3) ** 2)
+        else:
+            hw = (X < t) | (X > d.W - t)
+            near = ((Y < t) | (Y > d.D - t)) & (((X - t / 2) ** 2 + (Z - d.H) ** 2 < (hg["p"] + 0.3) ** 2) |
+                                                ((X - (d.W - t / 2)) ** 2 + (Z - d.H) ** 2 < (hg["p"] + 0.3) ** 2))
+        shell &= ~(hw & (Z > d.hinge_wall_h - 1e-9)) & ~near
     if lid == LID_SLIDE:
         # a frente para abaixo do rasgo; o rasgo das laterais fica de fora da conferência
         shell &= ~((Y < t) & (Z > d.front_h))
         shell &= ~((Z > d.front_h) & (Z < d.front_h + t + c) & (Y < d.D - 2 * t))
     assert cnt[shell].min() == 1, "faltou material numa parede (dente e vão não se completam)"
-    if lid in (LID_LIFT, LID_CHEST):
-        lid_top = (Z > d.H) & (Z < d.H + t)
-        if lid == LID_LIFT:
-            lid_top &= (X > 0) & (X < d.W) & (Y > 0) & (Y < d.D)
-        else:
-            lid_top &= (X > -(t + c)) & (X < d.W + t + c) & (Y > -(t + c)) & (Y < d.D)
-        assert cnt[lid_top].min() == 1         # placa de cima da tampa inteira (dentes completos)
-    if lid == LID_DOORS:
-        lw = d.W / 2 - c / 2
-        doors = (Z > d.H) & (Z < d.H + t) & (Y > -(t + c)) & (Y < d.D + t + c) & \
-            ((X < lw) | (X > d.W / 2 + c / 2)) & (X > 0) & (X < d.W)
-        assert cnt[doors].min() == 1
+    if lid == LID_LIFT:
+        lid_top = (Z > d.H) & (Z < d.H + t) & (X > 0) & (X < d.W) & (Y > 0) & (Y < d.D)
+        assert cnt[lid_top].min() == 1         # placa de cima da tampa inteira
+    if lid in (LID_CHEST, LID_DOORS):
+        hg = hinge_geom(t)
+        top = (Z > d.total_h - t) & (Z < d.total_h) & (X > 0) & (X < d.W) & (Y > 0) & (Y < d.D)
+        if lid == LID_DOORS:
+            la = d.W / 2 - hg["g"] / 2
+            top &= (X < la) | (X > d.W - la)
+        assert cnt[top].min() == 1             # tampo da tampa inteiro (dentes completos com as paredes)
+        # paredes da tampa (no plano das do corpo) completas, longe da dobradiça
+        lid_walls = (Z > d.H + hg["g"]) & (Z < d.total_h) & top.any() & \
+            ((X < t) | (X > d.W - t) | (Y < t)) & (X > 0) & (X < d.W) & (Y > 0) & (Y < d.D - hg["R"] - 2)
+        if lid == LID_DOORS:
+            lid_walls = (Z > d.H + hg["g"]) & (Z < d.total_h) & ((Y < t) | (Y > d.D - t)) & \
+                (X > hg["R"] + 2) & (X < d.W - hg["R"] - 2) & (np.abs(X - d.W / 2) > hg["g"])
+        assert cnt[lid_walls].min() == 1
 
 
 @pytest.mark.parametrize("lid", [LID_CHEST, LID_DOORS])
-def test_pinos_da_dobradica_alinhados(lid):
-    r = generate(BoxParams(width=120, depth=90, height=55, lid=lid))
-    axis = 0 if lid == LID_CHEST else 1                 # baú gira em torno de x; portas, de y
-    lid_holes = [pn.to3d(u, v, 0) for pn in r.panels if pn.kind in ("bau_lado", "porta_aba")
-                 for u, v, _ in pn.circles]
-    body_holes = [pn.to3d(u, v, 0) for pn in r.panels if pn.kind in ("esquerda", "direita", "frente", "fundo")
-                  for u, v, _ in pn.circles]
-    assert len(lid_holes) == len(body_holes) == (2 if lid == LID_CHEST else 4)
-    key = lambda q: tuple(round(q[k], 6) for k in range(3) if k != axis)  # noqa: E731
-    assert sorted(map(key, lid_holes)) == sorted(map(key, body_holes))
-    for pn in r.panels:
-        if pn.kind in ("bau_lado", "porta_aba", "bau_topo", "bau_frente", "porta_topo"):
-            assert pn.motion and pn.motion[0] == "gira"
+def test_dobradica_de_mdf_alinhada(lid):
+    """Cada disco fica no centro do furo de um nó do corpo, e uma lingueta da tampa no meio do disco."""
+    r = generate(BoxParams(width=150, depth=100, height=70, lid=lid))
+    t, d = r.params.thickness, r.dims
+    discs = [pn for pn in r.panels if pn.kind == "disco"]
+    assert len(discs) == (2 if lid == LID_CHEST else 4)
+    walls = [pn for pn in r.panels if pn.kind in ("esquerda", "direita", "frente", "fundo")]
+    holes = [w.to3d(h.centroid.x, h.centroid.y, t / 2) for w in walls for h in map(shapely.Polygon, w.poly.interiors)]
+    tabs = []
+    for hw in (pn for pn in r.panels if pn.kind.endswith("_dobradica")):
+        Lb = hw.poly.bounds[2]
+        tabs += [hw.to3d(t / 2, d.H, t / 2), hw.to3d(Lb - t / 2, d.H, t / 2)]
+    for disc in discs:
+        c = np.array(disc.to3d(disc.poly.centroid.x, disc.poly.centroid.y, t / 2))
+        assert min(np.linalg.norm(c - np.array(h)) for h in holes) < 1e-6, "disco fora do nó"
+        assert min(np.linalg.norm(c - np.array(tb)) for tb in tabs) < 1e-6, "lingueta fora do disco"
+        assert disc.motion and disc.motion[0] == "gira"
+        # o disco gira em volta do próprio centro (o eixo passa por ele)
+        pivot, axis = np.array(disc.motion[1]), np.array(disc.motion[2])
+        off = c - pivot
+        assert np.linalg.norm(off - axis * (off @ axis)) < 1e-6
 
 
 def test_deslizante_frente_mais_baixa_e_rasgo():
@@ -314,7 +338,7 @@ def _rotate(P, pivot, axis, ang):
 
 
 @pytest.mark.parametrize("lid", [LID_CHEST, LID_DOORS])
-@pytest.mark.parametrize("H,hl,D", [(60, 20, 90), (45, 30, 40), (100, 30, 200)])
+@pytest.mark.parametrize("H,hl,D", [(60, 22, 90), (60, 30, 40), (100, 30, 200)])
 def test_dobradica_abre_sem_bater(lid, H, hl, D):
     """Gira a tampa de 0 a 110° em volta do pino: nenhuma peça dela pode entrar no corpo da caixa."""
     r = generate(BoxParams(width=160, depth=D, height=H, lid=lid, lid_height=hl, cols=2, rows=2))
