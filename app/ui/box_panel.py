@@ -407,7 +407,6 @@ class FlatView(QGraphicsView):
 # aparecem logo abaixo dela. A prévia 3D ocupa o resto da tela.
 
 MATERIALS = [("MDF 3 mm", 3.0, "MDF 3mm"), ("MDF 6 mm", 6.0, "MDF 6mm"), ("Acrílico 3 mm", 3.0, "Acrílico 3mm")]
-GRIDS = [(1, 1, "Sem"), (2, 1, "2 × 1"), (2, 2, "2 × 2"), (3, 2, "3 × 2"), (4, 3, "4 × 3"), (0, 0, "Outra")]
 ICON_W, ICON_H = 84, 58
 
 # passos que cada modelo mostra (o resto fica escondido: menos coisa para entender)
@@ -442,6 +441,214 @@ RECIPES = [
                                lid_height=22)),
     ("Teste de kerf (MDF 3 mm)", dict(model=MODEL_KERF, thickness=3, material="MDF 3mm")),
 ]
+
+
+class ValueSlider(QWidget):
+    """Chave de arrastar com o mínimo à esquerda, o valor no meio (no botão) e o máximo à direita.
+
+    Arraste o botão ou clique na barra; setas do teclado andam de ``step`` em ``step``."""
+    valueChanged = Signal(float)
+
+    def __init__(self, lo: float, hi: float, step: float = 0.25, suffix: str = " mm", tip: str = ""):
+        super().__init__()
+        self._lo, self._hi, self._step, self._suffix = lo, hi, step, suffix
+        self._v = lo
+        self._drag = False
+        self.setToolTip(tip)
+        self.setFixedHeight(36)
+        self.setMinimumWidth(180)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setCursor(Qt.PointingHandCursor)
+
+    # ---- valor
+    def minimum(self) -> float:
+        return self._lo
+
+    def maximum(self) -> float:
+        return self._hi
+
+    def value(self) -> float:
+        return self._v
+
+    def setRange(self, lo: float, hi: float):
+        self._lo, self._hi = lo, max(lo, hi)
+        self.setValue(self._v)
+        self.update()
+
+    def setValue(self, v: float):
+        v = round(round(float(v) / self._step) * self._step, 4)
+        v = min(self._hi, max(self._lo, v))
+        if abs(v - self._v) > 1e-9:
+            self._v = v
+            self.update()
+            self.valueChanged.emit(v)
+        else:
+            self.update()
+
+    # ---- desenho
+    def _knob(self) -> QRectF:
+        w = 86.0
+        frac = 0.0 if self._hi <= self._lo else (self._v - self._lo) / (self._hi - self._lo)
+        x = 4 + frac * (self.width() - 8 - w)
+        return QRectF(x, 4, w, self.height() - 8)
+
+    @staticmethod
+    def _txt(v: float, dec: int) -> str:
+        return f"{v:.{dec}f}".replace(".", ",")
+
+    def paintEvent(self, _e):
+        tk = theme.tokens()
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        track = QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
+        p.setPen(QPen(QColor(tk["border"]), 1))
+        p.setBrush(QColor(tk["surface3"]))
+        p.drawRoundedRect(track, 8, 8)
+        f = QFont(self.font())
+        f.setBold(True)
+        p.setFont(f)
+        p.setPen(QColor(tk["muted"]))
+        p.drawText(track.adjusted(12, 0, 0, 0), Qt.AlignVCenter | Qt.AlignLeft, self._txt(self._lo, 1))
+        p.drawText(track.adjusted(0, 0, -12, 0), Qt.AlignVCenter | Qt.AlignRight, self._txt(self._hi, 1))
+        k = self._knob()
+        col = QColor(tk["accent"])
+        if not self.isEnabled():
+            col = QColor(tk["muted"])
+        elif self.hasFocus():
+            col = col.darker(115)
+        p.setPen(Qt.NoPen)
+        p.setBrush(col)
+        p.drawRoundedRect(k, 7, 7)
+        p.setPen(QColor("#ffffff"))
+        p.drawText(k, Qt.AlignCenter, self._txt(self._v, 2) + self._suffix)
+        p.end()
+
+    # ---- mouse e teclado
+    def _set_from_x(self, x: float):
+        w = self._knob().width()
+        frac = (x - 4 - w / 2) / max(1.0, self.width() - 8 - w)
+        self.setValue(self._lo + max(0.0, min(1.0, frac)) * (self._hi - self._lo))
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self._drag = True
+            self._set_from_x(e.position().x())
+
+    def mouseMoveEvent(self, e):
+        if self._drag:
+            self._set_from_x(e.position().x())
+
+    def mouseReleaseEvent(self, _e):
+        self._drag = False
+
+    def keyPressEvent(self, e):
+        k = e.key()
+        if k in (Qt.Key_Left, Qt.Key_Down):
+            self.setValue(self._v - self._step)
+        elif k in (Qt.Key_Right, Qt.Key_Up):
+            self.setValue(self._v + self._step)
+        elif k == Qt.Key_PageDown:
+            self.setValue(self._v - 1)
+        elif k == Qt.Key_PageUp:
+            self.setValue(self._v + 1)
+        elif k == Qt.Key_Home:
+            self.setValue(self._lo)
+        elif k == Qt.Key_End:
+            self.setValue(self._hi)
+        else:
+            super().keyPressEvent(e)
+
+
+class DividerEditor(QWidget):
+    """Caixa vista de cima com as divisórias possíveis: clique numa para tirar ou pôr de volta.
+
+    Divisórias feitas aparecem cheias; as tiradas, tracejadas. A frente da caixa fica embaixo."""
+    toggled = Signal(str, int)          # ("col" | "row", nº da divisória)
+
+    def __init__(self):
+        super().__init__()
+        self.W, self.D, self.cols, self.rows = 150.0, 120.0, 1, 1
+        self.cols_off, self.rows_off = set(), set()
+        self._hover = None
+        self.setMinimumHeight(150)
+        self.setMouseTracking(True)
+        self.setToolTip("Clique numa divisória para tirar ou pôr de volta")
+
+    def set_layout(self, W: float, D: float, cols: int, rows: int, cols_off, rows_off):
+        self.W, self.D, self.cols, self.rows = max(1.0, W), max(1.0, D), cols, rows
+        self.cols_off, self.rows_off = set(cols_off or []), set(rows_off or [])
+        self.update()
+
+    def _frame(self) -> QRectF:
+        m = 10.0
+        aw, ah = self.width() - 2 * m, self.height() - 2 * m - 14
+        s = min(aw / self.W, ah / self.D)
+        w, h = self.W * s, self.D * s
+        return QRectF((self.width() - w) / 2, m, w, h)
+
+    def _lines(self):
+        """[(tipo, nº, p1, p2)] de todas as divisórias possíveis, em coordenadas da tela."""
+        r = self._frame()
+        out = []
+        for i in range(1, self.cols):
+            x = r.left() + r.width() * i / self.cols
+            out.append(("col", i, QPointF(x, r.top()), QPointF(x, r.bottom())))
+        for j in range(1, self.rows):
+            y = r.bottom() - r.height() * j / self.rows      # linha 1 = a mais perto da frente
+            out.append(("row", j, QPointF(r.left(), y), QPointF(r.right(), y)))
+        return out
+
+    def _hit(self, pos: QPointF):
+        best, bd = None, 9.0
+        for kind, i, a, b in self._lines():
+            d = abs(pos.x() - a.x()) if kind == "col" else abs(pos.y() - a.y())
+            inside = (a.y() <= pos.y() <= b.y()) if kind == "col" else (a.x() <= pos.x() <= b.x())
+            if inside and d < bd:
+                best, bd = (kind, i), d
+        return best
+
+    def paintEvent(self, _e):
+        tk = theme.tokens()
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = self._frame()
+        p.setPen(QPen(QColor("#7a4127"), 3))
+        p.setBrush(QColor(tk["surface2"]))
+        p.drawRect(r)
+        for kind, i, a, b in self._lines():
+            off = i in (self.cols_off if kind == "col" else self.rows_off)
+            hov = self._hover == (kind, i)
+            if off:
+                pen = QPen(QColor(tk["accent"] if hov else tk["muted"]), 2 if hov else 1.4, Qt.DashLine)
+            else:
+                pen = QPen(QColor(tk["danger"] if hov else "#7a4127"), 4 if hov else 3)
+            pen.setCapStyle(Qt.FlatCap)
+            p.setPen(pen)
+            p.drawLine(a, b)
+        p.setPen(QColor(tk["muted"]))
+        f = QFont(self.font())
+        f.setPointSizeF(max(6.5, f.pointSizeF() - 1))
+        p.setFont(f)
+        p.drawText(QRectF(r.left(), r.bottom() + 1, r.width(), 14), Qt.AlignCenter, "frente")
+        if self.cols == 1 and self.rows == 1:
+            p.drawText(r, Qt.AlignCenter, "Sem divisórias:\nuse + nas colunas ou linhas")
+        p.end()
+
+    def mouseMoveEvent(self, e):
+        h = self._hit(e.position())
+        if h != self._hover:
+            self._hover = h
+            self.setCursor(Qt.PointingHandCursor if h else Qt.ArrowCursor)
+            self.update()
+
+    def leaveEvent(self, _e):
+        self._hover = None
+        self.update()
+
+    def mousePressEvent(self, e):
+        h = self._hit(e.position())
+        if h and e.button() == Qt.LeftButton:
+            self.toggled.emit(*h)
 
 
 class _Step(QFrame):
@@ -728,21 +935,22 @@ class BoxPanel(QWidget):
         s4.body.addLayout(grid)
         jf = QFormLayout()
         jf.setContentsMargins(0, 0, 0, 0)
-        self.finger = _dspin(2, 200, 1, 1, " mm", "Largura aproximada de cada dente (o programa ajusta para\n"
-                                                 "caber um número ímpar de dentes em cada aresta)")
+        # chave de arrastar: de 2× a 4× a espessura (dentes menores quebram, maiores ficam frouxos)
+        self.finger = ValueSlider(6.0, 12.0, 0.25, " mm",
+                                  "Largura aproximada de cada dente: de 2× a 4× a espessura do material.\n"
+                                  "O programa ajusta para caber um número ímpar de dentes em cada aresta.")
         self.kerf = _dspin(0, 1, 0.01, 2, " mm", "Quanto o laser queima de material (0 = sem compensação).\n"
                                                  "Típico: 0,10–0,20 mm em MDF 3 mm. Deixa o encaixe justo.")
         self.finger_lbl = QLabel("Largura do dente")
-        jf.addRow(self.finger_lbl, self.finger)
+        s4.body.addWidget(self.finger_lbl)
+        s4.body.addWidget(self.finger)
         jf.addRow("Kerf do laser", self.kerf)
         s4.body.addLayout(jf)
         v.addWidget(s4)
 
         # ---- 5. divisórias
-        s5 = _Step(5, "Divisórias", "Compartimentos internos (colunas × linhas).")
+        s5 = _Step(5, "Divisórias", "Escolha colunas e linhas e clique numa divisória para tirar ou pôr de volta.")
         self.steps["divisorias"] = s5
-        grid, self.grid_tiles, self.grid_grp = _tiles(self, [((c, r), lbl, "") for c, r, lbl in GRIDS])
-        s5.body.addLayout(grid)
         self.custom_grid = QWidget()
         cg = QHBoxLayout(self.custom_grid)
         cg.setContentsMargins(0, 0, 0, 0)
@@ -754,7 +962,15 @@ class BoxPanel(QWidget):
         self.rows.setToolTip("Compartimentos ao longo da profundidade")
         cg.addLayout(_labeled("Colunas", self.cols), 1)
         cg.addLayout(_labeled("Linhas", self.rows), 1)
+        self.btn_all_div = QPushButton("Todas")
+        self.btn_all_div.setToolTip("Põe de volta todas as divisórias tiradas")
+        self.btn_all_div.clicked.connect(self._all_dividers)
+        cg.addWidget(self.btn_all_div, 0, Qt.AlignBottom)
         s5.body.addWidget(self.custom_grid)
+        self.div_editor = DividerEditor()
+        self.div_editor.toggled.connect(self._toggle_divider)
+        s5.body.addWidget(self.div_editor)
+        self.cols_off, self.rows_off = set(), set()
         v.addWidget(s5)
 
         # ---- extras (caixa e bandeja)
@@ -829,7 +1045,9 @@ class BoxPanel(QWidget):
             wdg.valueChanged.connect(self._changed)
         for grp in (self.measure_grp, self.lid_grp, self.joint_grp):
             grp.idClicked.connect(self._changed)
-        self.grid_grp.idClicked.connect(self._grid_tile)
+        self.cols.valueChanged.connect(lambda *_: self._grid_resized())
+        self.rows.valueChanged.connect(lambda *_: self._grid_resized())
+        self.t.valueChanged.connect(self._finger_range)
         self.lid_grp.idClicked.connect(lambda *_: self._lid_picked())
         self.engrave.toggled.connect(self._changed)
         self.t.valueChanged.connect(self._sync_material_chip)
@@ -928,12 +1146,17 @@ class BoxPanel(QWidget):
                          inner=bool(self.measure_btns[True].isChecked()), thickness=self.t.value(),
                          finger=self.finger.value(), kerf=self.kerf.value(), lid=self.lid(),
                          cols=self.cols.value(), rows=self.rows.value(), lid_clearance=gap,
+                         cols_off=sorted(self.cols_off), rows_off=sorted(self.rows_off),
                          finger_hole=self.hole.value(), lid_height=self.lid_h.value(), pin=self.pin.value(),
                          joint=self._checked_key(self.joint_tiles, JOINT_FINGER),
                          engrave_names=self.engrave.isChecked(), quantity=self.qty.value(),
                          material=self.material.text().strip())
 
     def set_params(self, p: BoxParams):
+        self.t.blockSignals(True)
+        self.t.setValue(p.thickness)
+        self.t.blockSignals(False)
+        self._finger_range(emit=False)
         widgets = ((self.w, p.width), (self.d, p.depth), (self.h, p.height), (self.t, p.thickness),
                    (self.finger, p.finger), (self.kerf, p.kerf), (self.cols, p.cols), (self.rows, p.rows),
                    (self.lid_gap, p.lid_clearance), (self.hole, p.finger_hole), (self.qty, p.quantity),
@@ -953,7 +1176,9 @@ class BoxPanel(QWidget):
             cb.blockSignals(False)
         self.lid_tiles.get(p.lid, self.lid_tiles[LID_OPEN]).setChecked(True)
         self.joint_tiles.get(p.joint, self.joint_tiles[JOINT_FINGER]).setChecked(True)
-        self._sync_grid_tile()
+        self.cols_off = {i for i in (p.cols_off or []) if 0 < i < p.cols}
+        self.rows_off = {j for j in (p.rows_off or []) if 0 < j < p.rows}
+        self._sync_div_editor()
         self.engrave.blockSignals(True)
         self.engrave.setChecked(bool(p.engrave_names))
         self.engrave.blockSignals(False)
@@ -1036,21 +1261,37 @@ class BoxPanel(QWidget):
         self.mat_btns[idx].setChecked(True)
 
     # ---------------- divisórias
-    def _grid_tile(self, i: int):
-        c, r, _ = GRIDS[i]
-        if c:
-            for sp, val in ((self.cols, c), (self.rows, r)):
-                sp.blockSignals(True)
-                sp.setValue(val)
-                sp.blockSignals(False)
-        self.custom_grid.setVisible(not c)
+    def _grid_resized(self):
+        """Mudou o nº de colunas/linhas: as posições mudam, então todas as divisórias voltam."""
+        self.cols_off = {i for i in self.cols_off if i < self.cols.value()}
+        self.rows_off = {j for j in self.rows_off if j < self.rows.value()}
+        self._sync_div_editor()
+
+    def _toggle_divider(self, kind: str, i: int):
+        off = self.cols_off if kind == "col" else self.rows_off
+        off.symmetric_difference_update({i})
+        self._sync_div_editor()
         self._changed()
 
-    def _sync_grid_tile(self):
-        key = (self.cols.value(), self.rows.value())
-        tile = self.grid_tiles.get(key) or self.grid_tiles[(0, 0)]
-        tile.setChecked(True)
-        self.custom_grid.setVisible(tile is self.grid_tiles[(0, 0)])
+    def _all_dividers(self):
+        self.cols_off.clear()
+        self.rows_off.clear()
+        self._sync_div_editor()
+        self._changed()
+
+    def _sync_div_editor(self):
+        p_w, p_d = self.w.value(), self.d.value()
+        self.div_editor.set_layout(p_w, p_d, self.cols.value(), self.rows.value(), self.cols_off, self.rows_off)
+        self.btn_all_div.setEnabled(bool(self.cols_off or self.rows_off))
+
+    def _finger_range(self, *_, emit: bool = True):
+        """A largura do dente vai de 2× a 4× a espessura (acompanha o material)."""
+        t = self.t.value()
+        if not emit:
+            self.finger.blockSignals(True)
+        self.finger.setRange(2 * t, 4 * t)
+        if not emit:
+            self.finger.blockSignals(False)
 
     # ---------------- opções que dependem da escolha
     def _lid_picked(self):
@@ -1080,6 +1321,7 @@ class BoxPanel(QWidget):
         self.open_slider.setVisible(movable and self.views.currentIndex() == 0)
 
     def _changed(self, *_):
+        self._sync_div_editor()
         self._contextual()
         self._timer.start()
 
@@ -1178,11 +1420,6 @@ class BoxPanel(QWidget):
         for joint, tile in self.joint_tiles.items():
             pm = render_icon(BoxParams(width=60, depth=50, height=40, thickness=6, finger=11, joint=joint,
                                        lid=LID_CLOSED), ICON_W, ICON_H, yaw=-40, pitch=24)
-            tile.setIcon(QIcon(pm))
-        for (c, r), tile in self.grid_tiles.items():
-            cc, rr = (3, 3) if not c else (c, r)
-            pm = render_icon(BoxParams(width=100, depth=80, height=30, thickness=3, finger=12, cols=cc, rows=rr),
-                             ICON_W, ICON_H, yaw=-30, pitch=55)
             tile.setIcon(QIcon(pm))
 
     def set_compact(self, on: bool):

@@ -254,8 +254,37 @@ def test_aba_caixa_envia_para_o_encaixe(tmp_path, monkeypatch):
     assert bp.params().lid == LID_CHEST and bp.result is not None
     assert bp.lid_h.isVisibleTo(bp) and not bp.hole.isVisibleTo(bp) and bp.open_slider.value() > 0
     bp.view3d.grab()
-    # divisórias pelo botão "3 × 2" e junta lisa
-    bp.grid_tiles[(3, 2)].click()
+    # largura do dente: chave de arrastar de 2× a 4× a espessura
+    assert (bp.finger.minimum(), bp.finger.maximum()) == (2 * bp.t.value(), 4 * bp.t.value())
+    bp.finger.setValue(100)
+    assert bp.finger.value() == 4 * bp.t.value()       # não passa do máximo
+    from PySide6.QtCore import QPointF, Qt as _Qt
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtCore import QEvent
+
+    def click(widget, x, y):
+        for kind in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
+            ev = QMouseEvent(kind, QPointF(x, y), QPointF(x, y), _Qt.LeftButton, _Qt.LeftButton, _Qt.NoModifier)
+            QApplication.sendEvent(widget, ev)
+
+    bp.finger.resize(240, 36)
+    click(bp.finger, 6, 18)                            # clique na ponta esquerda = mínimo
+    assert bp.finger.value() == bp.finger.minimum()
+    # divisórias dinâmicas: 3 × 2 e um clique tira uma divisória (e outro põe de volta)
+    bp.cols.setValue(3)
+    bp.rows.setValue(2)
+    bp.regenerate()
+    n_div = sum(pn.kind == "divisoria" for pn in bp.result.panels)
+    assert n_div == 3
+    ed = bp.div_editor
+    ed.resize(300, 180)
+    kind, i, a, b = ed._lines()[0]                     # a primeira divisória "coluna"
+    click(ed, a.x(), (a.y() + b.y()) / 2)
+    bp.regenerate()
+    assert bp.params().cols_off == [i] and sum(pn.kind == "divisoria" for pn in bp.result.panels) == 2
+    click(ed, a.x(), (a.y() + b.y()) / 2)
+    bp.regenerate()
+    assert bp.params().cols_off == [] and sum(pn.kind == "divisoria" for pn in bp.result.panels) == 3
     bp.joint_tiles[JOINT_FLAT].click()
     bp.regenerate()
     assert (bp.params().cols, bp.params().rows, bp.params().joint) == (3, 2, JOINT_FLAT)
@@ -292,10 +321,10 @@ def test_aba_caixa_envia_para_o_encaixe(tmp_path, monkeypatch):
     bp.set_params(BoxParams(width=120, depth=90, height=50, cols=2, rows=1, quantity=2, lid=LID_CLOSED))
     bp.regenerate()
     # medida inválida: avisa e desliga os botões
-    bp.t.setValue(15)                                  # dente (10 mm) menor que a espessura
+    bp.w.setValue(12)                                  # caixa pequena demais para a espessura
     bp.regenerate()
     assert bp.result is None and not bp.btn_send.isEnabled() and bp.msg_box.isVisibleTo(bp)
-    bp.t.setValue(3)
+    bp.w.setValue(120)
     bp.regenerate()
     monkeypatch.setattr(w, "start_nest", lambda: None)
     assert w.send_box_to_nest()
@@ -460,3 +489,21 @@ def test_dxf_de_cada_modelo_reimporta(tmp_path, p):
 def test_todos_os_modelos_tem_nome_e_validam_padrao():
     for m in MODELS:
         assert validate(BoxParams(model=m)) == [], m
+
+
+@pytest.mark.parametrize("cols_off,rows_off", [([2], []), ([], [1]), ([1, 3], [2]), ([1, 2, 3], [1, 2])])
+def test_divisorias_tiradas(cols_off, rows_off):
+    """Divisórias tiradas no editor: as outras continuam montando sem sobrepor, e os dentes da base
+    só existem embaixo das que ficaram."""
+    p = BoxParams(model=MODEL_TRAY, width=160, depth=120, height=40, cols=4, rows=3, cols_off=cols_off,
+                  rows_off=rows_off, ramp=True, divider_clearance=0)
+    r = generate(p)
+    divs = [pn for pn in r.panels if pn.kind == "divisoria"]
+    assert len(divs) == (3 - len(cols_off)) + (2 - len(rows_off))
+    cnt, _ = occupancy(r, 0.6, holes=False)
+    assert cnt.max() == 1
+    ramps = [pn for pn in r.panels if pn.kind == "rampa"]
+    assert len(ramps) == (4 - len(cols_off)) * (3 - len(rows_off))   # compartimentos juntados
+    base = next(pn for pn in r.panels if pn.kind == "base")
+    assert len(base.poly.interiors) >= len(divs)       # pelo menos um furo de dente por divisória
+    assert validate(BoxParams.from_json(p.to_json())) == []   # salva e volta igual

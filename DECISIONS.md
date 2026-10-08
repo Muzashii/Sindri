@@ -150,6 +150,11 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
     toca as superfícies, sem sobrepor). A prévia da bandeja olha mais de cima (senão as rampas não aparecem).
 50. Teste de kerf: rasgos de largura (espessura − k) para k = 0…0,30 mm, cortados SEM compensação; o rasgo
     em que a tira entra justa dá o kerf. Os valores são gravados (camada azul) e vão para o DXF como TEXT.
+51. Largura do dente: chave de arrastar limitada a 2×–4× a espessura (abaixo disso os dentes quebram; acima,
+    poucos dentes e encaixe frouxo). A faixa acompanha a espessura escolhida.
+52. Divisórias dinâmicas: a grade (colunas × linhas) define as posições possíveis; cada divisória inteira pode ser
+    tirada com um clique (cols_off / rows_off). Cruzamentos, dentes na base e rampas se ajustam às que ficam;
+    trocar o nº de colunas/linhas mantém só as escolhas que ainda existem.
 
 ## Pendências conhecidas / a validar no laboratório
 - Testar R12 × R2000 no RDWorks real e manter como padrão o que importar melhor (hoje: R2000).

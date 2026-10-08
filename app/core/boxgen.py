@@ -99,6 +99,9 @@ class BoxParams:
     lid: str = LID_OPEN
     cols: int = 1                    # compartimentos ao longo da largura (1 = sem divisórias)
     rows: int = 1                    # compartimentos ao longo da profundidade
+    # divisórias tiradas pelo usuário (clique no editor): nº de cada uma, 1…cols-1 / 1…rows-1
+    cols_off: list = field(default_factory=list)
+    rows_off: list = field(default_factory=list)
     divider_clearance: float = 0.2   # folga total no comprimento das divisórias
     lid_clearance: float = 0.5       # folga: guia da tampa solta, abas do baú/portas, rasgo da deslizante
     finger_hole: float = 22.0        # diâmetro do furo para o dedo (tampa solta/deslizante; 0 = sem furo)
@@ -562,12 +565,15 @@ def _add_dividers(panels: list, base: Panel, p: BoxParams, t: float, f: float, W
                   hd: float, ox: float, oy: float, z: float, motion=None, prefix: str = "") -> tuple:
     """Divisórias em grade dentro do espaço Wi × Di que começa em (ox, oy), com o fundo em z.
 
-    Meia-madeira nos cruzamentos e um dente por vão entrando em furos na ``base``.
-    Devolve (largura, profundidade) de cada compartimento."""
+    Meia-madeira nos cruzamentos e um dente por vão entrando em furos na ``base``. As divisórias de
+    ``p.cols_off`` / ``p.rows_off`` não são feitas (os cruzamentos e dentes se ajustam às que ficam).
+    Devolve (largura e profundidade da grade, x e y de cada divisória feita)."""
     cw = (Wi - (p.cols - 1) * t) / p.cols
     cd = (Di - (p.rows - 1) * t) / p.rows
-    xs = [ox + i * cw + (i - 1) * t for i in range(1, p.cols)]   # x inicial de cada divisória "A"
-    ys = [oy + j * cd + (j - 1) * t for j in range(1, p.rows)]
+    off_c, off_r = set(p.cols_off or []), set(p.rows_off or [])
+    # x inicial de cada divisória "A" (as tiradas pelo usuário ficam de fora: compartimentos se juntam)
+    xs = [ox + i * cw + (i - 1) * t for i in range(1, p.cols) if i not in off_c]
+    ys = [oy + j * cd + (j - 1) * t for j in range(1, p.rows) if j not in off_r]
     cl = max(0.0, p.divider_clearance) + 2 * max(0.0, p.kerf)
     bx, by = base.origin[0], base.origin[1]                      # furos na base: coordenadas da base
     base_holes = []
@@ -615,7 +621,7 @@ def _add_dividers(panels: list, base: Panel, p: BoxParams, t: float, f: float, W
                             (x0, y, z), X, Z, Y, (0, 0, 1.6), stops, motion))
     if base_holes:
         base.poly = _largest(base.poly.difference(unary_union(base_holes))).simplify(0)
-    return cw, cd
+    return cw, cd, xs, ys
 
 
 def _gen_box(p: BoxParams) -> BoxResult:
@@ -667,18 +673,19 @@ def _gen_box(p: BoxParams) -> BoxResult:
         warnings += _hinged_lid(p, panels, d, t, f, front, back, left, right, front_spec)
 
     # ---------------- divisórias
-    cw, cd = _add_dividers(panels, base, p, t, f, d.Wi, d.Di, d.Hi, t, t, t)
+    cw, cd, xs, ys = _add_dividers(panels, base, p, t, f, d.Wi, d.Di, d.Hi, t, t, t)
 
     # ---------------- bandeja: rampa encostada na frente de cada compartimento (45°, colar)
     if p.model == MODEL_TRAY and p.ramp:
         s2 = math.sqrt(0.5)
-        rh = min(cd * 0.55, d.Hi * 0.8)
-        for j in range(p.rows):
-            yf = t + j * (cd + t)                       # face da frente do compartimento
-            for i in range(p.cols):
-                xi = t + i * (cw + t)
-                panels.append(Panel("Rampa", "rampa", rect(0, 0, cw - 1.0, rh * math.sqrt(2)), [],
-                                    (xi + 0.5, yf + rh, t), X, (0.0, -s2, s2), (0.0, s2, s2), (0, -0.4, 1.2)))
+        # compartimentos de verdade (divisórias tiradas juntam compartimentos)
+        cols_x = list(zip([t] + [x + t for x in xs], xs + [W - t]))
+        rows_y = list(zip([t] + [y + t for y in ys], ys + [D - t]))
+        for yf, yb in rows_y:                           # yf = face da frente do compartimento
+            rh = min((yb - yf) * 0.55, d.Hi * 0.8)
+            for x0, x1 in cols_x:
+                panels.append(Panel("Rampa", "rampa", rect(0, 0, x1 - x0 - 1.0, rh * math.sqrt(2)), [],
+                                    (x0 + 0.5, yf + rh, t), X, (0.0, -s2, s2), (0.0, s2, s2), (0, -0.4, 1.2)))
         warnings.append("Rampas: cole cada uma apoiada no fundo e na parede da frente do compartimento.")
 
     # ---------------- alças vazadas nas laterais

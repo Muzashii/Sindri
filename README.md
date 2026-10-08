@@ -12,7 +12,7 @@ compacta possível nas placas e entrega um único DXF pronto para o **RDWorks**,
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
 ![PySide6](https://img.shields.io/badge/Qt-PySide6-41CD52?logo=qt&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows&logoColor=white)
-![Testes](https://img.shields.io/badge/testes-209%20pytest-success)
+![Testes](https://img.shields.io/badge/testes-213%20pytest-success)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-MIT-blue)
 
 [Como funciona](#-como-funciona) · [Recursos](#-recursos) · [Instalação](#-instalação-windows) ·
@@ -253,8 +253,8 @@ mostra só os passos de que precisa.
 
 **Passos** (aparecem conforme o modelo): medidas (externas ou internas), material (MDF 3 mm, MDF 6 mm,
 Acrílico 3 mm ou outro), tampa, gaveta, placa e furos, encaixe das arestas (**dentes** ou **lisa** para colar,
-largura do dente e kerf), divisórias (sem, 2×1, 2×2, 3×2, 4×3 ou outra grade), extras (alças, rampas) e
-quantidade.
+largura do dente numa chave de arrastar de 2× a 4× a espessura, e kerf), divisórias (colunas e linhas;
+na vista de cima, um clique tira ou põe de volta cada divisória), extras (alças, rampas) e quantidade.
 
 **Tampas** do modelo Caixa:
 
@@ -385,7 +385,7 @@ pip install pytest pytest-cov
 python -m pytest --cov=app/core
 ```
 
-209 testes cobrem importação, geometria, NFP, posicionamento sem sobreposição, otimizador paralelo, exportação R12/R2000
+213 testes cobrem importação, geometria, NFP, posicionamento sem sobreposição, otimizador paralelo, exportação R12/R2000
 com reimportação, projetos, intranet (com página simulada), limpeza, atualização, CLI, o gerador de caixas (todos os modelos e tampas: montagem
 conferida em 3D, voxel a voxel, sem sobreposição nem buracos, e as dobradiças abrindo sem bater) e um fluxo completo da interface em modo sem tela.
 
