@@ -35,9 +35,10 @@ LID_HELP = {
     LID_OPEN: "Só base e paredes, sem tampa.",
     LID_CLOSED: "Tampa com dentes como as outras faces (fica fechada/colada).",
     LID_LIFT: "Placa de cima com uma guia colada por baixo que encaixa na boca da caixa e furo para o dedo.",
-    LID_CHEST: "Tampa que abre para trás numa dobradiça de MDF (nó redondo + disco), sem parafuso.",
+    LID_CHEST: "Tampa que abre para trás: a lateral da tampa desce até um nó que gira em volta de um disco "
+               "preso na caixa (como no MakerCase). Sem parafuso.",
     LID_SLIDE: "Tampa que desliza por um rasgo nas laterais; a frente é mais baixa para ela passar.",
-    LID_DOORS: "Duas portas que abrem para os lados, cada uma numa dobradiça de MDF (nó + disco).",
+    LID_DOORS: "Duas portas que abrem para os lados, cada uma girando em volta de discos presos na caixa.",
 }
 HINGED = (LID_CHEST, LID_DOORS)
 
@@ -81,7 +82,7 @@ TEXT_LAYER, TEXT_ACI = "GRAVACAO", 5   # azul: nome das peças (opcional)
 
 FACE_NAMES = {"base": "Base", "tampa": "Tampa", "frente": "Frente", "fundo": "Fundo (traseira)",
               "esquerda": "Lateral esquerda", "direita": "Lateral direita"}
-PRIORITY = {"base": 5, "tampa": 4, "frente": 3, "fundo": 3, "esquerda": 2, "direita": 2,
+PRIORITY = {"bau_fim": 3, "porta_fim": 3, "porta_lado": 2, "base": 5, "tampa": 4, "frente": 3, "fundo": 3, "esquerda": 2, "direita": 2,
             # tampas que são caixas rasas (baú, portas): mesma regra, entre as peças da própria tampa
             "bau_topo": 5, "bau_dobradica": 3, "bau_frente": 3, "bau_lado": 2,
             "porta_topo": 5, "porta_dobradica": 3, "porta_frente": 3, "porta_lado": 2}
@@ -107,6 +108,7 @@ class BoxParams:
     finger_hole: float = 22.0        # diâmetro do furo para o dedo (tampa solta/deslizante; 0 = sem furo)
     lid_height: float = 24.0         # altura da tampa baú / porta dupla (parte que abre)
     pin: float = 3.2                 # (sem uso: a dobradiça agora é de MDF) — mantido para projetos antigos
+    pivot: float = 0.0               # baú / porta dupla: diâmetro do pivô (disco); 0 = automático (4 × espessura)
     joint: str = JOINT_FINGER
     engrave_names: bool = False      # escrever o nome em cada peça (camada de gravação)
     model: str = MODEL_BOX
@@ -145,7 +147,7 @@ class Dims:
     total_w: float = 0.0   # largura e profundidade totais (a tampa baú/portas passa um pouco do corpo)
     total_d: float = 0.0
     front_h: float = 0.0   # altura da frente (só a deslizante tem frente mais baixa)
-    hinge_wall_h: float = 0.0   # baú/portas: altura da parede do corpo do lado da dobradiça
+    hinge_wall_h: float = 0.0   # baú/portas: altura da parede da caixa do lado da dobradiça (linguetas)
 
 
 @dataclass
@@ -233,27 +235,33 @@ def slide_lip(t: float) -> float:
     return max(5.0, 2 * t)
 
 
-def hinge_geom(t: float, kerf: float = 0.0) -> dict:
-    """Medidas da dobradiça integrada de MDF (mesmo princípio do ChestHinge do boxes.py).
+def hinge_geom(t: float, kerf: float = 0.0, pivot: float = 0.0) -> dict:
+    """Medidas da dobradiça do tipo do MakerCase ("Laser Hinge Box").
 
-    Na parede do corpo perpendicular ao eixo há um NÓ redondo (raio R) com um furo (raio p); dentro do
-    furo gira um DISCO solto com um furo retangular t × ph; a parede da tampa do lado da dobradiça tem,
-    em cada ponta, uma LINGUETA t × ph que entra nesse retângulo — o disco gira junto com a tampa.
-    g = folga entre tampa e corpo; gp = folga do disco no furo (cobre o kerf)."""
-    pr = 2.0 * t
-    s_ = 1.0 * t
-    g = max(0.3, 0.1 * t)
-    ph = math.sqrt((0.9 * pr) ** 2 - t ** 2)            # altura da lingueta (cabe folgada dentro do disco)
-    return {"p": pr, "R": pr + s_, "g": g, "ph": ph, "gp": max(0.25, 0.1 * t, kerf + 0.15),
-            "rho": math.hypot(t / 2, ph / 2)}
+    A lateral da TAMPA desce em diagonal até um NÓ redondo (raio Rk) com um furo (raio rh) perto do canto
+    do lado da dobradiça. Dentro do furo fica um DISCO (raio rd) com um furo retangular t × hs, preso numa
+    LINGUETA da parede da CAIXA do lado da dobradiça: o disco não gira — a tampa gira em volta dele.
+    O pivô fica a ``drop`` abaixo da linha da tampa, no meio da espessura da parede da dobradiça."""
+    dp = float(pivot) if pivot and pivot > 0 else 4.0 * t
+    rd = dp / 2                                          # disco
+    gp = max(0.2, 0.08 * t, kerf + 0.1)                  # folga do disco no furo do nó
+    rh = rd + gp                                         # furo do nó
+    w = max(t, 2.5)                                      # largura do anel do nó
+    Rk = rh + w                                          # raio externo do nó
+    g = max(0.3, 0.1 * t)                                # folga entre tampa e caixa
+    hs = 2 * math.sqrt(max(0.0, (rd - 0.8) ** 2 - (t / 2) ** 2))   # altura da lingueta (cabe no disco)
+    hs = min(hs, 1.2 * dp)
+    return {"dp": dp, "rd": rd, "gp": gp, "rh": rh, "Rk": Rk, "g": g, "hs": hs,
+            "drop": 1.15 * Rk,                           # pivô abaixo da linha da tampa
+            "reach": 3.0 * Rk}                           # onde a diagonal começa (a partir do pivô)
 
 
 def hinge_heights(p: BoxParams, total: float) -> tuple:
-    """(Hb, Hbw): altura das paredes do corpo (linha da tampa) e da parede do lado da dobradiça."""
-    t = float(p.thickness)
-    hg = hinge_geom(t, p.kerf)
+    """(Hb, He): altura do corpo (linha da tampa) e da parede da caixa do lado da dobradiça."""
+    hg = hinge_geom(float(p.thickness), p.kerf, p.pivot)
     Hb = total - float(p.lid_height)
-    return Hb, Hb - hg["rho"] - hg["g"]
+    zp = Hb - hg["drop"]
+    return Hb, zp + hg["hs"] / 2
 
 
 def board_size(p: BoxParams) -> tuple:
@@ -321,23 +329,23 @@ def _box_dims(p: BoxParams) -> Dims:
 
 
 def _hinged_dims(p: BoxParams) -> Dims:
-    """Baú / porta dupla: corpo até Hb, tampa (lid_height) por cima, mesma largura e profundidade.
-    O espaço útil vai até a parede do lado da dobradiça (Hbw), que fica mais baixa."""
+    """Baú / porta dupla: corpo até Hb (linha da tampa), tampa (lid_height) por cima, mesma largura e
+    profundidade; só o nó da dobradiça passa um pouco da face do lado da dobradiça."""
     t = float(p.thickness)
-    hg = hinge_geom(t, p.kerf)
+    hg = hinge_geom(t, p.kerf, p.pivot)
     hl = float(p.lid_height)
     if p.inner:
         Wi, Di, Hi = float(p.width), float(p.depth), float(p.height)
         W, D = Wi + 2 * t, Di + 2 * t
-        Hbw = Hi + t
-        Hb = Hbw + hg["rho"] + hg["g"]
+        Hb = Hi + t
     else:
         W, D = float(p.width), float(p.depth)
-        Hb, Hbw = hinge_heights(p, float(p.height))
-        Wi, Di, Hi = W - 2 * t, D - 2 * t, Hbw - t
-    out = hg["R"] - t / 2                               # quanto o nó passa da face do corpo
+        Hb = float(p.height) - hl
+        Wi, Di, Hi = W - 2 * t, D - 2 * t, Hb - t
+    He = Hb - hg["drop"] + hg["hs"] / 2
+    out = max(0.0, hg["Rk"] - t / 2)                    # quanto o nó passa da face da caixa
     tw, td = (W, D + out) if p.lid == LID_CHEST else (W + 2 * out, D)
-    return Dims(W, D, Hb, Wi, Di, Hi, Hb + hl, tw, td, Hb, Hbw)
+    return Dims(W, D, Hb, Wi, Di, Hi, Hb + hl, tw, td, Hb, He)
 
 
 def validate(p: BoxParams) -> list[str]:
@@ -368,16 +376,24 @@ def validate(p: BoxParams) -> list[str]:
         err.append("Use de 1 a 20 compartimentos em cada direção.")
     d = resolve_dims(p)
     if p.model == MODEL_BOX and p.lid in HINGED:
-        hg = hinge_geom(t, p.kerf)
-        need = hg["R"] + hg["g"] + 2 * t + 0.5          # nó + folga + espaço para os dentes com o tampo
+        hg = hinge_geom(t, p.kerf, p.pivot)
+        if hg["rd"] - 0.8 <= t / 2 + 0.5:
+            err.append(f"Pivô pequeno demais para esta espessura: use pelo menos {_ceil(t + 3.5)} mm.")
+            return err
+        need = 3 * t + hg["g"] + 1                      # tampo + dentes com as paredes da tampa
         if p.lid_height < need:
-            err.append(f"Tampa baixa demais para a dobradiça: use pelo menos {_ceil(need)} mm de altura de tampa.")
+            err.append(f"Tampa baixa demais: use pelo menos {_ceil(need)} mm de altura de tampa.")
             return err
-        if d.H - hg["R"] - 1 < 3 * t + 2:
-            err.append("Caixa baixa demais para a dobradiça: aumente a altura ou diminua a altura da tampa.")
+        zj = d.H - hg["drop"] - hg["Rk"] - hg["g"] - 1  # até aqui a parede da dobradiça tem dentes
+        if zj < 2 * t:
+            need_h = p.lid_height + hg["drop"] + hg["Rk"] + hg["g"] + 1 + 2 * t
+            err.append(f"Caixa baixa demais para a dobradiça: use pelo menos {_ceil(need_h)} mm de altura "
+                       "(ou diminua a tampa ou o pivô).")
             return err
-        if p.lid == LID_DOORS and d.W / 2 - 0.5 < hg["R"] + 3 * t:
-            err.append("Caixa estreita demais para porta dupla: aumente a largura.")
+        L = d.D if p.lid == LID_CHEST else d.W / 2 - hg["g"] / 2
+        if L < t / 2 + hg["reach"] + 3 * t:
+            err.append("Caixa curta demais para a dobradiça: aumente a "
+                       + ("profundidade" if p.lid == LID_CHEST else "largura") + " ou diminua o pivô.")
             return err
     if min(d.Wi, d.Di) < 3 * t or d.Hi < 2 * t:
         err.append("A caixa ficou pequena demais para esta espessura: aumente as medidas.")
@@ -722,103 +738,97 @@ def _gen_box(p: BoxParams) -> BoxResult:
 
 def _hinged_lid(p: BoxParams, panels: list, d: Dims, t: float, f: float, front: Panel, back: Panel,
                 left: Panel, right: Panel, front_spec) -> list:
-    """Dobradiça integrada de MDF (como a do boxes.py, foto do usuário): tudo no plano das paredes.
+    """Dobradiça do tipo do MakerCase ("Laser Hinge Box"), tudo no plano das paredes.
 
-    Corpo: a parede do lado da dobradiça fica mais baixa (Hbw); as duas paredes perpendiculares ao eixo
-    ganham um NÓ redondo (raio R, furo raio p) no canto, centrado na linha da tampa (Hb), no meio da
-    espessura da parede da dobradiça. Tampa: caixa rasa (tampo + paredes) da mesma largura do corpo,
-    cujas paredes ficam no mesmo plano das do corpo; a parede do lado da dobradiça desce até o eixo e
-    tem uma LINGUETA em cada ponta que entra no furo retangular de um DISCO solto, que gira no nó.
-    Ao abrir, tudo o que está à frente do eixo sobe; o que está atrás fica dentro do raio do nó ou
-    passa por trás da caixa — por isso não bate (um teste gira a tampa de 0 a 100°)."""
+    Em cada parede perpendicular ao eixo, a lateral da TAMPA desce em diagonal até um NÓ redondo com furo;
+    a parede da CAIXA ganha o recorte correspondente (com folga). A parede da caixa do lado da dobradiça
+    fica mais baixa e tem, em cada ponta, uma LINGUETA que entra no furo retangular de um DISCO — o disco
+    fica preso nela (é da caixa) e a tampa gira em volta dele. Tudo o que fica atrás do pivô passa por fora
+    da caixa ao abrir (um teste gira a tampa de 0 a 100° e confere que nada bate)."""
+    from shapely import affinity
     from shapely.geometry import Point
     W, D, Hb = d.W, d.D, d.H
-    Htop, Hbw = d.total_h, d.hinge_wall_h
-    hg = hinge_geom(t, p.kerf)
-    pr, R, g, ph, gp = hg["p"], hg["R"], hg["g"], hg["ph"], hg["gp"]
-    zc = Hb                                              # eixo na linha da tampa
-    Hj = Hb - R - 1.0                                    # acima disto a aresta parede/nó fica lisa (o nó
-                                                         # e o disco ocupam o canto; dentes ali se sobreporiam)
-    zU = Hb + R + g                                      # acima disto a parede da dobradiça da tampa é larga
+    Htop = d.total_h
+    hg = hinge_geom(t, p.kerf, p.pivot)
+    rd, rh, Rk, g, hs = hg["rd"], hg["rh"], hg["Rk"], hg["g"], hg["hs"]
+    ap, zp = t / 2, Hb - hg["drop"]                     # pivô: meio da parede da dobradiça, abaixo da linha
+    He = zp + hs / 2                                     # altura da parede da caixa do lado da dobradiça
+    zj = zp - Rk - g - 1                                 # até aqui as paredes têm dentes no canto da dobradiça
     Hl = Htop - (Hb + g)                                 # altura das paredes da tampa
     X, Y, Z = (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)
 
     def outline(w, h, name, edges):
         return _panel_outline(w, h, t, f, name, edges)
 
-    def knuckled(poly, centers):
-        """Parede do corpo com o nó (raio R) e o furo (raio p) em cada centro."""
-        nodes = [Point(cu, zc).buffer(R, quad_segs=32) for cu in centers]
-        holes = [Point(cu, zc).buffer(pr, quad_segs=32) for cu in centers]
-        return _largest(unary_union([poly] + nodes).difference(unary_union(holes))).simplify(0.005)
+    # perfil no plano da parede (a = distância a partir da face do lado da dobradiça, z = altura)
+    knuckle = Point(ap, zp).buffer(Rk, quad_segs=32)
+    drop = unary_union([knuckle, rect(0, Hb + g - 0.01, ap + hg["reach"], Hb + g)]).convex_hull
+    hole = Point(ap, zp).buffer(rh, quad_segs=32)
+    # recorte da parede da caixa: a diagonal + o nó, com folga; e a faixa da ponta acima do nó (senão sobra
+    # uma ponta fina de MDF onde o arco encontra a borda — quebraria no corte)
+    body_cut = unary_union([drop.buffer(g, quad_segs=16), rect(-1, zp - Rk - g, t, Hb + 1)])
+    disc = _largest(Point(ap, zp).buffer(rd, quad_segs=32).difference(rect(0, zp - hs / 2, t, zp + hs / 2)))
+
+    def mapped(poly, s_, u0):                            # a -> u = u0 + s·a na parede da caixa
+        return affinity.translate(affinity.scale(poly, xfact=s_, yfact=1.0, origin=(0, 0)), u0, 0)
+
+    def end_wall(wall, L, name, sides):
+        """Parede da caixa do lado da dobradiça: mais baixa, sem dentes perto do topo, linguetas nas pontas."""
+        g_ = outline(L, He, name, {"b": "base", "l": (sides[0], 0.0, zj), "r": (sides[1], 0.0, zj)})
+        g_ = g_.difference(unary_union([rect(-1, zj, t, He + 1), rect(L - t, zj, L + 1, He + 1)]))
+        tabs = [rect(0, zp - hs / 2, t, zp + hs / 2), rect(L - t, zp - hs / 2, L, zp + hs / 2)]
+        wall.poly = _largest(unary_union([g_] + tabs)).simplify(0.005)
 
     if p.lid == LID_CHEST:
-        # corpo: fundo mais baixo; laterais com nó no canto de trás
-        back.poly = _largest(outline(W, Hbw, "fundo", {"b": "base", "l": ("esquerda", 0.0, Hj),
-                                                       "r": ("direita", 0.0, Hj)}).difference(
-            unary_union([rect(-1, Hj, t, Hbw + 1), rect(W - t, Hj, W + 1, Hbw + 1)]))).simplify(0)
+        end_wall(back, W, "fundo", ("esquerda", "direita"))
         for side, nm in ((left, "esquerda"), (right, "direita")):
-            side.poly = knuckled(outline(D, Hb, nm, {"b": "base", "l": front_spec, "r": ("fundo", 0.0, Hj)}),
-                                 [D - t / 2])
-        # tampa: eixo X na parede de trás; a = de trás para a frente, b = ao longo de x
-        flaps = [("bau", (0.0, D, 0.0), (0.0, -1.0, 0.0), X, D, W, True, "Tampa", (0.0, D - t / 2, zc), X, -100.0)]
+            g_ = outline(D, Hb, nm, {"b": "base", "l": front_spec, "r": ("fundo", 0.0, zj)})
+            side.poly = _largest(g_.difference(mapped(body_cut, -1.0, D))).simplify(0.005)
+        # (origem no canto do lado da dobradiça, A = para a frente livre, B = ao longo do eixo)
+        flaps = [("bau", (0.0, D, 0.0), (0.0, -1.0, 0.0), X, D, W, True, "Tampa", -100.0)]
     else:
-        # corpo: laterais mais baixas; frente e fundo com nó nos dois cantos de cima
-        for side, nm in ((left, "esquerda"), (right, "direita")):
-            side.poly = _largest(outline(D, Hbw, nm, {"b": "base", "l": ("frente", 0.0, Hj),
-                                                      "r": ("fundo", 0.0, Hj)}).difference(
-                unary_union([rect(-1, Hj, t, Hbw + 1), rect(D - t, Hj, D + 1, Hbw + 1)]))).simplify(0)
+        for side, nm, pair in ((left, "esquerda", ("frente", "fundo")), (right, "direita", ("frente", "fundo"))):
+            end_wall(side, D, nm, pair)
         for wall, nm in ((front, "frente"), (back, "fundo")):
-            wall.poly = knuckled(outline(W, Hb, nm, {"b": "base", "l": ("esquerda", 0.0, Hj),
-                                                     "r": ("direita", 0.0, Hj)}), [t / 2, W - t / 2])
+            g_ = outline(W, Hb, nm, {"b": "base", "l": ("esquerda", 0.0, zj), "r": ("direita", 0.0, zj)})
+            g_ = g_.difference(unary_union([mapped(body_cut, 1.0, 0.0), mapped(body_cut, -1.0, W)]))
+            wall.poly = _largest(g_).simplify(0.005)
         La = W / 2 - g / 2
-        flaps = [("porta", (0.0, 0.0, 0.0), X, Y, La, D, False, "Porta esquerda", (t / 2, 0.0, zc), Y, -100.0),
-                 ("porta", (W, 0.0, 0.0), (-1.0, 0.0, 0.0), Y, La, D, False, "Porta direita",
-                  (W - t / 2, 0.0, zc), Y, 100.0)]
+        flaps = [("porta", (0.0, 0.0, 0.0), X, Y, La, D, False, "Porta esquerda", -100.0),
+                 ("porta", (W, 0.0, 0.0), (-1.0, 0.0, 0.0), Y, La, D, False, "Porta direita", 100.0)]
 
     def at(O, A, B, a, b, z=0.0):
         return tuple(O[i] + a * A[i] + b * B[i] + z * Z[i] for i in range(3))
 
-    for pre, O, A, B, La, Lb, free_wall, title, pivot, axis, ang in flaps:
-        topo, dob, lado, livre = f"{pre}_topo", f"{pre}_dobradica", f"{pre}_lado", f"{pre}_frente"
-        mot = ("gira", pivot, axis, ang)
+    for pre, O, A, B, La, Lb, free_wall, title, ang in flaps:
+        topo, fim, lado, livre = f"{pre}_topo", f"{pre}_fim", f"{pre}_lado", f"{pre}_frente"
+        mot = ("gira", at(O, A, B, ap, 0.0, zp), B, ang)
         sgn = 1.0 if ang > 0 else -1.0
-        ex_up = (0.0, 0.0, 1.8)
+        ex = (sgn * 0.6 if pre == "porta" else 0.0, 0.0, 1.8)
         parts = []
-        # tampo
-        parts.append(Panel(title, topo, outline(La, Lb, topo, {"l": dob, "r": livre if free_wall else None,
+        parts.append(Panel(title, topo, outline(La, Lb, topo, {"l": fim, "r": livre if free_wall else None,
                                                                "b": lado, "t": lado}),
-                           [], at(O, A, B, 0, 0, Htop - t), A, B, Z, ex_up))
-        # parede do lado da dobradiça: parte larga em cima, parte estreita até o eixo, lingueta nas pontas
-        up = outline(Lb, Htop - zU, dob, {"t": topo, "l": lado, "r": lado})
-        from shapely import affinity
-        up = affinity.translate(up, 0, zU)
-        low = rect(t, zc - ph / 2, Lb - t, zU + 0.01)
-        tabs = [rect(0, zc - ph / 2, t, zc + ph / 2), rect(Lb - t, zc - ph / 2, Lb, zc + ph / 2)]
-        hw = _largest(unary_union([up, low] + tabs)).simplify(0.005)
-        parts.append(Panel(f"{title}: parede da dobradiça", dob, hw, [], at(O, A, B, 0, 0), B, Z, A, ex_up))
-        # paredes nas pontas (no plano das paredes do corpo), recortadas em volta do nó
-        for b0, nm in ((0.0, "1"), (Lb - t, "2")):
-            ew = outline(La, Hl, lado, {"t": topo, "l": (dob, zU - (Hb + g), Hl), "r": livre if free_wall else None})
-            cut = unary_union([Point(t / 2, zc - (Hb + g)).buffer(R + g, quad_segs=32),
-                               rect(-1, -1, t, zU - (Hb + g))])
-            ew = _largest(ew.difference(cut)).simplify(0.005)
-            parts.append(Panel(f"{title}: lateral {nm}", lado, ew, [], at(O, A, B, 0, b0, Hb + g), A, Z, B, ex_up))
-            # disco solto: gira no nó do corpo; a lingueta entra no furo retangular
-            disc = Point(t / 2, zc).buffer(pr - gp, quad_segs=32).difference(
-                rect(0, zc - ph / 2, t, zc + ph / 2))
-            parts.append(Panel(f"{title}: disco da dobradiça {nm}", "disco", _largest(disc).simplify(0.005), [],
-                               at(O, A, B, 0, b0), A, Z, B, (0.0, 0.0, 0.9)))
+                           [], at(O, A, B, 0, 0, Htop - t), A, B, Z, ex))
+        parts.append(Panel(f"{title}: parede da dobradiça", fim,
+                           outline(Lb, Hl, fim, {"t": topo, "l": lado, "r": lado}),
+                           [], at(O, A, B, 0, 0, Hb + g), B, Z, A, ex))
         if free_wall:
             parts.append(Panel(f"{title}: frente", livre, outline(Lb, Hl, livre, {"t": topo, "l": lado, "r": lado}),
-                               [], at(O, A, B, La - t, 0, Hb + g), B, Z, A, ex_up))
+                               [], at(O, A, B, La - t, 0, Hb + g), B, Z, A, ex))
+        for b0, nm in ((0.0, "1"), (Lb - t, "2")):
+            # lateral da tampa: faixa de cima + diagonal descendo até o nó, com o furo do pivô
+            strip = affinity.translate(outline(La, Hl, lado, {"t": topo, "l": fim,
+                                                              "r": livre if free_wall else None}), 0, Hb + g)
+            ls = _largest(unary_union([strip, drop]).difference(hole)).simplify(0.005)
+            parts.append(Panel(f"{title}: lateral {nm}", lado, ls, [], at(O, A, B, 0, b0), A, Z, B, ex))
+            # disco: fica preso na lingueta da parede da caixa (não gira)
+            panels.append(Panel(f"{title}: disco do pivô {nm}", "disco", disc, [], at(O, A, B, 0, b0), A, Z, B,
+                                (0.0, 0.0, 0.0), engrave="Disco do pivô"))
         for pn in parts:
             pn.motion = mot
-            if pn.kind != "disco":
-                pn.explode = (sgn * 0.6 if pre == "porta" else 0.0, 0.0, 1.8)
         panels += parts
-    return ["Dobradiça de MDF: encaixe os discos nas linguetas da tampa e depois coloque as laterais do corpo "
-            "por fora, com os discos dentro dos nós. Não precisa de parafuso."]
+    return ["Dobradiça: encaixe cada disco na lingueta da parede da caixa (pode colar) e passe o furo da "
+            "lateral da tampa por fora dele. Não precisa de parafuso."]
 
 
 def _gen_drawer(p: BoxParams) -> BoxResult:

@@ -52,8 +52,10 @@ def render_icon(params: BoxParams, w: int, h: int, open_f: float = 0.0, yaw: flo
     v.open = open_f
     try:
         v.set_result(generate(params))
-    except ValueError:
-        return QPixmap(w, h)
+    except ValueError:                         # medidas inválidas: ícone vazio (nunca lixo de memória)
+        empty = QPixmap(w, h)
+        empty.fill(Qt.transparent)
+        return empty
     pm = QPixmap(w * 2, h * 2)
     pm.setDevicePixelRatio(2)
     pm.fill(Qt.transparent)
@@ -915,12 +917,17 @@ class BoxPanel(QWidget):
         self.lid_h = _dspin(8, 200, 1, 1, " mm", "Altura da parte que abre (a tampa); a dobradiça de MDF\n"
                                                  "fica na linha entre a tampa e o corpo")
         self.pin = _dspin(1, 12, 0.1, 1, " mm", "Diâmetro do furo do pino. Para parafuso M3: 3,2 mm")
+        self.pivot = _dspin(0, 60, 1, 1, " mm", "Diâmetro do disco em volta do qual a tampa gira (como no MakerCase).\n"
+                                                "Automático = 4 × a espessura. Maior = dobradiça mais forte.")
+        self.pivot.setSpecialValueText("Automático")
+        self.pivot_lbl = QLabel("Diâmetro do pivô")
         self.lid_gap = _dspin(0, 3, 0.1, 1, " mm", "Folga entre a tampa e a caixa")
         self.hole = _dspin(0, 80, 1, 0, " mm", "Diâmetro do furo para o dedo (0 = sem furo)")
         self.lid_h_lbl, self.pin_lbl = QLabel("Altura da tampa"), QLabel("Furo do pino")
         self.lid_gap_lbl, self.hole_lbl = QLabel("Folga"), QLabel("Furo para o dedo")
         lo.addRow(self.lid_h_lbl, self.lid_h)
         lo.addRow(self.pin_lbl, self.pin)
+        lo.addRow(self.pivot_lbl, self.pivot)
         lo.addRow(self.lid_gap_lbl, self.lid_gap)
         lo.addRow(self.hole_lbl, self.hole)
         s3.body.addWidget(self.lid_opts)
@@ -1034,7 +1041,7 @@ class BoxPanel(QWidget):
 
         # ---- sinais
         for wdg in (self.w, self.d, self.h, self.t, self.finger, self.kerf, self.lid_gap, self.hole,
-                    self.lid_h, self.pin, self.drawer_gap, self.cable, self.screw):
+                    self.lid_h, self.pin, self.pivot, self.drawer_gap, self.cable, self.screw):
             wdg.valueChanged.connect(self._changed)
         for grp in (self.pull_grp, self.board_grp):
             grp.idClicked.connect(self._changed)
@@ -1148,6 +1155,7 @@ class BoxPanel(QWidget):
                          cols=self.cols.value(), rows=self.rows.value(), lid_clearance=gap,
                          cols_off=sorted(self.cols_off), rows_off=sorted(self.rows_off),
                          finger_hole=self.hole.value(), lid_height=self.lid_h.value(), pin=self.pin.value(),
+                         pivot=self.pivot.value(),
                          joint=self._checked_key(self.joint_tiles, JOINT_FINGER),
                          engrave_names=self.engrave.isChecked(), quantity=self.qty.value(),
                          material=self.material.text().strip())
@@ -1160,7 +1168,7 @@ class BoxPanel(QWidget):
         widgets = ((self.w, p.width), (self.d, p.depth), (self.h, p.height), (self.t, p.thickness),
                    (self.finger, p.finger), (self.kerf, p.kerf), (self.cols, p.cols), (self.rows, p.rows),
                    (self.lid_gap, p.lid_clearance), (self.hole, p.finger_hole), (self.qty, p.quantity),
-                   (self.lid_h, p.lid_height), (self.pin, p.pin), (self.drawer_gap, p.lid_clearance),
+                   (self.lid_h, p.lid_height), (self.pin, p.pin), (self.pivot, p.pivot), (self.drawer_gap, p.lid_clearance),
                    (self.cable, p.cable_hole), (self.screw, p.screw_len))
         for wdg, val in widgets:
             wdg.blockSignals(True)
@@ -1305,6 +1313,7 @@ class BoxPanel(QWidget):
         self.lid_help.setText(LID_HELP.get(lid, ""))
         hinged, slide, lift = lid in HINGED, lid == LID_SLIDE, lid == LID_LIFT
         for wdg, on in ((self.lid_h, hinged), (self.lid_h_lbl, hinged), (self.pin, False), (self.pin_lbl, False),
+                        (self.pivot, hinged), (self.pivot_lbl, hinged),
                         (self.lid_gap, hinged or slide or lift), (self.lid_gap_lbl, hinged or slide or lift),
                         (self.hole, slide or lift), (self.hole_lbl, slide or lift)):
             wdg.setVisible(on)
@@ -1402,9 +1411,14 @@ class BoxPanel(QWidget):
                     finger_hole=16, lid_clearance=0.8)
         for lid, tile in self.lid_tiles.items():
             opened = {LID_CHEST: 0.6, LID_DOORS: 0.55, LID_SLIDE: 0.45, LID_LIFT: 0.5}.get(lid, 0.0)
-            tile.setIcon(QIcon(render_icon(BoxParams(lid=lid, **base), ICON_W, ICON_H, opened)))
+            prm = dict(base)
+            if lid in HINGED:                       # a dobradiça precisa de um pouco mais de altura
+                prm.update(height=70, lid_height=20)
+            if lid == LID_DOORS:                    # e a porta dupla, de largura para as duas
+                prm.update(width=150)
+            tile.setIcon(QIcon(render_icon(BoxParams(lid=lid, **prm), ICON_W, ICON_H, opened)))
         model_icons = {
-            MODEL_BOX: (BoxParams(lid=LID_CHEST, **base), 0.6),
+            MODEL_BOX: (BoxParams(lid=LID_CHEST, **{**base, "height": 70, "lid_height": 20}), 0.6),
             MODEL_DRAWER: (BoxParams(model=MODEL_DRAWER, width=100, depth=90, height=60, thickness=4, finger=13,
                                      lid_clearance=0.8), 0.6),
             MODEL_ELEC: (BoxParams(model=MODEL_ELEC, width=100, depth=80, height=45, thickness=4, finger=13,

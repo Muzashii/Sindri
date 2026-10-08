@@ -160,3 +160,9 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
 - Testar R12 × R2000 no RDWorks real e manter como padrão o que importar melhor (hoje: R2000).
 - Comparar o aproveitamento com o encaixe manual de referência (critério de aceite 4) usando arquivos reais.
 - Gerar e testar o `.exe` no Windows (`build_exe.bat`).
+53. Dobradiça do baú/porta dupla igual à do MakerCase ("Laser Hinge Box"), no lugar da anterior (nó na caixa +
+    disco girando colado na tampa): o NÓ com furo é da lateral da TAMPA, que desce em diagonal até ele; o pivô
+    fica no meio da espessura da parede do lado da dobradiça, 1,15 × o raio do nó abaixo da linha da tampa; o
+    DISCO (Ø do pivô, automático 4 × espessura) tem furo retangular para a LINGUETA da parede da caixa e não
+    gira. A parede da caixa do lado da dobradiça termina logo acima da lingueta; a lateral da caixa ganha o
+    recorte da diagonal e do nó com folga (e sem ponta fina perto da borda). Simulação: 0–100° sem colisão.

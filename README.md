@@ -12,7 +12,7 @@ compacta possível nas placas e entrega um único DXF pronto para o **RDWorks**,
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
 ![PySide6](https://img.shields.io/badge/Qt-PySide6-41CD52?logo=qt&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows&logoColor=white)
-![Testes](https://img.shields.io/badge/testes-213%20pytest-success)
+![Testes](https://img.shields.io/badge/testes-215%20pytest-success)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-MIT-blue)
 
 [Como funciona](#-como-funciona) · [Recursos](#-recursos) · [Instalação](#-instalação-windows) ·
@@ -263,14 +263,12 @@ na vista de cima, um clique tira ou põe de volta cada divisória), extras (alç
 | Aberta | Só base e paredes |
 | Fechada | Tampa com dentes como as outras faces |
 | Tampa solta | Placa de cima + guia colada por baixo que encaixa na boca da caixa, com furo para o dedo |
-| **Baú** | Tampa que abre para trás numa **dobradiça de MDF**: nó redondo nas laterais + disco solto + lingueta da tampa |
+| **Baú** | Tampa que abre para trás numa dobradiça igual à do MakerCase: a lateral da tampa desce em diagonal até um nó com furo, que gira em volta de um disco preso numa lingueta da caixa |
 | **Deslizante** | Corre por um rasgo nas laterais; a frente é mais baixa para a tampa passar |
-| **Porta dupla** | Duas portas que abrem para os lados, cada uma na mesma dobradiça de MDF |
+| **Porta dupla** | Duas portas que abrem para os lados, com a mesma dobradiça do baú nos dois cantos |
 
-Baú e porta dupla usam a dobradiça integrada (como a do boxes.py): tudo no plano das paredes, sem parafuso.
-A parede do corpo tem um nó redondo com furo; um disco solto gira dentro dele e a lingueta da parede de trás
-da tampa entra no furo retangular do disco. Montagem: encaixe os discos nas linguetas da tampa e depois
-coloque as laterais do corpo por fora, com os discos dentro dos nós.
+Baú e porta dupla não usam parafuso: o disco do pivô encaixa na lingueta da parede da caixa (pode colar) e o
+furo do nó da tampa passa por fora dele. O **diâmetro do pivô** é ajustável (automático = 4 × a espessura).
 
 Na prévia, **Abrir tampa / gaveta** mostra a tampa girando no pino, deslizando ou levantando e a gaveta saindo; **Separar peças** mostra a
 montagem; **Peças para cortar** mostra exatamente o que vai para o laser.
@@ -385,7 +383,7 @@ pip install pytest pytest-cov
 python -m pytest --cov=app/core
 ```
 
-213 testes cobrem importação, geometria, NFP, posicionamento sem sobreposição, otimizador paralelo, exportação R12/R2000
+215 testes cobrem importação, geometria, NFP, posicionamento sem sobreposição, otimizador paralelo, exportação R12/R2000
 com reimportação, projetos, intranet (com página simulada), limpeza, atualização, CLI, o gerador de caixas (todos os modelos e tampas: montagem
 conferida em 3D, voxel a voxel, sem sobreposição nem buracos, e as dobradiças abrindo sem bater) e um fluxo completo da interface em modo sem tela.
 
