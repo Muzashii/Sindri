@@ -29,6 +29,10 @@ class StatusMixin:
         self.canvas.cut_sheets = self.cut_sheets
         self.canvas.done_parts = self.done_parts
         self.canvas.filter_tag = self.parts_panel.filter_tag
+        nc = self.numbers_cfg()
+        self.canvas.engrave_labels = self._part_labels()
+        self.canvas.engrave_height = float(nc.get("height") or 3.0)
+        self.canvas.engrave_aci = int(nc.get("color", 1))
         self.canvas.show_layout(self.pmap, self.placements, self.settings_panel.params(), n, keep_view)
         self.canvas.set_editable(self.worker is None)
         if self.worker is None:              # enquanto calcula, o encaixe não tem colisões e o checklist recomeça

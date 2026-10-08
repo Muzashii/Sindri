@@ -247,6 +247,17 @@ def test_painel_por_material_e_numeros_do_lote(tmp_path, monkeypatch):
     dxf = next(tmp_path.glob("*_todas_placas.dxf"))
     msp = ezdxf.readfile(str(dxf)).modelspace()
     assert any(e.dxf.layer == LABEL_LAYER for e in msp)
+    # a tela mostra o número onde ele vai ser gravado (filho da peça)
+    from PySide6.QtWidgets import QGraphicsPathItem
+    w.tabs.setCurrentIndex(1)
+    w._redraw()
+    marks = [c for it in w.canvas.part_items for c in it.childItems() if isinstance(c, QGraphicsPathItem)]
+    assert len(marks) == 3
+    # os números não dependem de "uma cor por material"
+    w.set_material_mode(False)
+    assert w._part_labels() == {"A1": "1", "A2": "1", "B1": "2"}
+    assert any("1 = nº 8787" in x for x in w._laser_report_lines())
+    w.set_material_mode(True)
     for k in ("laser/materials", "laser/numbers"):
         settings().remove(k)
     w.dirty = False

@@ -359,9 +359,17 @@ class SettingsPanel(QWidget):
         self.material_mode.setChecked(bool(mode))
         self.material_mode.blockSignals(False)
         if not mode:
-            if force:
-                self._laser_keys = []
-            self.set_laser_groups(groups, values)
+            key = ["grp", has_requests, numbers.get("color"), numbers.get("on")] + [g.key for g in groups]
+            if key == self._laser_keys and not force:
+                return
+            self._laser_keys = key
+            self._clear_laser_rows()
+            self._add_group_rows(groups, values)
+            if has_requests:
+                self._add_numbers_row(numbers)
+            self.laser_box.setVisible(bool(groups))
+            from .nowheel import protect
+            protect(self.laser_box)
             return
         key = ["mat", has_requests] + [f"{m}={c}" for m, c in colors.items()] + [numbers.get("color")]
         if key == self._laser_keys and not force:
@@ -402,48 +410,7 @@ class SettingsPanel(QWidget):
             v.addLayout(vals)
             self.laser_rows.addWidget(row)
         if has_requests:
-            row = QWidget()
-            v = QVBoxLayout(row)
-            v.setContentsMargins(0, 0, 0, 0)
-            v.setSpacing(3)
-            head = QHBoxLayout()
-            head.setSpacing(6)
-            on = QCheckBox("Gravar nº da solicitação")
-            on.setChecked(bool(numbers.get("on")))
-            on.setToolTip("Grava um número pequeno no canto de cada peça: todas as peças do 1º aluno do\n"
-                          "lote levam 1, as do 2º levam 2… A legenda sai no relatório.")
-            head.addWidget(on, 1)
-            cb = self._color_combo(int(numbers.get("color", 1)),
-                                   "Cor dos números no DXF (uma camada própria no RDWorks, de gravação).")
-            head.addWidget(cb)
-            v.addLayout(head)
-            vals = QHBoxLayout()
-            vals.setSpacing(6)
-            hs = _dspin(1.5, 20, 0.5, 1, " mm", "Altura dos números. Em peças pequenas o Sindri diminui até caber.")
-            hs.setValue(float(numbers.get("height") or 3.0))
-            sp = _num_edit("velocidade (mm/s)", 2000, float(numbers.get("speed") or 0),
-                           "Velocidade da gravação dos números, em mm/s. Em branco = não mexer.")
-            pw = _num_edit("potência (%)", 100, float(numbers.get("power") or 0),
-                           "Potência da gravação dos números, em %. Em branco = não mexer.")
-
-            def emit_n(*_, o=on, c=cb, h=hs, a=sp, b=pw):
-                for w in (c, h, a, b):
-                    w.setEnabled(o.isChecked())
-                self.numbersChanged.emit({"on": o.isChecked(), "color": int(c.currentData()),
-                                          "height": float(h.value()), "speed": _num(a, 2000),
-                                          "power": _num(b, 100)})
-            for w in (cb, hs, sp, pw):
-                w.setEnabled(on.isChecked())
-            on.toggled.connect(emit_n)
-            cb.currentIndexChanged.connect(emit_n)
-            hs.valueChanged.connect(emit_n)
-            sp.textChanged.connect(emit_n)
-            pw.textChanged.connect(emit_n)
-            vals.addWidget(hs, 1)
-            vals.addWidget(sp, 1)
-            vals.addWidget(pw, 1)
-            v.addLayout(vals)
-            self.laser_rows.addWidget(row)
+            self._add_numbers_row(numbers)
         used = list(colors.values()) + ([int(numbers.get("color", 1))]
                                         if has_requests and numbers.get("on") else [])
         if len(used) != len(set(used)):
@@ -463,6 +430,58 @@ class SettingsPanel(QWidget):
             return
         self._laser_keys = keys
         self._clear_laser_rows()
+        self._add_group_rows(groups, values)
+        self.laser_box.setVisible(bool(groups))
+        from .nowheel import protect
+        protect(self.laser_box)
+
+    def _add_numbers_row(self, numbers: dict):
+        """Linha do nº da solicitação gravado nas peças (liga/desliga, cor, altura, velocidade, potência)."""
+        row = QWidget()
+        v = QVBoxLayout(row)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(3)
+        head = QHBoxLayout()
+        head.setSpacing(6)
+        on = QCheckBox("Gravar nº da solicitação")
+        on.setChecked(bool(numbers.get("on")))
+        on.setToolTip("Grava um número pequeno no canto de cada peça: todas as peças do 1º aluno do\n"
+                      "lote levam 1, as do 2º levam 2… Aparece no desenho em vermelho (ou na cor escolhida)\n"
+                      "e a legenda sai no relatório.")
+        head.addWidget(on, 1)
+        cb = self._color_combo(int(numbers.get("color", 1)),
+                               "Cor dos números no DXF (uma camada própria no RDWorks, de gravação).")
+        head.addWidget(cb)
+        v.addLayout(head)
+        vals = QHBoxLayout()
+        vals.setSpacing(6)
+        hs = _dspin(1.5, 20, 0.5, 1, " mm", "Altura dos números. Em peças pequenas o Sindri diminui até caber.")
+        hs.setValue(float(numbers.get("height") or 3.0))
+        sp = _num_edit("velocidade (mm/s)", 2000, float(numbers.get("speed") or 0),
+                       "Velocidade da gravação dos números, em mm/s. Em branco = não mexer.")
+        pw = _num_edit("potência (%)", 100, float(numbers.get("power") or 0),
+                       "Potência da gravação dos números, em %. Em branco = não mexer.")
+
+        def emit_n(*_, o=on, c=cb, h=hs, a=sp, b=pw):
+            for w in (c, h, a, b):
+                w.setEnabled(o.isChecked())
+            self.numbersChanged.emit({"on": o.isChecked(), "color": int(c.currentData()),
+                                      "height": float(h.value()), "speed": _num(a, 2000),
+                                      "power": _num(b, 100)})
+        for w in (cb, hs, sp, pw):
+            w.setEnabled(on.isChecked())
+        on.toggled.connect(emit_n)
+        cb.currentIndexChanged.connect(emit_n)
+        hs.valueChanged.connect(emit_n)
+        sp.textChanged.connect(emit_n)
+        pw.textChanged.connect(emit_n)
+        vals.addWidget(hs, 1)
+        vals.addWidget(sp, 1)
+        vals.addWidget(pw, 1)
+        v.addLayout(vals)
+        self.laser_rows.addWidget(row)
+
+    def _add_group_rows(self, groups: list, values: dict):
         for g in groups:
             row = QWidget()
             v = QVBoxLayout(row)
@@ -502,9 +521,6 @@ class SettingsPanel(QWidget):
             row.setToolTip("Camada do RDWorks com esta cor. Num lote com materiais diferentes, cada material "
                            "vai para uma cor própria no arquivo exportado.")
             self.laser_rows.addWidget(row)
-        self.laser_box.setVisible(bool(groups))
-        from .nowheel import protect
-        protect(self.laser_box)
 
     def reset_file_options(self):
         """Arquivo novo: volta unidade para automática e reativa todas as camadas."""

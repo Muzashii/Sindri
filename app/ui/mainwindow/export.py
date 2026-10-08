@@ -180,10 +180,14 @@ class ExportMixin:
             idx = self.sheet_index()
             only = {si for si in idx.ordered if idx.number[si] == sheet_no}
         groups = self._laser_plan(only)
-        cmap, rd_values, labels, numbers = laser.color_map(groups), None, {}, self.numbers_cfg()
+        cmap, rd_values, numbers = laser.color_map(groups), None, self.numbers_cfg()
+        labels = self._part_labels()
         if self.material_mode():
             _, cmap, rd_values = self._material_plan()
-            labels = self._part_labels()
+        elif labels:                                 # cores do desenho + camada dos números
+            vals = self.laser_values()
+            rd_values = {g.rd_index: tuple(vals[g.key]) for g in groups if vals.get(g.key)}
+            rd_values.update(laser.material_values({}, {}, numbers, self._laser_palette()))
         export_stats: dict = {}
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
@@ -312,6 +316,8 @@ class ExportMixin:
         settings().setValue("laser/numbers", json.dumps(new))
         if (new["on"], new["color"]) != (old["on"], old["color"]):
             self._refresh_laser_panel(force=True)
+        if (new["on"], new["color"], new["height"]) != (old["on"], old["color"], old["height"]):
+            self._redraw(keep_view=True)             # o desenho mostra os números onde vão ser gravados
 
     def _materials_in_use(self) -> list[str]:
         order = [m for m, _ in self.sheet_index().groups] if self.placements else []
@@ -342,7 +348,7 @@ class ExportMixin:
 
     def _part_labels(self) -> dict[str, str]:
         """id da peça -> número gravado nela (só peças de solicitações do portal)."""
-        if not self.material_mode() or not self.numbers_cfg().get("on"):
+        if not self.numbers_cfg().get("on"):
             return {}
         reqs = self._request_numbers()
         if not reqs:
@@ -404,7 +410,7 @@ class ExportMixin:
             if v:
                 lines.append(f"Laser · {g.material or 'sem material'} · {', '.join(g.layers) or 'camada'}: "
                              f"{v[0]:g} mm/s · {v[1]:g}%")
-        return lines
+        return lines + self._numbers_legend()
 
     def _apply_laser(self, exe: str, path: str, groups: list,
                      values: dict | None = None) -> tuple[bool, str]:

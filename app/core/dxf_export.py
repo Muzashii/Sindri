@@ -252,20 +252,27 @@ def _plain(text: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFD", text) if not unicodedata.combining(c))
 
 
-def _stroke_text(msp, text: str, x: float, y: float, height: float, layer: str, color: int):
-    """Escreve texto com linhas (sem fonte): largura de cada caractere = metade da altura."""
+def stroke_lines(text: str, x: float, y: float, height: float) -> list[list[tuple[float, float]]]:
+    """Traços do texto (fonte de linhas): uma lista de pontos por traço."""
     sy, sx = height / 2.0, height * 0.55
-    at = {"layer": layer, "color": color}
+    out = []
     cx = x
     for ch in _plain(text).upper():
         for line in _STROKES.get(ch, []):
-            pts = [(cx + px * sx, y + py * sy) for px, py in line]
-            if msp.doc.dxfversion == "AC1009":        # R12 não tem LWPOLYLINE
-                for a, b in zip(pts, pts[1:]):
-                    msp.add_line(a, b, dxfattribs=at)
-            else:
-                msp.add_lwpolyline(pts, dxfattribs=at)
+            out.append([(cx + px * sx, y + py * sy) for px, py in line])
         cx += sx + height * 0.3
+    return out
+
+
+def _stroke_text(msp, text: str, x: float, y: float, height: float, layer: str, color: int):
+    """Escreve texto com linhas (sem fonte): largura de cada caractere = metade da altura."""
+    at = {"layer": layer, "color": color}
+    for pts in stroke_lines(text, x, y, height):
+        if msp.doc.dxfversion == "AC1009":            # R12 não tem LWPOLYLINE
+            for a, b in zip(pts, pts[1:]):
+                msp.add_line(a, b, dxfattribs=at)
+        else:
+            msp.add_lwpolyline(pts, dxfattribs=at)
 
 
 def text_size(text: str, height: float) -> tuple[float, float]:

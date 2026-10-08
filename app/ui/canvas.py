@@ -434,6 +434,7 @@ class NestCanvas(QGraphicsView):
             it = PartItem(part, pl, self)
             it.setFlag(QGraphicsItem.ItemIsMovable, self.editable)
             self.scene().addItem(it)
+            self._add_engrave_label(it, part, pl)
             self.part_items.append(it)
             if (pl.part_id, pl.instance) in selected:
                 it.setSelected(True)
@@ -444,6 +445,49 @@ class NestCanvas(QGraphicsView):
             self.centerOn(center)
         else:
             self.fit_all()
+
+    engrave_labels: dict = {}           # id da peça -> nº gravado (igual ao que vai no DXF)
+    engrave_height: float = 3.0
+    engrave_aci: int = 1
+
+    def _add_engrave_label(self, item, part: Part, pl: Placement):
+        """Mostra o nº da solicitação exatamente onde ele vai ser gravado (filho da peça: acompanha
+        quando ela é arrastada)."""
+        text = self.engrave_labels.get(pl.part_id)
+        if not text:
+            return
+        from ..core.dxf_export import label_spot, stroke_lines
+        from ..core.validate import fine_solid, placed_geometry
+        cache = part.__dict__.setdefault("_engrave_spots", {})
+        key = (text, round(float(self.engrave_height), 2), round(pl.rotation, 3), bool(pl.mirrored))
+        if key not in cache:
+            try:
+                solid = fine_solid(part)
+                cache[key] = (solid, label_spot(placed_geometry(solid, Placement(pl.part_id, 0, 0, 0, 0,
+                                                                                 pl.rotation, pl.mirrored)),
+                                                text, self.engrave_height))
+            except Exception:
+                cache[key] = (None, None)
+        _, spot = cache[key]
+        if spot is None:
+            return
+        x, y, h = spot
+        path = QPainterPath()
+        for pts in stroke_lines(text, x, y, h):
+            path.moveTo(*pts[0])
+            for p in pts[1:]:
+                path.lineTo(*p)
+        # coordenadas da peça posicionada em (0, 0) -> coordenadas locais do item (desfaz a rotação)
+        from PySide6.QtGui import QTransform
+        local = QTransform().rotate(-pl.rotation).map(path)
+        from PySide6.QtWidgets import QGraphicsPathItem
+        from ..core.geometry import aci_to_rgb
+        child = QGraphicsPathItem(local, item)
+        pen = QPen(QColor(*aci_to_rgb(int(self.engrave_aci))), max(0.25, h * 0.12))
+        pen.setCapStyle(Qt.RoundCap)
+        child.setPen(pen)
+        child.setToolTip(f"Nº {text} gravado aqui")
+        child.setAcceptedMouseButtons(Qt.NoButton)
 
     def set_filter(self, tag: str):
         self.filter_tag = tag
