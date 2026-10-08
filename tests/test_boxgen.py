@@ -189,6 +189,32 @@ def test_aba_caixa_envia_para_o_encaixe(tmp_path, monkeypatch):
     w.set_mode(2)
     assert w.mode_stack.currentWidget() is w.box_panel and not w.nest_actions.isVisibleTo(w)
     bp = w.box_panel
+    # modelos: cada um mostra só os seus passos (numerados em sequência)
+    bp.model_tiles[MODEL_ELEC].click()
+    bp.regenerate()
+    assert bp.steps["placa"].isVisibleTo(bp) and not bp.steps["tampa"].isVisibleTo(bp)
+    assert not bp.steps["divisorias"].isVisibleTo(bp)
+    nums = [st.num.text() for k, st in bp.steps.items() if st.isVisibleTo(bp)]
+    assert nums == [str(i) for i in range(1, len(nums) + 1)]
+    bp.board_btns["uno"].click()
+    bp.regenerate()
+    assert bp.params().board == "uno" and any(pn.ghost for pn in bp.result.panels)
+    bp.model_tiles[MODEL_KERF].click()
+    bp.regenerate()
+    assert bp.steps["kerf"].isVisibleTo(bp) and not bp.steps["medidas"].isVisibleTo(bp)
+    bp._view_mode(1)
+    assert any(isinstance(it, __import__("PySide6.QtWidgets", fromlist=["x"]).QGraphicsSimpleTextItem)
+               and it.text() == "0,15" for it in bp.flat.scene().items())
+    bp._view_mode(0)
+    # receitas
+    from app.ui.box_panel import RECIPES
+    for name, values in RECIPES:
+        bp.apply_recipe(values)
+        assert bp.result is not None, name
+        assert bp.params().model == values["model"], name
+    bp.model_tiles[MODEL_DRAWER].click()
+    bp.regenerate()
+    assert bp.steps["gaveta"].isVisibleTo(bp) and bp.open_lbl.text() == "Abrir gaveta"
     bp.set_params(BoxParams(width=120, depth=90, height=50, cols=2, rows=1, quantity=2, lid=LID_CLOSED))
     bp.regenerate()
     assert bp.result is not None and bp.btn_send.isEnabled()
@@ -213,6 +239,32 @@ def test_aba_caixa_envia_para_o_encaixe(tmp_path, monkeypatch):
     # material pelo chip
     bp.mat_btns[1].click()
     assert bp.t.value() == 6 and bp.params().material == "MDF 6mm"
+    # modelos: cada um mostra só os seus passos (numerados em sequência)
+    bp.model_tiles[MODEL_ELEC].click()
+    bp.regenerate()
+    assert bp.steps["placa"].isVisibleTo(bp) and not bp.steps["tampa"].isVisibleTo(bp)
+    assert not bp.steps["divisorias"].isVisibleTo(bp)
+    nums = [st.num.text() for k, st in bp.steps.items() if st.isVisibleTo(bp)]
+    assert nums == [str(i) for i in range(1, len(nums) + 1)]
+    bp.board_btns["uno"].click()
+    bp.regenerate()
+    assert bp.params().board == "uno" and any(pn.ghost for pn in bp.result.panels)
+    bp.model_tiles[MODEL_KERF].click()
+    bp.regenerate()
+    assert bp.steps["kerf"].isVisibleTo(bp) and not bp.steps["medidas"].isVisibleTo(bp)
+    bp._view_mode(1)
+    assert any(isinstance(it, __import__("PySide6.QtWidgets", fromlist=["x"]).QGraphicsSimpleTextItem)
+               and it.text() == "0,15" for it in bp.flat.scene().items())
+    bp._view_mode(0)
+    # receitas
+    from app.ui.box_panel import RECIPES
+    for name, values in RECIPES:
+        bp.apply_recipe(values)
+        assert bp.result is not None, name
+        assert bp.params().model == values["model"], name
+    bp.model_tiles[MODEL_DRAWER].click()
+    bp.regenerate()
+    assert bp.steps["gaveta"].isVisibleTo(bp) and bp.open_lbl.text() == "Abrir gaveta"
     bp.set_params(BoxParams(width=120, depth=90, height=50, cols=2, rows=1, quantity=2, lid=LID_CLOSED))
     bp.regenerate()
     # medida inválida: avisa e desliga os botões
@@ -273,3 +325,114 @@ def test_dobradica_abre_sem_bater(lid, H, hl, D):
         for P, (_, pivot, axis, ang) in movers:
             Q = _rotate(P, pivot, axis, ang * frac)
             assert sum(_inside(b, Q, t) for b in body) == 0, f"bate no corpo a {ang * frac:.0f}°"
+
+
+# ------------------------------------------------------------------ modelos: gaveta, eletrônica, bandeja, kerf
+from app.core.boxgen import (BOARDS, KERF_STEPS, MODEL_DRAWER, MODEL_ELEC, MODEL_KERF, MODEL_TRAY,  # noqa: E402
+                             MODELS)
+
+MODEL_CASES = [
+    BoxParams(model=MODEL_DRAWER, width=150, depth=120, height=70, cols=2, rows=2, divider_clearance=0),
+    BoxParams(model=MODEL_DRAWER, width=150, depth=120, height=70, joint=JOINT_FLAT, pull="furo"),
+    BoxParams(model=MODEL_ELEC, width=120, depth=90, height=50, board="uno", cable_hole=8, vents=True),
+    BoxParams(model=MODEL_ELEC, width=200, depth=160, height=60, board="rpi"),
+    BoxParams(model=MODEL_TRAY, width=150, depth=120, height=40, cols=3, rows=2, ramp=True, handles=True,
+              divider_clearance=0),
+    BoxParams(model=MODEL_KERF),
+]
+
+
+@pytest.mark.parametrize("p", MODEL_CASES, ids=lambda p: f"{p.model}-{p.joint}")
+def test_modelos_montam_sem_sobreposicao(p):
+    r = generate(p)
+    real = replace_ghost(r)
+    cnt, (X, Y, Z) = occupancy(real, 0.6, holes=False)
+    assert cnt.max() == 1, "duas peças ocupam o mesmo lugar"
+
+
+def replace_ghost(r):
+    """A placa fantasma (só para ver) não entra na conferência de sobreposição."""
+    import copy
+    rr = copy.copy(r)
+    rr.panels = r.cut_panels
+    return rr
+
+
+def test_gaveta_cabe_no_movel_e_desliza():
+    p = BoxParams(model=MODEL_DRAWER, width=150, depth=120, height=70, cols=2, rows=1)
+    r = generate(p)
+    d, t, c = r.dims, p.thickness, p.lid_clearance
+    drawer = [pn for pn in r.cut_panels if pn.motion]
+    shell = [pn for pn in r.cut_panels if not pn.motion]
+    assert len(shell) == 5 and all(pn.motion[0] == "move" and pn.motion[1][1] < 0 for pn in drawer)
+    # a caixa da gaveta (sem a frente de acabamento) fica dentro do móvel com folga dos lados e em cima
+    box = [pn for pn in drawer if pn.kind != "frente_falsa"]
+    pts = np.array([pn.to3d(x, y, s) for pn in box for x, y in pn.poly.exterior.coords for s in (0, t)])
+    assert pts[:, 0].min() >= t + c - 1e-6 and pts[:, 0].max() <= d.W - t - c + 1e-6
+    assert pts[:, 2].min() >= t - 1e-6 and pts[:, 2].max() <= d.H - t - c + 1e-6
+    assert pts[:, 1].min() >= -1e-6 and pts[:, 1].max() <= d.D - t - c + 1e-6
+    # o puxador vazado atravessa a frente de acabamento e a frente da gaveta no mesmo lugar
+    ff = next(pn for pn in drawer if pn.kind == "frente_falsa")
+    gf = next(pn for pn in drawer if pn.name == "Gaveta: frente")
+    c1 = ff.poly.interiors[0].centroid
+    c2 = gf.poly.interiors[0].centroid
+    assert np.allclose(ff.to3d(c1.x, c1.y)[::2], gf.to3d(c2.x, c2.y)[::2])
+    # medidas internas = espaço útil da gaveta
+    q = BoxParams(model=MODEL_DRAWER, width=100, depth=80, height=40, inner=True)
+    assert (resolve_dims(q).Wi, resolve_dims(q).Di, resolve_dims(q).Hi) == (100, 80, 40)
+
+
+def test_eletronica_parafusos_alinhados_e_placa():
+    p = BoxParams(model=MODEL_ELEC, width=160, depth=100, height=50, board="uno", cable_hole=8)
+    r = generate(p)
+    t = p.thickness
+    lid = next(pn for pn in r.panels if pn.kind == "tampa_parafusada")
+    walls = [pn for pn in r.panels if pn.kind in ("frente", "fundo", "esquerda", "direita")]
+    assert len(lid.circles) == 6                        # 2 nas paredes longas (160 mm), 1 nas curtas
+    for u, v, rr in lid.circles:
+        x, y, z = lid.to3d(u, v, 0)
+        # embaixo de cada furo da tampa há um rasgo do parafuso em alguma parede (centro da espessura)
+        hits = 0
+        for w in walls:
+            o, U, V, N = (np.array(a, float) for a in (w.origin, w.U, w.V, w.N))
+            rel = np.array([x, y, z - 2]) - o
+            uu, vv, ss = rel @ U, rel @ V, rel @ N
+            if 0 < ss < t and not w.poly.contains(shapely.Point(uu, vv)) and w.poly.bounds[0] < uu < w.poly.bounds[2]:
+                hits += 1
+        assert hits == 1, "furo da tampa sem rasgo de parafuso embaixo"
+    base = next(pn for pn in r.panels if pn.kind == "base")
+    ghost = next(pn for pn in r.panels if pn.ghost)
+    assert ghost not in r.cut_panels and len(base.circles) == len(BOARDS["uno"][3])
+    for u, v, rr in base.circles:                       # furos da placa dentro do espaço útil
+        assert t + rr < u < r.dims.W - t - rr and t + rr < v < r.dims.D - t - rr
+
+
+def test_teste_de_kerf():
+    r = generate(BoxParams(model=MODEL_KERF, thickness=3, kerf=0.2))
+    assert r.params.kerf == 0                            # o teste é cortado sem compensação
+    comb = next(pn for pn in r.panels if pn.kind == "pente")
+    assert [tx[2] for tx in comb.texts] == [f"{k:.2f}".replace(".", ",") for k in KERF_STEPS]
+    # largura de cada rasgo = espessura − k
+    top = comb.poly.bounds[3]
+    line = shapely.LineString([(0.5, top - 1), (comb.poly.bounds[2] - 0.5, top - 1)])
+    gaps = line.difference(comb.poly)
+    widths = sorted(round(g.length, 3) for g in getattr(gaps, "geoms", [gaps]) if g.length < 10)
+    assert widths == sorted(round(3 - k, 3) for k in KERF_STEPS)
+
+
+@pytest.mark.parametrize("p", MODEL_CASES, ids=lambda p: f"{p.model}-{p.joint}")
+def test_dxf_de_cada_modelo_reimporta(tmp_path, p):
+    from app.core.part_builder import import_files
+    r = generate(p)
+    path = write_dxf(r, str(tmp_path / f"{p.model}.dxf"))
+    rep = import_files([path])
+    assert sum(pt.quantity for pt in rep.parts) == r.count()
+    assert not any(pt.is_open for pt in rep.parts)
+    msp = ezdxf.readfile(path).modelspace()
+    assert len(msp.query("CIRCLE")) == sum(len(pn.circles) for pn in r.cut_panels)
+    assert len(msp.query("TEXT")) == sum(len(pn.texts) for pn in r.cut_panels)
+
+
+def test_todos_os_modelos_tem_nome_e_validam_padrao():
+    for m in MODELS:
+        assert validate(BoxParams(model=m)) == [], m

@@ -135,6 +135,18 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
     de maior prioridade.
 45. Painel em passos numerados (MakerCase): os botões ilustrados são desenhados pela própria vista 3D a partir
     do gerador, então mostram a geometria real de cada tampa.
+46. Modelos além da caixa (ideias do boxes.py, mas sem as dezenas de parâmetros dele): gaveta, eletrônica,
+    bandeja e teste de kerf. Cada modelo mostra só os passos de que precisa; o resto vem com valor pronto.
+47. Eletrônica: tampa lisa 2 mm maior que as paredes (o furo de 3,3 mm não encosta na borda), um parafuso M3
+    no meio de cada parede (2 se a parede passa de 140 mm), rasgo em T na parede: canal de 3,1 mm até
+    (parafuso − espessura + 1) e rasgo da porca 5,7 × 2,6 mm a 2 mm da ponta. A placa (Uno/Mega/RPi) fica
+    centralizada e gira 90° se só couber assim; aparece em verde na prévia, mas não vai para o corte.
+48. Gaveta: medidas = móvel por fora; folga dos lados e em cima; a gaveta encosta na boca e a frente de
+    acabamento (W−1 × H−1) é colada nela, cobrindo a boca. O puxador vazado atravessa as duas frentes.
+49. Bandeja: rampas a 45° coladas, encostadas no fundo e na parede da frente de cada compartimento (o canto
+    toca as superfícies, sem sobrepor). A prévia da bandeja olha mais de cima (senão as rampas não aparecem).
+50. Teste de kerf: rasgos de largura (espessura − k) para k = 0…0,30 mm, cortados SEM compensação; o rasgo
+    em que a tira entra justa dá o kerf. Os valores são gravados (camada azul) e vão para o DXF como TEXT.
 
 ## Pendências conhecidas / a validar no laboratório
 - Testar R12 × R2000 no RDWorks real e manter como padrão o que importar melhor (hoje: R2000).

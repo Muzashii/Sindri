@@ -14,8 +14,9 @@ from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QFormLayout, QFrame, QGr
 from shapely.geometry import box as rect
 from shapely.geometry.polygon import orient
 
-from ..core.boxgen import (HINGED, JOINT_FINGER, JOINT_FLAT, LID_CHEST, LID_CLOSED, LID_DOORS,
-                           LID_HELP, LID_LIFT, LID_NAMES, LID_OPEN, LID_SLIDE, LID_TYPES, PRIORITY, BoxParams,
+from ..core.boxgen import (BOARDS, HINGED, JOINT_FINGER, JOINT_FLAT, LID_CHEST, LID_CLOSED, LID_DOORS, LID_HELP,
+                           LID_LIFT, LID_NAMES, LID_OPEN, LID_SLIDE, LID_TYPES, MODEL_BOX, MODEL_DRAWER, MODEL_ELEC,
+                           MODEL_HELP, MODEL_KERF, MODEL_NAMES, MODEL_TRAY, MODELS, PRIORITY, PULLS, BoxParams,
                            BoxResult, flat_layout, generate, summary, validate)
 from . import theme
 from .dialogs import settings
@@ -98,7 +99,8 @@ class Box3DView(QWidget):
         self.update()
 
     def reset_view(self):
-        self.yaw, self.pitch, self.zoom = -35.0, 28.0, 1.0
+        self.yaw, self.zoom = -35.0, 1.0
+        self.pitch = 50.0 if (self.result and self.result.params.model == "bandeja") else 28.0
         self.update()
 
     def _build_faces(self):
@@ -106,6 +108,7 @@ class Box3DView(QWidget):
         self._faces = []
         self._items = []                       # centro 3D de cada pedaço (ordem de desenho)
         self._boxes = []                       # caixa delimitadora 3D do miolo de cada pedaço
+        self._ghost = []                       # pedaço é só de mostruário (placa do Arduino)?
         self._order_key = None
         r = self.result
         if r is None:
@@ -143,6 +146,7 @@ class Box3DView(QWidget):
         center = P((minx + maxx) / 2, (miny + maxy) / 2, t / 2)
         item = len(self._items)
         self._items.append(center)
+        self._ghost.append(pn.ghost)
         # "miolo" da peça: sem os dentes que entram nas vizinhas, para as caixas não se cruzarem
         a, b, c, d = minx, miny, maxx, maxy
         if pn.kind in PRIORITY:
@@ -264,7 +268,10 @@ class Box3DView(QWidget):
                 pts2.append([a for a, _ in pr])
                 depth += sum(b for _, b in pr) / len(pr)
             depth /= len(rings)
-            if kind == "face":
+            if self._ghost[item]:              # placa eletrônica: verde de placa de circuito
+                lum = 0.65 + 0.35 * max(0.0, dot(nrm, light))
+                col = QColor.fromRgbF(0.10 * lum, 0.48 * lum, 0.28 * lum)
+            elif kind == "face":
                 lum = 0.70 + 0.30 * max(0.0, dot(nrm, light))
                 col = QColor.fromRgbF(min(1, wood.redF() * lum), min(1, wood.greenF() * lum),
                                       min(1, wood.blueF() * lum))
@@ -342,7 +349,19 @@ class FlatView(QGraphicsView):
         pen = QPen(QColor(tk["text"]), 0)
         pen.setCosmetic(True)
         fill = QBrush(theme.qcolor("part_fill"))
-        for pn, g, circles in flat_layout(result):
+        engrave = QColor("#2563eb")
+        for pn, g, circles, (dx, dy) in flat_layout(result):
+            for u, v, text, hgt in pn.texts:           # textos gravados da peça (ex.: valores do kerf)
+                it = QGraphicsSimpleTextItem(text)
+                it.setBrush(engrave)
+                fnt = QFont()
+                fnt.setPointSizeF(max(1.5, hgt * 0.9))
+                it.setFont(fnt)
+                it.setTransform(it.transform().scale(1, -1))
+                br = it.boundingRect()
+                it.setPos(u + dx - br.width() / 2, v + dy + br.height() / 2)
+                it.setZValue(2)
+                sc.addItem(it)
             path = QPainterPath()
             path.setFillRule(Qt.OddEvenFill)
             for ring in [g.exterior] + list(g.interiors):
@@ -351,10 +370,12 @@ class FlatView(QGraphicsView):
                 path.addEllipse(QPointF(cx, cy), r, r)
             sc.addPath(path, pen, fill)
             c = g.representative_point()
+            if pn.texts:
+                continue                               # peça com textos próprios: sem o nome por cima
             txt = QGraphicsSimpleTextItem(pn.name)
             txt.setBrush(QColor(tk["muted"]))
             f = QFont()
-            f.setPointSizeF(max(2.5, min(7.0, (g.bounds[3] - g.bounds[1]) / 7)))
+            f.setPointSizeF(max(2.5, min(5.0, (g.bounds[3] - g.bounds[1]) / 7)))
             txt.setFont(f)
             txt.setTransform(txt.transform().scale(1, -1))
             br = txt.boundingRect()
@@ -389,6 +410,39 @@ MATERIALS = [("MDF 3 mm", 3.0, "MDF 3mm"), ("MDF 6 mm", 6.0, "MDF 6mm"), ("Acrí
 GRIDS = [(1, 1, "Sem"), (2, 1, "2 × 1"), (2, 2, "2 × 2"), (3, 2, "3 × 2"), (4, 3, "4 × 3"), (0, 0, "Outra")]
 ICON_W, ICON_H = 84, 58
 
+# passos que cada modelo mostra (o resto fica escondido: menos coisa para entender)
+MODEL_STEPS = {
+    MODEL_BOX: ["medidas", "material", "tampa", "arestas", "divisorias", "extras", "quantidade"],
+    MODEL_DRAWER: ["medidas", "material", "gaveta", "arestas", "divisorias", "quantidade"],
+    MODEL_ELEC: ["medidas", "material", "placa", "arestas", "quantidade"],
+    MODEL_TRAY: ["medidas", "material", "arestas", "divisorias", "extras", "quantidade"],
+    MODEL_KERF: ["material", "kerf", "quantidade"],
+}
+MEASURE_HINT = {
+    MODEL_BOX: "Largura × profundidade × altura, em milímetros.",
+    MODEL_DRAWER: "Medidas do móvel por fora (internas = espaço útil da gaveta).",
+    MODEL_ELEC: "Medidas da caixa por fora, com a tampa (internas = espaço útil).",
+    MODEL_TRAY: "Largura × profundidade × altura da bandeja, em milímetros.",
+}
+
+# receitas: um clique e a caixa já sai certa para um uso comum
+RECIPES = [
+    ("Caixa para Arduino Uno", dict(model=MODEL_ELEC, width=100, depth=80, height=45, board="uno",
+                                    cable_hole=8, vents=True)),
+    ("Caixa para Raspberry Pi", dict(model=MODEL_ELEC, width=110, depth=80, height=45, board="rpi",
+                                     cable_hole=8, vents=True)),
+    ("Organizador de parafusos 4 × 3", dict(model=MODEL_TRAY, width=200, depth=150, height=40, cols=4, rows=3,
+                                             ramp=True)),
+    ("Porta-cartas (2 baralhos)", dict(model=MODEL_BOX, inner=True, width=133, depth=22, height=90,
+                                       lid=LID_LIFT, cols=2, rows=1, finger_hole=0)),
+    ("Caixote com alças (MDF 6 mm)", dict(model=MODEL_BOX, width=300, depth=200, height=150, thickness=6,
+                                          finger=18, material="MDF 6mm", handles=True)),
+    ("Gaveta de mesa", dict(model=MODEL_DRAWER, width=200, depth=250, height=80, cols=2, rows=1)),
+    ("Baú de lembranças", dict(model=MODEL_BOX, width=200, depth=120, height=90, lid=LID_CHEST,
+                               lid_height=22)),
+    ("Teste de kerf (MDF 3 mm)", dict(model=MODEL_KERF, thickness=3, material="MDF 3mm")),
+]
+
 
 class _Step(QFrame):
     """Cartão de um passo: número em destaque, título, explicação curta e o conteúdo."""
@@ -402,6 +456,7 @@ class _Step(QFrame):
         head = QHBoxLayout()
         head.setSpacing(10)
         num = QLabel(str(n))
+        self.num = num
         num.setObjectName("StepNum")
         num.setFixedSize(24, 24)
         num.setAlignment(Qt.AlignCenter)
@@ -411,11 +466,11 @@ class _Step(QFrame):
         head.addWidget(t)
         head.addStretch(1)
         v.addLayout(head)
-        if hint:
-            h = QLabel(hint)
-            h.setObjectName("StepHint")
-            h.setWordWrap(True)
-            v.addWidget(h)
+        self.hint = QLabel(hint)
+        self.hint.setObjectName("StepHint")
+        self.hint.setWordWrap(True)
+        self.hint.setVisible(bool(hint))
+        v.addWidget(self.hint)
         self.body = QVBoxLayout()
         self.body.setSpacing(8)
         v.addLayout(self.body)
@@ -510,11 +565,23 @@ class BoxPanel(QWidget):
         cv.setSpacing(8)
         head = QVBoxLayout()
         head.setSpacing(2)
+        title_row = QHBoxLayout()
         title = QLabel("Gerador de caixas")
         title.setObjectName("PanelTitle")
-        sub = QLabel("Siga os passos; a caixa ao lado muda na hora.")
+        from PySide6.QtWidgets import QMenu
+        self.btn_recipes = QPushButton("Receitas ▾")
+        self.btn_recipes.setToolTip("Modelos prontos para usos comuns: um clique e a caixa já sai certa")
+        menu = QMenu(self)
+        for name, values in RECIPES:
+            menu.addAction(name, lambda v=values: self.apply_recipe(v))
+        self.btn_recipes.setMenu(menu)
+        self.btn_recipes.setStyleSheet("QPushButton::menu-indicator { image: none; width: 0; }")
+        title_row.addWidget(title)
+        title_row.addStretch(1)
+        title_row.addWidget(self.btn_recipes)
+        sub = QLabel("Escolha o modelo e siga os passos; a prévia muda na hora.")
         sub.setObjectName("Muted")
-        head.addWidget(title)
+        head.addLayout(title_row)
         head.addWidget(sub)
         cv.addLayout(head)
 
@@ -528,8 +595,18 @@ class BoxPanel(QWidget):
         v.setContentsMargins(0, 0, 6, 0)
         v.setSpacing(8)
 
+        self.steps = {}
+        # ---- 0. modelo
+        s0 = _Step(1, "Modelo")
+        grid, self.model_tiles, self.model_grp = _tiles(self, [(m, MODEL_NAMES[m], MODEL_HELP[m]) for m in MODELS])
+        s0.body.addLayout(grid)
+        s0.hint.setVisible(True)
+        v.addWidget(s0)
+        self.steps["modelo"] = s0
+
         # ---- 1. medidas
         s1 = _Step(1, "Medidas", "Largura × profundidade × altura, em milímetros.")
+        self.steps["medidas"] = s1
         row = QHBoxLayout()
         row.setSpacing(6)
         self.w = _dspin(10, 3000, 5, 1, "", "Largura (X), em mm")
@@ -546,6 +623,7 @@ class BoxPanel(QWidget):
 
         # ---- 2. material
         s2 = _Step(2, "Material", "A espessura define os dentes e o material vai para a placa certa no encaixe.")
+        self.steps["material"] = s2
         chips = QHBoxLayout()
         chips.setSpacing(4)
         self.mat_grp = QButtonGroup(self)
@@ -571,8 +649,53 @@ class BoxPanel(QWidget):
         s2.body.addLayout(row)
         v.addWidget(s2)
 
+        # ---- gaveta (só no modelo Gaveta)
+        sg = _Step(3, "Gaveta", "A gaveta corre dentro do móvel; a frente de acabamento cobre a boca.")
+        seg, self.pull_btns, self.pull_grp = _seg(self, list(PULLS.items()))
+        self.pull_btns["vazado"].setToolTip("Rasgo para os dedos atravessando a frente")
+        self.pull_btns["furo"].setToolTip("Furo de 4 mm para parafusar um puxador")
+        sg.body.addWidget(QLabel("Puxador"))
+        sg.body.addLayout(seg)
+        gf = QFormLayout()
+        gf.setContentsMargins(0, 0, 0, 0)
+        self.drawer_gap = _dspin(0, 3, 0.1, 1, " mm", "Folga entre a gaveta e o móvel (dos lados e em cima)")
+        gf.addRow("Folga da gaveta", self.drawer_gap)
+        sg.body.addLayout(gf)
+        v.addWidget(sg)
+        self.steps["gaveta"] = sg
+
+        # ---- placa e furos (só no modelo Eletrônica)
+        sp = _Step(3, "Placa e furos", "A tampa é presa com parafusos M3 e porca, que entram num rasgo das "
+                                        "paredes.")
+        chips = QGridLayout()
+        chips.setSpacing(4)
+        self.board_grp = QButtonGroup(self)
+        self.board_btns = {}
+        for i, (key, (name, *_)) in enumerate(BOARDS.items()):
+            b = QPushButton(name)
+            b.setObjectName("Chip")
+            b.setCheckable(True)
+            b.setToolTip("Sem furos de placa" if not key else f"Furos de fixação do {name} no fundo (centralizado)")
+            self.board_grp.addButton(b, i)
+            chips.addWidget(b, i // 2, i % 2)
+            self.board_btns[key] = b
+        sp.body.addWidget(QLabel("Placa"))
+        sp.body.addLayout(chips)
+        pf = QFormLayout()
+        pf.setContentsMargins(0, 0, 0, 0)
+        self.cable = _dspin(0, 60, 1, 0, " mm", "Furo redondo no fundo para o cabo (0 = sem furo)")
+        self.screw = _dspin(8, 40, 1, 0, " mm", "Comprimento do parafuso M3 que prende a tampa")
+        self.vents = QCheckBox("Rasgos de ventilação nas laterais")
+        pf.addRow("Furo do cabo", self.cable)
+        pf.addRow("Parafuso M3 de", self.screw)
+        pf.addRow(self.vents)
+        sp.body.addLayout(pf)
+        v.addWidget(sp)
+        self.steps["placa"] = sp
+
         # ---- 3. tampa
         s3 = _Step(3, "Tampa")
+        self.steps["tampa"] = s3
         grid, self.lid_tiles, self.lid_grp = _tiles(self, [(k, LID_NAMES[k], LID_HELP[k]) for k in LID_TYPES])
         s3.body.addLayout(grid)
         self.lid_help = QLabel()
@@ -597,6 +720,7 @@ class BoxPanel(QWidget):
 
         # ---- 4. juntas
         s4 = _Step(4, "Encaixe das arestas")
+        self.steps["arestas"] = s4
         grid, self.joint_tiles, self.joint_grp = _tiles(self, [
             (JOINT_FINGER, "Dentes", "Encaixe de dentes (finger joint): firme, monta sem cola se o kerf estiver certo"),
             (JOINT_FLAT, "Lisa", "Arestas lisas, para colar (mais rápido de cortar)")], cols=2)
@@ -615,6 +739,7 @@ class BoxPanel(QWidget):
 
         # ---- 5. divisórias
         s5 = _Step(5, "Divisórias", "Compartimentos internos (colunas × linhas).")
+        self.steps["divisorias"] = s5
         grid, self.grid_tiles, self.grid_grp = _tiles(self, [((c, r), lbl, "") for c, r, lbl in GRIDS])
         s5.body.addLayout(grid)
         self.custom_grid = QWidget()
@@ -631,8 +756,29 @@ class BoxPanel(QWidget):
         s5.body.addWidget(self.custom_grid)
         v.addWidget(s5)
 
+        # ---- extras (caixa e bandeja)
+        se = _Step(6, "Extras")
+        self.handles = QCheckBox("Alças vazadas nas laterais")
+        self.handles.setToolTip("Rasgos para segurar a caixa pelas laterais")
+        self.ramp = QCheckBox("Rampa na frente de cada compartimento")
+        self.ramp.setToolTip("Facilita pegar parafusos e peças pequenas (cole cada rampa)")
+        se.body.addWidget(self.handles)
+        se.body.addWidget(self.ramp)
+        v.addWidget(se)
+        self.steps["extras"] = se
+
+        # ---- teste de kerf (instruções)
+        sk = _Step(3, "Como usar o teste",
+                   "1. Corte o pente e a tira (sem compensação de kerf).\n"
+                   "2. Encaixe a tira em cada rasgo, do mais largo (0,00) ao mais estreito.\n"
+                   "3. O número embaixo do rasgo em que ela entra justa é o kerf: use esse valor no passo "
+                   "\"Encaixe das arestas\" das próximas caixas.")
+        v.addWidget(sk)
+        self.steps["kerf"] = sk
+
         # ---- 6. quantidade
         s6 = _Step(6, "Quantidade")
+        self.steps["quantidade"] = s6
         row = QHBoxLayout()
         self.qty = QSpinBox()
         self.qty.setRange(1, 200)
@@ -671,8 +817,13 @@ class BoxPanel(QWidget):
 
         # ---- sinais
         for wdg in (self.w, self.d, self.h, self.t, self.finger, self.kerf, self.lid_gap, self.hole,
-                    self.lid_h, self.pin):
+                    self.lid_h, self.pin, self.drawer_gap, self.cable, self.screw):
             wdg.valueChanged.connect(self._changed)
+        for grp in (self.pull_grp, self.board_grp):
+            grp.idClicked.connect(self._changed)
+        for cb in (self.handles, self.ramp, self.vents):
+            cb.toggled.connect(self._changed)
+        self.model_grp.idClicked.connect(lambda *_: self._model_picked())
         for wdg in (self.cols, self.rows, self.qty):
             wdg.valueChanged.connect(self._changed)
         for grp in (self.measure_grp, self.lid_grp, self.joint_grp):
@@ -762,11 +913,20 @@ class BoxPanel(QWidget):
     def lid(self) -> str:
         return self._checked_key(self.lid_tiles, LID_OPEN)
 
+    def model(self) -> str:
+        return self._checked_key(self.model_tiles, MODEL_BOX)
+
     def params(self) -> BoxParams:
-        return BoxParams(width=self.w.value(), depth=self.d.value(), height=self.h.value(),
+        model = self.model()
+        gap = self.drawer_gap.value() if model == MODEL_DRAWER else self.lid_gap.value()
+        return BoxParams(model=model, handles=self.handles.isChecked(), ramp=self.ramp.isChecked(),
+                         board=self._checked_key(self.board_btns, ""), cable_hole=self.cable.value(),
+                         vents=self.vents.isChecked(), screw_len=self.screw.value(),
+                         pull=self._checked_key(self.pull_btns, "vazado"),
+                         width=self.w.value(), depth=self.d.value(), height=self.h.value(),
                          inner=bool(self.measure_btns[True].isChecked()), thickness=self.t.value(),
                          finger=self.finger.value(), kerf=self.kerf.value(), lid=self.lid(),
-                         cols=self.cols.value(), rows=self.rows.value(), lid_clearance=self.lid_gap.value(),
+                         cols=self.cols.value(), rows=self.rows.value(), lid_clearance=gap,
                          finger_hole=self.hole.value(), lid_height=self.lid_h.value(), pin=self.pin.value(),
                          joint=self._checked_key(self.joint_tiles, JOINT_FINGER),
                          engrave_names=self.engrave.isChecked(), quantity=self.qty.value(),
@@ -776,12 +936,20 @@ class BoxPanel(QWidget):
         widgets = ((self.w, p.width), (self.d, p.depth), (self.h, p.height), (self.t, p.thickness),
                    (self.finger, p.finger), (self.kerf, p.kerf), (self.cols, p.cols), (self.rows, p.rows),
                    (self.lid_gap, p.lid_clearance), (self.hole, p.finger_hole), (self.qty, p.quantity),
-                   (self.lid_h, p.lid_height), (self.pin, p.pin))
+                   (self.lid_h, p.lid_height), (self.pin, p.pin), (self.drawer_gap, p.lid_clearance),
+                   (self.cable, p.cable_hole), (self.screw, p.screw_len))
         for wdg, val in widgets:
             wdg.blockSignals(True)
             wdg.setValue(val)
             wdg.blockSignals(False)
         self.measure_btns[bool(p.inner)].setChecked(True)
+        self.model_tiles.get(p.model, self.model_tiles[MODEL_BOX]).setChecked(True)
+        self.pull_btns.get(p.pull, self.pull_btns["vazado"]).setChecked(True)
+        self.board_btns.get(p.board, self.board_btns[""]).setChecked(True)
+        for cb, val in ((self.handles, p.handles), (self.ramp, p.ramp), (self.vents, p.vents)):
+            cb.blockSignals(True)
+            cb.setChecked(bool(val))
+            cb.blockSignals(False)
         self.lid_tiles.get(p.lid, self.lid_tiles[LID_OPEN]).setChecked(True)
         self.joint_tiles.get(p.joint, self.joint_tiles[JOINT_FINGER]).setChecked(True)
         self._sync_grid_tile()
@@ -803,6 +971,44 @@ class BoxPanel(QWidget):
 
     def _save_settings(self):
         settings().setValue("box/params", json.dumps(self.params().to_json()))
+
+    def apply_recipe(self, values: dict):
+        """Receita: parte dos valores padrão e aplica os da receita (medidas, modelo, extras…)."""
+        cur = self.params()
+        keep = dict(kerf=cur.kerf, quantity=1)
+        self.set_params(BoxParams(**{**keep, **values}))
+        self._model_picked()
+        self.regenerate()
+
+    def _model_picked(self):
+        m = self.model()
+        self.open_slider.setValue(55 if m in (MODEL_DRAWER, MODEL_ELEC) else 0)
+        # bandeja: olhar mais de cima para ver as rampas e os compartimentos
+        self.view3d.pitch = 50.0 if m == MODEL_TRAY else 28.0
+        self.view3d.update()
+        if m == MODEL_BOX:
+            self._lid_picked()
+        self._changed()
+
+    def _show_steps(self):
+        m = self.model()
+        visible = MODEL_STEPS.get(m, MODEL_STEPS[MODEL_BOX])
+        self.steps["modelo"].hint.setText(MODEL_HELP.get(m, ""))
+        n = 1
+        self.steps["modelo"].num.setText("1")
+        for key, step in self.steps.items():
+            if key == "modelo":
+                continue
+            on = key in visible
+            step.setVisible(on)
+            if on:
+                n += 1
+                step.num.setText(str(n))
+        self.steps["medidas"].hint.setText(MEASURE_HINT.get(m, ""))
+        self.ramp.setVisible(m == MODEL_TRAY)
+        self.handles.setEnabled(m == MODEL_TRAY or self.lid() in (LID_OPEN, LID_CLOSED, LID_LIFT))
+        self.handles.setToolTip("Rasgos para segurar a caixa pelas laterais" if self.handles.isEnabled() else
+                                "Não combina com esta tampa (a lateral tem dobradiça ou rasgo)")
 
     # ---------------- material
     def _material_chip(self, i: int):
@@ -852,7 +1058,8 @@ class BoxPanel(QWidget):
         self.open_slider.setValue(55 if lid in (LID_CHEST, LID_DOORS, LID_SLIDE, LID_LIFT) else 0)
 
     def _contextual(self):
-        lid = self.lid()
+        self._show_steps()
+        lid = self.lid() if self.model() == MODEL_BOX else LID_OPEN
         self.lid_help.setText(LID_HELP.get(lid, ""))
         hinged, slide, lift = lid in HINGED, lid == LID_SLIDE, lid == LID_LIFT
         for wdg, on in ((self.lid_h, hinged), (self.lid_h_lbl, hinged), (self.pin, hinged), (self.pin_lbl, hinged),
@@ -864,7 +1071,8 @@ class BoxPanel(QWidget):
         finger = self._checked_key(self.joint_tiles, JOINT_FINGER) == JOINT_FINGER
         self.finger.setVisible(finger)
         self.finger_lbl.setVisible(finger)
-        movable = lid != LID_OPEN and lid != LID_CLOSED
+        movable = (lid != LID_OPEN and lid != LID_CLOSED) or self.model() in (MODEL_DRAWER, MODEL_ELEC)
+        self.open_lbl.setText("Abrir gaveta" if self.model() == MODEL_DRAWER else "Abrir tampa")
         self.open_lbl.setVisible(movable and self.views.currentIndex() == 0)
         self.open_slider.setVisible(movable and self.views.currentIndex() == 0)
 
@@ -897,11 +1105,17 @@ class BoxPanel(QWidget):
         s = summary(self.result)
         ext, inn = s["externa"], s["interna"]
         litros = f"{s['volume_l']:.2f}".replace(".", ",")
-        self.info.setText(
-            f"Externa <b>{_fmt(ext[0])} × {_fmt(ext[1])} × {_fmt(ext[2])} mm</b>  ·  "
-            f"interna {_fmt(inn[0])} × {_fmt(inn[1])} × {_fmt(inn[2])} mm  ·  {litros} L")
+        if p.model == MODEL_KERF:
+            self.info.setText(f"Pente <b>{_fmt(ext[0])} × {_fmt(ext[2])} mm</b> com {len(self.result.panels[0].texts)}"
+                              " rasgos (kerf de 0,00 a 0,30 mm) + tira de teste")
+        else:
+            what = "gaveta: " if p.model == MODEL_DRAWER else ""
+            self.info.setText(
+                f"Externa <b>{_fmt(ext[0])} × {_fmt(ext[1])} × {_fmt(ext[2])} mm</b>  ·  "
+                f"interna ({what}espaço útil) {_fmt(inn[0])} × {_fmt(inn[1])} × {_fmt(inn[2])} mm  ·  {litros} L")
         n = s["pecas"] * p.quantity
-        self.foot_info.setText(f"{LID_NAMES[p.lid]} · {n} peças · {_fmt(s['area_cm2'] * p.quantity)} cm² de "
+        kind = LID_NAMES[p.lid] if p.model == MODEL_BOX else MODEL_NAMES[p.model]
+        self.foot_info.setText(f"{kind} · {n} peças · {_fmt(s['area_cm2'] * p.quantity)} cm² de "
                                f"{p.material_name()}")
         self._update_buttons()
 
@@ -944,6 +1158,20 @@ class BoxPanel(QWidget):
         for lid, tile in self.lid_tiles.items():
             opened = {LID_CHEST: 0.6, LID_DOORS: 0.55, LID_SLIDE: 0.45, LID_LIFT: 0.5}.get(lid, 0.0)
             tile.setIcon(QIcon(render_icon(BoxParams(lid=lid, **base), ICON_W, ICON_H, opened)))
+        model_icons = {
+            MODEL_BOX: (BoxParams(lid=LID_CHEST, **base), 0.6),
+            MODEL_DRAWER: (BoxParams(model=MODEL_DRAWER, width=100, depth=90, height=60, thickness=4, finger=13,
+                                     lid_clearance=0.8), 0.6),
+            MODEL_ELEC: (BoxParams(model=MODEL_ELEC, width=100, depth=80, height=45, thickness=4, finger=13,
+                                   board="uno", vents=True), 0.5),
+            MODEL_TRAY: (BoxParams(model=MODEL_TRAY, width=110, depth=90, height=30, thickness=3, finger=12,
+                                   cols=3, rows=2, ramp=True), 0.0),
+            MODEL_KERF: (BoxParams(model=MODEL_KERF, thickness=4), 0.0),
+        }
+        for m, tile in self.model_tiles.items():
+            prm, opened = model_icons[m]
+            pitch = 50 if m == MODEL_TRAY else (18 if m == MODEL_KERF else 28)
+            tile.setIcon(QIcon(render_icon(prm, ICON_W, ICON_H, opened, pitch=pitch)))
         for joint, tile in self.joint_tiles.items():
             pm = render_icon(BoxParams(width=60, depth=50, height=40, thickness=6, finger=11, joint=joint,
                                        lid=LID_CLOSED), ICON_W, ICON_H, yaw=-40, pitch=24)

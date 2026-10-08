@@ -12,7 +12,7 @@ compacta possível nas placas e entrega um único DXF pronto para o **RDWorks**,
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
 ![PySide6](https://img.shields.io/badge/Qt-PySide6-41CD52?logo=qt&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows&logoColor=white)
-![Testes](https://img.shields.io/badge/testes-193%20pytest-success)
+![Testes](https://img.shields.io/badge/testes-209%20pytest-success)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-MIT-blue)
 
 [Como funciona](#-como-funciona) · [Recursos](#-recursos) · [Instalação](#-instalação-windows) ·
@@ -37,7 +37,7 @@ compacta possível nas placas e entrega um único DXF pronto para o **RDWorks**,
 | 🎨 **Quem é cada peça** | Cada solicitação ganha uma cor; clique numa delas para ver só as peças daquela pessoa |
 | ✅ **Checklist de corte** | Botão **Feito** em cada peça e caixinha por placa cortada, salvos junto com o projeto |
 | 📐 **DXF fiel ao original** | Arcos continuam arcos, camadas e cores preservadas, furos antes do contorno, R2000 ou R12 |
-| 📦 **Gerador de caixas** | 6 tipos de tampa (baú, deslizante, porta dupla…), dentes ou junta lisa, divisórias e prévia 3D; as peças vão direto para o encaixe |
+| 📦 **Gerador de caixas** | Caixa (6 tampas), gaveta, caixa de eletrônica (Arduino/Raspberry), bandeja com rampas e teste de kerf, com receitas prontas e prévia 3D; as peças vão direto para o encaixe |
 | ⚡ **Um clique até o laser** | `Ctrl+E` gera `todas_placas.dxf` + `relatorio.pdf` e abre o RDWorks com o arquivo |
 | 🔄 **Sempre atualizado** | Ao abrir, procura versão nova aqui no GitHub e se atualiza com backup |
 
@@ -231,34 +231,46 @@ transforma em **linhas horizontais com potências diferentes**, prontas para gra
 ## 📦 Gerador de caixas
 
 Na aba **Caixa** (topo da janela, ou `Ctrl+3`), monte uma caixa para cortar sem desenhar nada. A configuração
-segue passos numerados, no estilo do MakerCase, com botões ilustrados; a prévia 3D muda na hora.
+segue passos numerados, no estilo do MakerCase, com botões ilustrados; a prévia 3D muda na hora e cada modelo
+mostra só os passos de que precisa.
 
 <div align="center">
 <img src="docs/tela_caixa.png" alt="Sindri — gerador de caixas com tampa baú aberta na prévia 3D" width="900">
 </div>
 
-1. **Medidas** — largura, profundidade e altura em mm, externas (tamanho final) ou internas (espaço útil).
-2. **Material** — MDF 3 mm, MDF 6 mm, Acrílico 3 mm ou outro; a espessura define os dentes e o material vai
-   para a placa certa no encaixe.
-3. **Tampa** — seis tipos:
+**Modelos** (passo 1):
 
-   | Tampa | Como funciona |
-   |---|---|
-   | Aberta | Só base e paredes |
-   | Fechada | Tampa com dentes como as outras faces |
-   | Tampa solta | Placa de cima + guia colada por baixo que encaixa na boca da caixa, com furo para o dedo |
-   | **Baú** | Tampa rasa que abre para trás, presa por dois pinos numa orelha atrás das laterais |
-   | **Deslizante** | Corre por um rasgo nas laterais; a frente é mais baixa para a tampa passar |
-   | **Porta dupla** | Duas abas que abrem para os lados, cada uma presa por dois pinos |
+| Modelo | O que gera |
+|---|---|
+| **Caixa** | Caixa com dentes e seis tipos de tampa (abaixo), divisórias e alças |
+| **Gaveta** | Móvel aberto na frente + gaveta que corre dentro, frente de acabamento com puxador vazado ou furo para puxador; divisórias dentro da gaveta |
+| **Eletrônica** | Tampa presa com parafusos M3 e porca (rasgo em T nas paredes), furos de fixação de **Arduino Uno, Arduino Mega ou Raspberry Pi**, furo de cabo e ventilação |
+| **Bandeja** | Organizador baixo com divisórias e **rampa** em cada compartimento para pegar parafusos |
+| **Teste de kerf** | Pente com 7 rasgos (kerf de 0,00 a 0,30 mm, valores gravados) e uma tira: o rasgo em que a tira entra justa diz o kerf do laser |
 
-   Baú e porta dupla usam pinos de 3,2 mm (parafuso M3 com porca, palito ou filamento). O pino fica fora do
-   corpo da caixa para a tampa abrir sem bater; a folga da frente do baú é calculada sozinha.
-4. **Encaixe das arestas** — **dentes** (*finger joint*, monta sem cola com o kerf certo) ou **lisa** (para colar),
-   largura do dente e **kerf**.
-5. **Divisórias** — sem, 2×1, 2×2, 3×2, 4×3 ou outra grade; cruzadas por meia-madeira e com dentes na base.
-6. **Quantidade** de caixas e, se quiser, o nome gravado em cada peça.
+**Receitas** (botão no topo do painel): Caixa para Arduino Uno, Caixa para Raspberry Pi, Organizador de parafusos
+4 × 3, Porta-cartas (2 baralhos), Caixote com alças (MDF 6 mm), Gaveta de mesa, Baú de lembranças e Teste de kerf.
 
-Na prévia, **Abrir tampa** mostra a tampa girando no pino, deslizando ou levantando; **Separar peças** mostra a
+**Passos** (aparecem conforme o modelo): medidas (externas ou internas), material (MDF 3 mm, MDF 6 mm,
+Acrílico 3 mm ou outro), tampa, gaveta, placa e furos, encaixe das arestas (**dentes** ou **lisa** para colar,
+largura do dente e kerf), divisórias (sem, 2×1, 2×2, 3×2, 4×3 ou outra grade), extras (alças, rampas) e
+quantidade.
+
+**Tampas** do modelo Caixa:
+
+| Tampa | Como funciona |
+|---|---|
+| Aberta | Só base e paredes |
+| Fechada | Tampa com dentes como as outras faces |
+| Tampa solta | Placa de cima + guia colada por baixo que encaixa na boca da caixa, com furo para o dedo |
+| **Baú** | Tampa rasa que abre para trás, presa por dois pinos numa orelha atrás das laterais |
+| **Deslizante** | Corre por um rasgo nas laterais; a frente é mais baixa para a tampa passar |
+| **Porta dupla** | Duas abas que abrem para os lados, cada uma presa por dois pinos |
+
+Baú e porta dupla usam pinos de 3,2 mm (parafuso M3 com porca, palito ou filamento). O pino fica fora do
+corpo da caixa para a tampa abrir sem bater; a folga da frente do baú é calculada sozinha.
+
+Na prévia, **Abrir tampa / gaveta** mostra a tampa girando no pino, deslizando ou levantando e a gaveta saindo; **Separar peças** mostra a
 montagem; **Peças para cortar** mostra exatamente o que vai para o laser.
 **Enviar para o encaixe** grava o DXF em `Documentos\Sindri\Caixas\` e coloca as peças na aba Encaixe (com a
 quantidade e o material), juntando ao que já estiver aberto se você quiser. **Salvar só o DXF…** grava o arquivo.
@@ -371,8 +383,8 @@ pip install pytest pytest-cov
 python -m pytest --cov=app/core
 ```
 
-193 testes cobrem importação, geometria, NFP, posicionamento sem sobreposição, otimizador paralelo, exportação R12/R2000
-com reimportação, projetos, intranet (com página simulada), limpeza, atualização, CLI, o gerador de caixas (montagem
+209 testes cobrem importação, geometria, NFP, posicionamento sem sobreposição, otimizador paralelo, exportação R12/R2000
+com reimportação, projetos, intranet (com página simulada), limpeza, atualização, CLI, o gerador de caixas (todos os modelos e tampas: montagem
 conferida em 3D, voxel a voxel, sem sobreposição nem buracos, e as dobradiças abrindo sem bater) e um fluxo completo da interface em modo sem tela.
 
 Os testes isolam preferências, salvamento automático, perfil de navegador e área de transferência.
