@@ -123,6 +123,18 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
     octante da câmera); as divisórias são divididas nos cruzamentos só para o desenho.
 41. "Enviar para o encaixe" grava o DXF em `Documentos/Sindri/Caixas` e usa o mesmo caminho de importação dos
     DXFs comuns (multiplicador = nº de caixas, material = "MDF {espessura}mm" se não informado).
+42. Tampas com dobradiça (baú, porta dupla): o pino fica FORA do corpo, numa orelha da parede (atrás do fundo /
+    ao lado das laterais), à distância vp = (aba − espessura)/2. Com o pino dentro da aba, a parte da tampa
+    sobre a parede desceria ao abrir e bateria nela. Perto do topo a aresta parede/orelha fica lisa (a orelha
+    precisa de material inteiro). A aba da frente do baú, paralela ao eixo, recebe folga ≥ vp²/(2·(D+vp)) para
+    passar por cima da frente. Um teste gira as tampas de 0 a 110° e confere que nada entra no corpo.
+43. Tampa deslizante: rasgo nas laterais do topo da frente (mais baixa) até UMA espessura antes do fundo; se
+    fosse até o fundo, a faixa de cima ficaria presa só nos dentes.
+44. Arestas com encaixe só em parte do comprimento: o vizinho pode ser (nome, a, b); fora do trecho a faixa é
+    da própria placa e a ponta do trecho vai para a de maior prioridade. Junta lisa = um trecho só, todo da placa
+    de maior prioridade.
+45. Painel em passos numerados (MakerCase): os botões ilustrados são desenhados pela própria vista 3D a partir
+    do gerador, então mostram a geometria real de cada tampa.
 
 ## Pendências conhecidas / a validar no laboratório
 - Testar R12 × R2000 no RDWorks real e manter como padrão o que importar melhor (hoje: R2000).

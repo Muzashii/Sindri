@@ -6,22 +6,59 @@ import math
 from typing import Optional
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPen, QPolygonF
-from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QFormLayout, QFrame, QGraphicsScene,
-                               QGraphicsSimpleTextItem, QGraphicsView, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-                               QScrollArea, QSlider, QSpinBox, QStackedWidget, QVBoxLayout, QWidget)
+from PySide6.QtCore import QSize
+from PySide6.QtGui import QBrush, QColor, QFont, QIcon, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
+from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QFormLayout, QFrame, QGraphicsScene, QGraphicsSimpleTextItem,
+                               QGraphicsView, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea,
+                               QSizePolicy, QSlider, QSpinBox, QStackedWidget, QToolButton, QVBoxLayout, QWidget)
 from shapely.geometry import box as rect
 from shapely.geometry.polygon import orient
 
-from ..core.boxgen import (PRIORITY, LID_LIFT, LID_NAMES, LID_TYPES, BoxParams, BoxResult, flat_layout, generate,
-                           summary, validate)
+from ..core.boxgen import (HINGED, JOINT_FINGER, JOINT_FLAT, LID_CHEST, LID_CLOSED, LID_DOORS,
+                           LID_HELP, LID_LIFT, LID_NAMES, LID_OPEN, LID_SLIDE, LID_TYPES, PRIORITY, BoxParams,
+                           BoxResult, flat_layout, generate, summary, validate)
 from . import theme
 from .dialogs import settings
-from .settings_panel import _dspin, _Section
+from .settings_panel import _dspin
 
 
 def _fmt(v: float) -> str:
     return f"{v:.1f}".rstrip("0").rstrip(".").replace(".", ",")
+
+
+def _move(q: tuple, motion: tuple, f: float) -> tuple:
+    """Posição de um ponto da tampa aberta numa fração ``f`` (0..1) do movimento."""
+    if motion[0] == "move":
+        d = motion[1]
+        return (q[0] + d[0] * f, q[1] + d[1] * f, q[2] + d[2] * f)
+    _, pivot, k, ang = motion                  # gira: fórmula de Rodrigues em volta do eixo k
+    th = math.radians(ang * f)
+    c, s = math.cos(th), math.sin(th)
+    v = (q[0] - pivot[0], q[1] - pivot[1], q[2] - pivot[2])
+    kv = k[0] * v[0] + k[1] * v[1] + k[2] * v[2]
+    cr = (k[1] * v[2] - k[2] * v[1], k[2] * v[0] - k[0] * v[2], k[0] * v[1] - k[1] * v[0])
+    return tuple(pivot[i] + v[i] * c + cr[i] * s + k[i] * kv * (1 - c) for i in range(3))
+
+
+def render_icon(params: BoxParams, w: int, h: int, open_f: float = 0.0, yaw: float = -35.0,
+                pitch: float = 28.0) -> QPixmap:
+    """Desenho 3D pequeno de uma caixa (para os botões ilustrados)."""
+    v = Box3DView(compact=True)
+    v.setAttribute(Qt.WA_TranslucentBackground)
+    v.setMinimumSize(10, 10)
+    v.resize(w, h)
+    v.yaw, v.pitch = yaw, pitch
+    v.open = open_f
+    try:
+        v.set_result(generate(params))
+    except ValueError:
+        return QPixmap(w, h)
+    pm = QPixmap(w * 2, h * 2)
+    pm.setDevicePixelRatio(2)
+    pm.fill(Qt.transparent)
+    v.render(pm)
+    v.deleteLater()
+    return pm
 
 
 # ------------------------------------------------------------------------------------------ vista 3D
@@ -30,11 +67,14 @@ class Box3DView(QWidget):
 
     Arrastar gira, a roda dá zoom, duplo clique volta à vista inicial."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, compact: bool = False):
         super().__init__(parent)
         self.result: Optional[BoxResult] = None
         self.explode = 0.0                     # 0 = montada, 1 = bem separada
+        self.open = 0.0                        # 0 = tampa fechada, 1 = aberta (gira no pino / desliza / sobe)
+        self.compact = compact                 # ícone: sem fundo nem dica de uso
         self.yaw, self.pitch, self.zoom = -35.0, 28.0, 1.0
+        self._bounds = ((0, 0, 0), 1.0)        # centro e diagonal do que está desenhado
         self._drag: Optional[QPointF] = None
         self._faces: list = []                 # cache: faces em 3D (independe da câmera)
         self.setMinimumSize(200, 200)
@@ -49,6 +89,11 @@ class Box3DView(QWidget):
 
     def set_explode(self, f: float):
         self.explode = max(0.0, min(1.0, f))
+        self._build_faces()
+        self.update()
+
+    def set_open(self, f: float):
+        self.open = max(0.0, min(1.0, f))
         self._build_faces()
         self.update()
 
@@ -78,11 +123,20 @@ class Box3DView(QWidget):
                 pieces = [g for pc in pieces for g in getattr(pc, "geoms", [pc]) if g.area > 1e-6]
             for piece in pieces:
                 self._add_piece(pn, orient(piece, 1.0), ex, t, pn.circles if piece is pn.poly else [])
+        pts = [q for rings, *_ in self._faces for ring in rings for q in ring]
+        lo = [min(q[k] for q in pts) for k in range(3)]
+        hi = [max(q[k] for q in pts) for k in range(3)]
+        self._bounds = (tuple((lo[k] + hi[k]) / 2 for k in range(3)),
+                        max(1.0, math.dist(lo, hi)))
 
     def _add_piece(self, pn, poly, ex, t, circles):
+        motion = pn.motion if (pn.motion and self.open > 0) else None
+
         def P(u, v, s):
-            x, y, z = pn.to3d(u, v, s)
-            return (x + ex[0], y + ex[1], z + ex[2])
+            q = pn.to3d(u, v, s)
+            if motion is not None:             # abrir a tampa: gira em volta do pino ou desliza
+                q = _move(q, motion, self.open)
+            return (q[0] + ex[0], q[1] + ex[1], q[2] + ex[2])
 
         U, V, N = pn.U, pn.V, pn.N
         minx, miny, maxx, maxy = poly.bounds
@@ -177,19 +231,18 @@ class Box3DView(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         tk = theme.tokens()
-        p.fillRect(self.rect(), QColor(tk["canvas"]))
+        if not self.compact:
+            p.fillRect(self.rect(), QColor(tk["canvas"]))
         r = self.result
         if r is None or not self._faces:
             p.setPen(QColor(tk["muted"]))
-            p.drawText(self.rect(), Qt.AlignCenter, "Ajuste as medidas para ver a caixa")
+            p.drawText(self.rect(), Qt.AlignCenter, "" if self.compact else "Ajuste as medidas para ver a caixa")
             p.end()
             return
         right, up, fwd = self._basis()
-        d = r.dims
-        cx, cy, cz = d.W / 2, d.D / 2, d.total_h / 2
+        (cx, cy, cz), diag = self._bounds
         dot = lambda a, b: a[0] * b[0] + a[1] * b[1] + a[2] * b[2]  # noqa: E731
-        diag = math.sqrt(d.W ** 2 + d.D ** 2 + d.total_h ** 2) * (1 + self.explode * 0.9)
-        scale = min(self.width(), self.height()) / diag * 0.92 * self.zoom
+        scale = min(self.width(), self.height()) / diag * (0.98 if self.compact else 0.92) * self.zoom
         ox, oy = self.width() / 2, self.height() / 2
 
         def proj(q):
@@ -221,7 +274,7 @@ class Box3DView(QWidget):
             draw.append((rank[item], -depth, kind == "face", pts2, col))
         # peça por peça (ordem topológica); dentro da peça, as faces mais longe primeiro
         draw.sort(key=lambda x: (x[0], x[1]))
-        edge = QPen(QColor(60, 35, 25, 150), 0.8)
+        edge = QPen(QColor(60, 35, 25, 150), 0.6 if self.compact else 0.8)
         edge.setCosmetic(True)
         for _, _, is_face, pts2, col in draw:
             path = QPainterPath()
@@ -231,12 +284,13 @@ class Box3DView(QWidget):
             p.setBrush(QBrush(col))
             p.setPen(edge if is_face else QPen(col.darker(115), 0.6))
             p.drawPath(path)
-        p.setPen(QColor(tk["muted"]))
-        f = QFont(p.font())
-        f.setPointSizeF(8)
-        p.setFont(f)
-        p.drawText(QRectF(8, self.height() - 22, self.width() - 16, 18), Qt.AlignLeft | Qt.AlignVCenter,
-                   "Arrastar: girar  ·  roda: zoom  ·  duplo clique: vista inicial")
+        if not self.compact:
+            p.setPen(QColor(tk["muted"]))
+            f = QFont(p.font())
+            f.setPointSizeF(8)
+            p.setFont(f)
+            p.drawText(QRectF(8, self.height() - 22, self.width() - 16, 18), Qt.AlignLeft | Qt.AlignVCenter,
+                       "Arrastar: girar  ·  roda: zoom  ·  duplo clique: vista inicial")
         p.end()
 
     # ---------------- mouse
@@ -327,8 +381,106 @@ class FlatView(QGraphicsView):
 
 
 # ------------------------------------------------------------------------------------------ painel
+# Configuração no estilo do MakerCase: uma coluna de passos numerados, cada escolha visual vira um
+# botão ilustrado (desenhado pelo próprio gerador), e as opções que só valem para uma escolha
+# aparecem logo abaixo dela. A prévia 3D ocupa o resto da tela.
+
+MATERIALS = [("MDF 3 mm", 3.0, "MDF 3mm"), ("MDF 6 mm", 6.0, "MDF 6mm"), ("Acrílico 3 mm", 3.0, "Acrílico 3mm")]
+GRIDS = [(1, 1, "Sem"), (2, 1, "2 × 1"), (2, 2, "2 × 2"), (3, 2, "3 × 2"), (4, 3, "4 × 3"), (0, 0, "Outra")]
+ICON_W, ICON_H = 84, 58
+
+
+class _Step(QFrame):
+    """Cartão de um passo: número em destaque, título, explicação curta e o conteúdo."""
+
+    def __init__(self, n: int, title: str, hint: str = ""):
+        super().__init__()
+        self.setObjectName("Card")
+        v = QVBoxLayout(self)
+        v.setContentsMargins(14, 12, 14, 14)
+        v.setSpacing(10)
+        head = QHBoxLayout()
+        head.setSpacing(10)
+        num = QLabel(str(n))
+        num.setObjectName("StepNum")
+        num.setFixedSize(24, 24)
+        num.setAlignment(Qt.AlignCenter)
+        t = QLabel(title)
+        t.setObjectName("SectionHead")
+        head.addWidget(num)
+        head.addWidget(t)
+        head.addStretch(1)
+        v.addLayout(head)
+        if hint:
+            h = QLabel(hint)
+            h.setObjectName("StepHint")
+            h.setWordWrap(True)
+            v.addWidget(h)
+        self.body = QVBoxLayout()
+        self.body.setSpacing(8)
+        v.addLayout(self.body)
+
+
+class _Tile(QToolButton):
+    """Botão ilustrado (desenho em cima, nome embaixo), parte de um grupo de escolha única."""
+
+    def __init__(self, text: str, tip: str = ""):
+        super().__init__()
+        self.setObjectName("Tile")
+        self.setText(text)
+        self.setToolTip(tip)
+        self.setCheckable(True)
+        self.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+        self.setIconSize(QSize(ICON_W, ICON_H))
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setMinimumSize(0, ICON_H + 30)        # a grade divide a largura da coluna
+
+
+def _tiles(parent, items, cols: int = 3):
+    """Grade de _Tile com escolha única. ``items``: [(chave, texto, dica)] → (layout, {chave: tile}, grupo)."""
+    grid = QGridLayout()
+    grid.setSpacing(6)
+    group = QButtonGroup(parent)
+    group.setExclusive(True)
+    out = {}
+    for i, (key, text, tip) in enumerate(items):
+        b = _Tile(text, tip)
+        b.setProperty("key", key)
+        group.addButton(b, i)
+        grid.addWidget(b, i // cols, i % cols)
+        out[key] = b
+    return grid, out, group
+
+
+def _seg(parent, items):
+    """Botões segmentados (escolha única em linha). ``items``: [(chave, texto)] → (layout, {chave: botão}, grupo)."""
+    row = QHBoxLayout()
+    row.setSpacing(0)
+    group = QButtonGroup(parent)
+    out = {}
+    for i, (key, text) in enumerate(items):
+        b = QPushButton(text)
+        b.setObjectName("Seg")
+        b.setCheckable(True)
+        b.setProperty("pos", "first" if i == 0 else ("last" if i == len(items) - 1 else "mid"))
+        group.addButton(b, i)
+        row.addWidget(b, 1)
+        out[key] = b
+    return row, out, group
+
+
+def _labeled(text: str, w: QWidget) -> QVBoxLayout:
+    v = QVBoxLayout()
+    v.setSpacing(3)
+    lb = QLabel(text)
+    lb.setObjectName("FieldLabel")
+    v.addWidget(lb)
+    v.addWidget(w)
+    return v
+
+
 class BoxPanel(QWidget):
-    """Controles à esquerda; caixa em 3D (ou peças planificadas) à direita."""
+    """Passos numerados à esquerda (com as ações no rodapé); caixa em 3D / peças à direita."""
     sendRequested = Signal()        # mandar as peças para o encaixe
     saveRequested = Signal()        # salvar só o DXF
 
@@ -345,121 +497,192 @@ class BoxPanel(QWidget):
         lay.addWidget(self._build_controls())
         lay.addWidget(self._build_view(), 1)
         self._load_settings()
+        self.refresh_icons()
         self.regenerate()
 
-    # ---------------- montagem
+    # ================================================================== montagem
     def _build_controls(self) -> QWidget:
+        col = QWidget()
+        col.setFixedWidth(392)
+        self._controls = col
+        cv = QVBoxLayout(col)
+        cv.setContentsMargins(12, 12, 6, 12)
+        cv.setSpacing(8)
+        head = QVBoxLayout()
+        head.setSpacing(2)
+        title = QLabel("Gerador de caixas")
+        title.setObjectName("PanelTitle")
+        sub = QLabel("Siga os passos; a caixa ao lado muda na hora.")
+        sub.setObjectName("Muted")
+        head.addWidget(title)
+        head.addWidget(sub)
+        cv.addLayout(head)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setFixedWidth(340)
-        self._controls = scroll
         body = QWidget()
         scroll.setWidget(body)
         v = QVBoxLayout(body)
-        v.setContentsMargins(12, 12, 6, 12)
-        v.setSpacing(4)
-        title = QLabel("Gerador de caixas")
-        title.setObjectName("SectionTitle")
-        v.addWidget(title)
+        v.setContentsMargins(0, 0, 6, 0)
+        v.setSpacing(8)
 
-        g1 = _Section("Medidas", "box")
-        f1 = QFormLayout(g1.body)
-        self.measure = QComboBox()
-        self.measure.addItem("Externas (tamanho final)", False)
-        self.measure.addItem("Internas (espaço útil)", True)
-        self.measure.setToolTip("Externas: a caixa fica com exatamente estas medidas por fora.\n"
-                                "Internas: o espaço de dentro fica com estas medidas.")
-        self.w = _dspin(10, 3000, 5, 1, " mm", "Largura (X)")
-        self.d = _dspin(10, 3000, 5, 1, " mm", "Profundidade (Y)")
-        self.h = _dspin(10, 3000, 5, 1, " mm", "Altura (Z). Com tampa solta, inclui a tampa.")
-        f1.addRow("Medidas", self.measure)
-        f1.addRow("Largura", self.w)
-        f1.addRow("Profundidade", self.d)
-        f1.addRow("Altura", self.h)
-        v.addWidget(g1)
+        # ---- 1. medidas
+        s1 = _Step(1, "Medidas", "Largura × profundidade × altura, em milímetros.")
+        row = QHBoxLayout()
+        row.setSpacing(6)
+        self.w = _dspin(10, 3000, 5, 1, "", "Largura (X), em mm")
+        self.d = _dspin(10, 3000, 5, 1, "", "Profundidade (Y), em mm")
+        self.h = _dspin(10, 3000, 5, 1, "", "Altura (Z), em mm. Inclui a tampa que fica por cima.")
+        for text, wdg in (("Largura", self.w), ("Profundidade", self.d), ("Altura", self.h)):
+            row.addLayout(_labeled(text, wdg), 1)
+        s1.body.addLayout(row)
+        seg, self.measure_btns, self.measure_grp = _seg(self, [(False, "Medidas externas"), (True, "Medidas internas")])
+        self.measure_btns[False].setToolTip("A caixa fica com exatamente estas medidas por fora")
+        self.measure_btns[True].setToolTip("O espaço de dentro fica com estas medidas")
+        s1.body.addLayout(seg)
+        v.addWidget(s1)
 
-        g2 = _Section("Material e encaixe", "layers")
-        f2 = QFormLayout(g2.body)
-        self.t = _dspin(0.5, 20, 0.5, 2, " mm", "Espessura da placa (MDF 3 mm, acrílico 3 mm…)")
-        self.finger = _dspin(2, 200, 1, 1, " mm",
-                             "Largura aproximada de cada dente. O programa ajusta para caber um\n"
-                             "número ímpar de dentes em cada aresta.")
-        self.kerf = _dspin(0, 1, 0.01, 2, " mm",
-                           "Quanto o laser queima de material (0 = sem compensação).\n"
-                           "Típico: 0,10–0,20 mm em MDF 3 mm. Deixa o encaixe justo, sem cola.")
-        f2.addRow("Espessura", self.t)
-        f2.addRow("Largura do dente", self.finger)
-        f2.addRow("Kerf (laser)", self.kerf)
-        v.addWidget(g2)
+        # ---- 2. material
+        s2 = _Step(2, "Material", "A espessura define os dentes e o material vai para a placa certa no encaixe.")
+        chips = QHBoxLayout()
+        chips.setSpacing(4)
+        self.mat_grp = QButtonGroup(self)
+        self.mat_btns = []
+        for i, (text, thick, name) in enumerate(MATERIALS + [("Outro", None, None)]):
+            b = QPushButton(text)
+            b.setObjectName("Chip")
+            b.setCheckable(True)
+            b.setMinimumWidth(0)
+            b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            self.mat_grp.addButton(b, i)
+            chips.addWidget(b)
+            self.mat_btns.append(b)
+        self.mat_grp.idClicked.connect(self._material_chip)
+        s2.body.addLayout(chips)
+        row = QHBoxLayout()
+        row.setSpacing(6)
+        self.t = _dspin(0.5, 20, 0.5, 2, " mm", "Espessura da placa")
+        self.material = QLineEdit()
+        self.material.setToolTip("Nome do material no encaixe (peças de materiais diferentes nunca dividem placa)")
+        row.addLayout(_labeled("Espessura", self.t), 2)
+        row.addLayout(_labeled("Nome no encaixe", self.material), 3)
+        s2.body.addLayout(row)
+        v.addWidget(s2)
 
-        g3 = _Section("Tampa", "box")
-        f3 = QFormLayout(g3.body)
-        self.lid = QComboBox()
-        for k in LID_TYPES:
-            self.lid.addItem(LID_NAMES[k], k)
-        self.lid.setToolTip("Aberta: só base e paredes.\nFechada: tampa com dentes (fica colada).\n"
-                            "Tampa solta: placa de cima + uma guia colada por baixo que encaixa na boca da caixa.")
-        self.lid_gap = _dspin(0, 3, 0.1, 1, " mm", "Folga de cada lado da guia da tampa solta")
-        self.hole = _dspin(0, 80, 1, 0, " mm", "Diâmetro do furo para levantar a tampa (0 = sem furo)")
-        f3.addRow("Tipo", self.lid)
-        self.lid_gap_lbl = QLabel("Folga da guia")
-        self.hole_lbl = QLabel("Furo para o dedo")
-        f3.addRow(self.lid_gap_lbl, self.lid_gap)
-        f3.addRow(self.hole_lbl, self.hole)
-        v.addWidget(g3)
+        # ---- 3. tampa
+        s3 = _Step(3, "Tampa")
+        grid, self.lid_tiles, self.lid_grp = _tiles(self, [(k, LID_NAMES[k], LID_HELP[k]) for k in LID_TYPES])
+        s3.body.addLayout(grid)
+        self.lid_help = QLabel()
+        self.lid_help.setObjectName("StepHint")
+        self.lid_help.setWordWrap(True)
+        s3.body.addWidget(self.lid_help)
+        self.lid_opts = QWidget()
+        lo = QFormLayout(self.lid_opts)
+        lo.setContentsMargins(0, 0, 0, 0)
+        self.lid_h = _dspin(8, 200, 1, 1, " mm", "Altura das abas da tampa (o pino fica no meio da aba)")
+        self.pin = _dspin(1, 12, 0.1, 1, " mm", "Diâmetro do furo do pino. Para parafuso M3: 3,2 mm")
+        self.lid_gap = _dspin(0, 3, 0.1, 1, " mm", "Folga entre a tampa e a caixa")
+        self.hole = _dspin(0, 80, 1, 0, " mm", "Diâmetro do furo para o dedo (0 = sem furo)")
+        self.lid_h_lbl, self.pin_lbl = QLabel("Altura das abas"), QLabel("Furo do pino")
+        self.lid_gap_lbl, self.hole_lbl = QLabel("Folga"), QLabel("Furo para o dedo")
+        lo.addRow(self.lid_h_lbl, self.lid_h)
+        lo.addRow(self.pin_lbl, self.pin)
+        lo.addRow(self.lid_gap_lbl, self.lid_gap)
+        lo.addRow(self.hole_lbl, self.hole)
+        s3.body.addWidget(self.lid_opts)
+        v.addWidget(s3)
 
-        g4 = _Section("Divisórias", "grid")
-        f4 = QFormLayout(g4.body)
+        # ---- 4. juntas
+        s4 = _Step(4, "Encaixe das arestas")
+        grid, self.joint_tiles, self.joint_grp = _tiles(self, [
+            (JOINT_FINGER, "Dentes", "Encaixe de dentes (finger joint): firme, monta sem cola se o kerf estiver certo"),
+            (JOINT_FLAT, "Lisa", "Arestas lisas, para colar (mais rápido de cortar)")], cols=2)
+        s4.body.addLayout(grid)
+        jf = QFormLayout()
+        jf.setContentsMargins(0, 0, 0, 0)
+        self.finger = _dspin(2, 200, 1, 1, " mm", "Largura aproximada de cada dente (o programa ajusta para\n"
+                                                 "caber um número ímpar de dentes em cada aresta)")
+        self.kerf = _dspin(0, 1, 0.01, 2, " mm", "Quanto o laser queima de material (0 = sem compensação).\n"
+                                                 "Típico: 0,10–0,20 mm em MDF 3 mm. Deixa o encaixe justo.")
+        self.finger_lbl = QLabel("Largura do dente")
+        jf.addRow(self.finger_lbl, self.finger)
+        jf.addRow("Kerf do laser", self.kerf)
+        s4.body.addLayout(jf)
+        v.addWidget(s4)
+
+        # ---- 5. divisórias
+        s5 = _Step(5, "Divisórias", "Compartimentos internos (colunas × linhas).")
+        grid, self.grid_tiles, self.grid_grp = _tiles(self, [((c, r), lbl, "") for c, r, lbl in GRIDS])
+        s5.body.addLayout(grid)
+        self.custom_grid = QWidget()
+        cg = QHBoxLayout(self.custom_grid)
+        cg.setContentsMargins(0, 0, 0, 0)
         self.cols = QSpinBox()
         self.cols.setRange(1, 20)
-        self.cols.setToolTip("Quantos compartimentos ao longo da largura")
+        self.cols.setToolTip("Compartimentos ao longo da largura")
         self.rows = QSpinBox()
         self.rows.setRange(1, 20)
-        self.rows.setToolTip("Quantos compartimentos ao longo da profundidade")
-        presets = QHBoxLayout()
-        presets.setSpacing(4)
-        for c, r in ((1, 1), (2, 2), (3, 2), (4, 3)):
-            b = QPushButton("Sem" if (c, r) == (1, 1) else f"{c}×{r}")
-            b.setToolTip("Sem divisórias" if (c, r) == (1, 1) else f"{c} × {r} compartimentos")
-            b.clicked.connect(lambda _=False, c=c, r=r: self._set_grid(c, r))
-            presets.addWidget(b)
-        f4.addRow("Colunas", self.cols)
-        f4.addRow("Linhas", self.rows)
-        f4.addRow(presets)
-        v.addWidget(g4)
+        self.rows.setToolTip("Compartimentos ao longo da profundidade")
+        cg.addLayout(_labeled("Colunas", self.cols), 1)
+        cg.addLayout(_labeled("Linhas", self.rows), 1)
+        s5.body.addWidget(self.custom_grid)
+        v.addWidget(s5)
 
-        g5 = _Section("Saída", "export")
-        f5 = QFormLayout(g5.body)
+        # ---- 6. quantidade
+        s6 = _Step(6, "Quantidade")
+        row = QHBoxLayout()
         self.qty = QSpinBox()
         self.qty.setRange(1, 200)
+        self.qty.setSuffix(" caixa(s)")
         self.qty.setToolTip("Quantas caixas iguais mandar para o encaixe")
-        self.material = QLineEdit()
-        self.material.setToolTip("Nome do material no encaixe (peças de materiais diferentes nunca dividem placa).\n"
-                                 "Em branco: MDF + espessura.")
-        self.engrave = QCheckBox("Gravar o nome em cada peça")
+        self.engrave = QCheckBox("Gravar o nome nas peças")
         self.engrave.setToolTip("Escreve o nome (Frente/Fundo, Lateral…) numa camada azul de gravação")
-        f5.addRow("Quantidade", self.qty)
-        f5.addRow("Material", self.material)
-        f5.addRow(self.engrave)
-        v.addWidget(g5)
+        row.addWidget(self.qty)
+        row.addWidget(self.engrave, 1)
+        s6.body.addLayout(row)
+        v.addWidget(s6)
         v.addStretch(1)
+        cv.addWidget(scroll, 1)
 
-        for form in body.findChildren(QFormLayout):
-            form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
-            form.setContentsMargins(0, 0, 0, 0)
-            form.setHorizontalSpacing(10)
-            form.setVerticalSpacing(8)
-        for wdg in (self.w, self.d, self.h, self.t, self.finger, self.kerf, self.lid_gap, self.hole):
+        # ---- rodapé fixo: a ação principal sempre à vista
+        foot = QFrame()
+        foot.setObjectName("Card")
+        fl = QVBoxLayout(foot)
+        fl.setContentsMargins(12, 10, 12, 12)
+        fl.setSpacing(6)
+        self.foot_info = QLabel("")
+        self.foot_info.setObjectName("Muted")
+        self.foot_info.setWordWrap(True)
+        self.btn_send = QPushButton("Enviar para o encaixe")
+        self.btn_send.setObjectName("success")
+        self.btn_send.setMinimumHeight(38)
+        self.btn_send.setToolTip("Coloca as peças na aba Encaixe (junto com o que já estiver lá) e encaixa na placa")
+        self.btn_send.clicked.connect(self.sendRequested.emit)
+        self.btn_save = QPushButton("Salvar só o DXF…")
+        self.btn_save.setToolTip("Grava o DXF com as peças da caixa, sem encaixar")
+        self.btn_save.clicked.connect(self.saveRequested.emit)
+        fl.addWidget(self.foot_info)
+        fl.addWidget(self.btn_send)
+        fl.addWidget(self.btn_save)
+        cv.addWidget(foot)
+
+        # ---- sinais
+        for wdg in (self.w, self.d, self.h, self.t, self.finger, self.kerf, self.lid_gap, self.hole,
+                    self.lid_h, self.pin):
             wdg.valueChanged.connect(self._changed)
         for wdg in (self.cols, self.rows, self.qty):
             wdg.valueChanged.connect(self._changed)
-        for cb in (self.measure, self.lid):
-            cb.currentIndexChanged.connect(self._changed)
+        for grp in (self.measure_grp, self.lid_grp, self.joint_grp):
+            grp.idClicked.connect(self._changed)
+        self.grid_grp.idClicked.connect(self._grid_tile)
+        self.lid_grp.idClicked.connect(lambda *_: self._lid_picked())
         self.engrave.toggled.connect(self._changed)
-        self.material.textChanged.connect(self._material_changed)
-        return scroll
+        self.t.valueChanged.connect(self._sync_material_chip)
+        self.material.textChanged.connect(self._material_typed)
+        return col
 
     def _build_view(self) -> QWidget:
         card = QFrame()
@@ -468,26 +691,34 @@ class BoxPanel(QWidget):
         v.setContentsMargins(10, 8, 10, 8)
         v.setSpacing(6)
         head = QHBoxLayout()
-        self.btn_3d = QPushButton("Caixa 3D")
-        self.btn_flat = QPushButton("Peças para cortar")
-        grp = QButtonGroup(self)
-        for i, b in enumerate((self.btn_3d, self.btn_flat)):
-            b.setCheckable(True)
-            grp.addButton(b, i)
+        seg, self.view_btns, grp = _seg(self, [(0, "Caixa 3D"), (1, "Peças para cortar")])
+        self.btn_3d, self.btn_flat = self.view_btns[0], self.view_btns[1]
         self.btn_3d.setChecked(True)
         grp.idClicked.connect(self._view_mode)
-        head.addWidget(self.btn_3d)
-        head.addWidget(self.btn_flat)
-        head.addSpacing(12)
-        self.explode_lbl = QLabel("Montagem")
+        segw = QWidget()
+        segw.setLayout(seg)
+        segw.setFixedWidth(260)
+        head.addWidget(segw)
+        head.addSpacing(14)
+        self.open_lbl = QLabel("Abrir tampa")
+        self.open_lbl.setObjectName("Muted")
+        self.open_slider = QSlider(Qt.Horizontal)
+        self.open_slider.setRange(0, 100)
+        self.open_slider.setMaximumWidth(150)
+        self.open_slider.setToolTip("Abre a tampa na prévia (gira no pino, desliza ou levanta)")
+        self.open_slider.valueChanged.connect(lambda val: self.view3d.set_open(val / 100))
+        self.explode_lbl = QLabel("Separar peças")
         self.explode_lbl.setObjectName("Muted")
         self.explode = QSlider(Qt.Horizontal)
         self.explode.setRange(0, 100)
-        self.explode.setMaximumWidth(200)
+        self.explode.setMaximumWidth(150)
         self.explode.setToolTip("Separa as peças para ver como a caixa se monta")
         self.explode.valueChanged.connect(lambda val: self.view3d.set_explode(val / 100))
-        head.addWidget(self.explode_lbl)
-        head.addWidget(self.explode)
+        for wdg in (self.open_lbl, self.open_slider):
+            head.addWidget(wdg)
+        head.addSpacing(10)
+        for wdg in (self.explode_lbl, self.explode):
+            head.addWidget(wdg)
         head.addStretch(1)
         self.btn_fit = QPushButton("Enquadrar")
         self.btn_fit.clicked.connect(self._fit)
@@ -511,58 +742,57 @@ class BoxPanel(QWidget):
         self.views.addWidget(self.view3d)
         self.views.addWidget(self.flat)
         v.addWidget(self.views, 1)
-
-        bottom = QHBoxLayout()
         self.info = QLabel("")
         self.info.setObjectName("Muted")
         self.info.setWordWrap(True)
-        self.btn_save = QPushButton("Salvar DXF…")
-        self.btn_save.setToolTip("Só grava o DXF com as peças da caixa (sem encaixar)")
-        self.btn_save.clicked.connect(self.saveRequested.emit)
-        self.btn_send = QPushButton("Enviar para o encaixe")
-        self.btn_send.setObjectName("success")
-        self.btn_send.setToolTip("Coloca as peças na aba Encaixe (junto com o que já estiver lá) e encaixa na placa")
-        self.btn_send.clicked.connect(self.sendRequested.emit)
-        bottom.addWidget(self.info, 1)
-        bottom.addWidget(self.btn_save)
-        bottom.addWidget(self.btn_send)
-        v.addLayout(bottom)
+        v.addWidget(self.info)
         outer = QWidget()
         ol = QVBoxLayout(outer)
         ol.setContentsMargins(6, 12, 12, 12)
         ol.addWidget(card)
         return outer
 
-    # ---------------- parâmetros
+    # ================================================================== parâmetros
+    def _checked_key(self, tiles: dict, default):
+        for k, b in tiles.items():
+            if b.isChecked():
+                return k
+        return default
+
+    def lid(self) -> str:
+        return self._checked_key(self.lid_tiles, LID_OPEN)
+
     def params(self) -> BoxParams:
         return BoxParams(width=self.w.value(), depth=self.d.value(), height=self.h.value(),
-                         inner=bool(self.measure.currentData()), thickness=self.t.value(),
-                         finger=self.finger.value(), kerf=self.kerf.value(),
-                         lid=self.lid.currentData() or LID_TYPES[0], cols=self.cols.value(), rows=self.rows.value(),
-                         lid_clearance=self.lid_gap.value(), finger_hole=self.hole.value(),
+                         inner=bool(self.measure_btns[True].isChecked()), thickness=self.t.value(),
+                         finger=self.finger.value(), kerf=self.kerf.value(), lid=self.lid(),
+                         cols=self.cols.value(), rows=self.rows.value(), lid_clearance=self.lid_gap.value(),
+                         finger_hole=self.hole.value(), lid_height=self.lid_h.value(), pin=self.pin.value(),
+                         joint=self._checked_key(self.joint_tiles, JOINT_FINGER),
                          engrave_names=self.engrave.isChecked(), quantity=self.qty.value(),
                          material=self.material.text().strip())
 
     def set_params(self, p: BoxParams):
         widgets = ((self.w, p.width), (self.d, p.depth), (self.h, p.height), (self.t, p.thickness),
                    (self.finger, p.finger), (self.kerf, p.kerf), (self.cols, p.cols), (self.rows, p.rows),
-                   (self.lid_gap, p.lid_clearance), (self.hole, p.finger_hole), (self.qty, p.quantity))
+                   (self.lid_gap, p.lid_clearance), (self.hole, p.finger_hole), (self.qty, p.quantity),
+                   (self.lid_h, p.lid_height), (self.pin, p.pin))
         for wdg, val in widgets:
             wdg.blockSignals(True)
             wdg.setValue(val)
             wdg.blockSignals(False)
-        for cb, data in ((self.measure, bool(p.inner)), (self.lid, p.lid)):
-            cb.blockSignals(True)
-            cb.setCurrentIndex(max(0, cb.findData(data)))
-            cb.blockSignals(False)
+        self.measure_btns[bool(p.inner)].setChecked(True)
+        self.lid_tiles.get(p.lid, self.lid_tiles[LID_OPEN]).setChecked(True)
+        self.joint_tiles.get(p.joint, self.joint_tiles[JOINT_FINGER]).setChecked(True)
+        self._sync_grid_tile()
         self.engrave.blockSignals(True)
         self.engrave.setChecked(bool(p.engrave_names))
         self.engrave.blockSignals(False)
         self.material.blockSignals(True)
         self.material.setText(p.material)
         self.material.blockSignals(False)
-        self._update_material_hint()
-        self._lid_ui()
+        self._sync_material_chip()
+        self._contextual()
 
     def _load_settings(self):
         try:
@@ -574,31 +804,75 @@ class BoxPanel(QWidget):
     def _save_settings(self):
         settings().setValue("box/params", json.dumps(self.params().to_json()))
 
-    def _set_grid(self, c: int, r: int):
-        self.cols.blockSignals(True)
-        self.cols.setValue(c)
-        self.cols.blockSignals(False)
-        self.rows.setValue(r)
-        if (self.cols.value(), self.rows.value()) == (c, r):
+    # ---------------- material
+    def _material_chip(self, i: int):
+        if i < len(MATERIALS):
+            _, thick, name = MATERIALS[i]
+            self.material.blockSignals(True)
+            self.material.setText(name)
+            self.material.blockSignals(False)
+            self.t.setValue(thick)                  # dispara _changed
             self._changed()
+        else:
+            self.material.setFocus()
+            self.material.selectAll()
 
-    def _lid_ui(self):
-        lift = self.lid.currentData() == LID_LIFT
-        for wdg in (self.lid_gap, self.hole, self.lid_gap_lbl, self.hole_lbl):
-            wdg.setVisible(lift)
+    def _material_typed(self, *_):
+        self._sync_material_chip()
+        self._changed()
 
-    def _update_material_hint(self):
+    def _sync_material_chip(self, *_):
+        name = self.material.text().strip() or f"MDF {self.t.value():g}mm"
         self.material.setPlaceholderText(f"MDF {self.t.value():g}mm")
+        idx = next((i for i, (_, thick, nm) in enumerate(MATERIALS)
+                    if nm == name and abs(thick - self.t.value()) < 1e-6), len(MATERIALS))
+        self.mat_btns[idx].setChecked(True)
 
-    def _material_changed(self, *_):
-        self._save_settings()
+    # ---------------- divisórias
+    def _grid_tile(self, i: int):
+        c, r, _ = GRIDS[i]
+        if c:
+            for sp, val in ((self.cols, c), (self.rows, r)):
+                sp.blockSignals(True)
+                sp.setValue(val)
+                sp.blockSignals(False)
+        self.custom_grid.setVisible(not c)
+        self._changed()
+
+    def _sync_grid_tile(self):
+        key = (self.cols.value(), self.rows.value())
+        tile = self.grid_tiles.get(key) or self.grid_tiles[(0, 0)]
+        tile.setChecked(True)
+        self.custom_grid.setVisible(tile is self.grid_tiles[(0, 0)])
+
+    # ---------------- opções que dependem da escolha
+    def _lid_picked(self):
+        lid = self.lid()
+        # mostra a tampa mexendo logo que é escolhida (fechada/aberta não têm movimento)
+        self.open_slider.setValue(55 if lid in (LID_CHEST, LID_DOORS, LID_SLIDE, LID_LIFT) else 0)
+
+    def _contextual(self):
+        lid = self.lid()
+        self.lid_help.setText(LID_HELP.get(lid, ""))
+        hinged, slide, lift = lid in HINGED, lid == LID_SLIDE, lid == LID_LIFT
+        for wdg, on in ((self.lid_h, hinged), (self.lid_h_lbl, hinged), (self.pin, hinged), (self.pin_lbl, hinged),
+                        (self.lid_gap, hinged or slide or lift), (self.lid_gap_lbl, hinged or slide or lift),
+                        (self.hole, slide or lift), (self.hole_lbl, slide or lift)):
+            wdg.setVisible(on)
+        self.lid_opts.setVisible(hinged or slide or lift)
+        self.lid_gap_lbl.setText("Folga da guia" if lift else ("Folga do rasgo" if slide else "Folga"))
+        finger = self._checked_key(self.joint_tiles, JOINT_FINGER) == JOINT_FINGER
+        self.finger.setVisible(finger)
+        self.finger_lbl.setVisible(finger)
+        movable = lid != LID_OPEN and lid != LID_CLOSED
+        self.open_lbl.setVisible(movable and self.views.currentIndex() == 0)
+        self.open_slider.setVisible(movable and self.views.currentIndex() == 0)
 
     def _changed(self, *_):
-        self._lid_ui()
-        self._update_material_hint()
+        self._contextual()
         self._timer.start()
 
-    # ---------------- geração e vistas
+    # ================================================================== geração e vistas
     def regenerate(self):
         p = self.params()
         errs = validate(p)
@@ -608,6 +882,7 @@ class BoxPanel(QWidget):
             self.view3d.set_result(None)
             self.flat.set_result(None)
             self.info.setText("")
+            self.foot_info.setText("Corrija o aviso em amarelo para continuar.")
             self._update_buttons()
             return
         self.result = generate(p)
@@ -624,8 +899,10 @@ class BoxPanel(QWidget):
         litros = f"{s['volume_l']:.2f}".replace(".", ",")
         self.info.setText(
             f"Externa <b>{_fmt(ext[0])} × {_fmt(ext[1])} × {_fmt(ext[2])} mm</b>  ·  "
-            f"interna {_fmt(inn[0])} × {_fmt(inn[1])} × {_fmt(inn[2])} mm  ·  {litros} L  ·  "
-            f"{s['pecas']} peças por caixa  ·  {_fmt(s['area_cm2'] * p.quantity)} cm² de {p.material_name()}")
+            f"interna {_fmt(inn[0])} × {_fmt(inn[1])} × {_fmt(inn[2])} mm  ·  {litros} L")
+        n = s["pecas"] * p.quantity
+        self.foot_info.setText(f"{LID_NAMES[p.lid]} · {n} peças · {_fmt(s['area_cm2'] * p.quantity)} cm² de "
+                               f"{p.material_name()}")
         self._update_buttons()
 
     def _update_buttons(self):
@@ -635,8 +912,10 @@ class BoxPanel(QWidget):
 
     def _view_mode(self, i: int):
         self.views.setCurrentIndex(i)
+        self.view_btns[i].setChecked(True)
         self.explode.setVisible(i == 0)
         self.explode_lbl.setVisible(i == 0)
+        self._contextual()
         if i == 1:
             self.flat.set_result(self.result)
 
@@ -657,13 +936,29 @@ class BoxPanel(QWidget):
         self.msg.setTextFormat(Qt.RichText)
         self._message(html, kind)
 
-    # ---------------- integração com a janela
+    # ================================================================== ícones e tema
+    def refresh_icons(self):
+        """Desenha os botões ilustrados com o próprio gerador (mesma geometria da caixa real)."""
+        base = dict(width=100, depth=78, height=56, thickness=4, finger=13, lid_height=19, pin=3.2,
+                    finger_hole=16, lid_clearance=0.8)
+        for lid, tile in self.lid_tiles.items():
+            opened = {LID_CHEST: 0.6, LID_DOORS: 0.55, LID_SLIDE: 0.45, LID_LIFT: 0.5}.get(lid, 0.0)
+            tile.setIcon(QIcon(render_icon(BoxParams(lid=lid, **base), ICON_W, ICON_H, opened)))
+        for joint, tile in self.joint_tiles.items():
+            pm = render_icon(BoxParams(width=60, depth=50, height=40, thickness=6, finger=11, joint=joint,
+                                       lid=LID_CLOSED), ICON_W, ICON_H, yaw=-40, pitch=24)
+            tile.setIcon(QIcon(pm))
+        for (c, r), tile in self.grid_tiles.items():
+            cc, rr = (3, 3) if not c else (c, r)
+            pm = render_icon(BoxParams(width=100, depth=80, height=30, thickness=3, finger=12, cols=cc, rows=rr),
+                             ICON_W, ICON_H, yaw=-30, pitch=55)
+            tile.setIcon(QIcon(pm))
+
     def set_compact(self, on: bool):
-        self._controls.setFixedWidth(290 if on else 340)
+        self._controls.setFixedWidth(360 if on else 392)
 
     def refresh_theme(self):
-        for sec in self.findChildren(_Section):
-            sec.refresh_icon()
+        self.refresh_icons()
         self.view3d.update()
         if self.views.currentIndex() == 1:
             self.flat.set_result(self.result)
