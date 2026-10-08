@@ -34,6 +34,7 @@ jobs:
             dist/Sindri.exe
             dist/Sindri.exe.sha256
       - name: Publicar na página de versões (Releases)
+        if: github.ref == 'refs/heads/exe'   # outras branches: só o artefato (teste antes de publicar)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: exe-${{ github.run_number }}

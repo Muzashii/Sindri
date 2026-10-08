@@ -107,7 +107,62 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
 35. Caches de variantes/NFP/IFP e soluções avaliadas têm limite de entradas (4096); isso não equivale
     a um limite rígido de RAM. O benchmark em `tools/benchmark.py` registra uma base repetível.
 
+## Gerador de caixas
+36. Cada face é desenhada no tamanho externo; a faixa de largura = espessura de cada aresta compartilhada é
+    dividida em um número ímpar de trechos (≈ largura do dente), alternando dono. Os cubos dos cantos pertencem
+    à face de maior prioridade (base > tampa > frente/fundo > laterais), o que mantém as três faces de um canto
+    coerentes sem casos especiais. Um teste voxeliza a caixa montada e exige ocupação exatamente 1 nas paredes.
+37. Kerf: cada peça cresce kerf/2 para fora (junção em quina), estreitando rasgos e furos. As divisórias
+    descontam 2·kerf + folga no comprimento para não forçar as paredes.
+38. Divisórias: meia-madeira (A com rasgo de cima, B com rasgo de baixo) e um dente por vão entrando em furo
+    na base. Com tampa solta, ficam uma espessura abaixo da borda (a guia da tampa ocupa esse espaço).
+39. Com o nome gravado, peças idênticas recebem o mesmo texto ("Frente/Fundo", "Lateral") para continuarem
+    agrupadas no encaixe.
+40. Vista 3D em QPainter (sem OpenGL, para não pesar o .exe nem depender da placa de vídeo). A ordem de
+    desenho é topológica pelo eixo que separa as caixas delimitadoras de cada peça (calculada uma vez por
+    octante da câmera); as divisórias são divididas nos cruzamentos só para o desenho.
+41. "Enviar para o encaixe" grava o DXF em `Documentos/Sindri/Caixas` e usa o mesmo caminho de importação dos
+    DXFs comuns (multiplicador = nº de caixas, material = "MDF {espessura}mm" se não informado).
+42. Tampas com dobradiça (baú, porta dupla): dobradiça integrada de MDF, mesmo princípio do ChestHinge do
+    boxes.py (substituiu as abas externas com pino/parafuso). Disco p = 2t, nó R = 3t, lingueta
+    t × √((0,9p)² − t²), folga g = max(0,3; 0,1t), folga do disco ≥ kerf + 0,15. Eixo na linha da tampa (Hb), no
+    meio da espessura da parede da dobradiça; essa parede do corpo desce para Hb − ρ − g (ρ = meia diagonal
+    da lingueta) e, perto do topo (acima de Hb − R − 1), a aresta com as paredes do nó fica lisa — senão os
+    dentes ocupariam o lugar do nó/disco. A tampa é uma caixa rasa da mesma largura do corpo, com as paredes
+    no mesmo plano. Testes: montagem sem sobreposição, disco no centro do nó, lingueta no centro do disco e
+    abertura de 0 a 100° sem colisão.
+43. Tampa deslizante: rasgo nas laterais do topo da frente (mais baixa) até UMA espessura antes do fundo; se
+    fosse até o fundo, a faixa de cima ficaria presa só nos dentes.
+44. Arestas com encaixe só em parte do comprimento: o vizinho pode ser (nome, a, b); fora do trecho a faixa é
+    da própria placa e a ponta do trecho vai para a de maior prioridade. Junta lisa = um trecho só, todo da placa
+    de maior prioridade.
+45. Painel em passos numerados (MakerCase): os botões ilustrados são desenhados pela própria vista 3D a partir
+    do gerador, então mostram a geometria real de cada tampa.
+46. Modelos além da caixa (ideias do boxes.py, mas sem as dezenas de parâmetros dele): gaveta, eletrônica,
+    bandeja e teste de kerf. Cada modelo mostra só os passos de que precisa; o resto vem com valor pronto.
+47. Eletrônica: tampa lisa 2 mm maior que as paredes (o furo de 3,3 mm não encosta na borda), um parafuso M3
+    no meio de cada parede (2 se a parede passa de 140 mm), rasgo em T na parede: canal de 3,1 mm até
+    (parafuso − espessura + 1) e rasgo da porca 5,7 × 2,6 mm a 2 mm da ponta. A placa (Uno/Mega/RPi) fica
+    centralizada e gira 90° se só couber assim; aparece em verde na prévia, mas não vai para o corte.
+48. Gaveta: medidas = móvel por fora; folga dos lados e em cima; a gaveta encosta na boca e a frente de
+    acabamento (W−1 × H−1) é colada nela, cobrindo a boca. O puxador vazado atravessa as duas frentes.
+49. Bandeja: rampas a 45° coladas, encostadas no fundo e na parede da frente de cada compartimento (o canto
+    toca as superfícies, sem sobrepor). A prévia da bandeja olha mais de cima (senão as rampas não aparecem).
+50. Teste de kerf: rasgos de largura (espessura − k) para k = 0…0,30 mm, cortados SEM compensação; o rasgo
+    em que a tira entra justa dá o kerf. Os valores são gravados (camada azul) e vão para o DXF como TEXT.
+51. Largura do dente: chave de arrastar limitada a 2×–4× a espessura (abaixo disso os dentes quebram; acima,
+    poucos dentes e encaixe frouxo). A faixa acompanha a espessura escolhida.
+52. Divisórias dinâmicas: a grade (colunas × linhas) define as posições possíveis; cada divisória inteira pode ser
+    tirada com um clique (cols_off / rows_off). Cruzamentos, dentes na base e rampas se ajustam às que ficam;
+    trocar o nº de colunas/linhas mantém só as escolhas que ainda existem.
+
 ## Pendências conhecidas / a validar no laboratório
 - Testar R12 × R2000 no RDWorks real e manter como padrão o que importar melhor (hoje: R2000).
 - Comparar o aproveitamento com o encaixe manual de referência (critério de aceite 4) usando arquivos reais.
 - Gerar e testar o `.exe` no Windows (`build_exe.bat`).
+53. Dobradiça do baú/porta dupla igual à do MakerCase ("Laser Hinge Box"), no lugar da anterior (nó na caixa +
+    disco girando colado na tampa): o NÓ com furo é da lateral da TAMPA, que desce em diagonal até ele; o pivô
+    fica no meio da espessura da parede do lado da dobradiça, 1,15 × o raio do nó abaixo da linha da tampa; o
+    DISCO (Ø do pivô, automático 4 × espessura) tem furo retangular para a LINGUETA da parede da caixa e não
+    gira. A parede da caixa do lado da dobradiça termina logo acima da lingueta; a lateral da caixa ganha o
+    recorte da diagonal e do nó com folga (e sem ponta fina perto da borda). Simulação: 0–100° sem colisão.

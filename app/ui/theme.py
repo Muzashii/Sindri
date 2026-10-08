@@ -247,4 +247,21 @@ QTableWidget { background: %(surface)s; border: 1px solid %(border)s; border-rad
 QHeaderView::section { background: %(surface2)s; color: %(muted)s; border: none; padding: 6px;
                        font-weight: 700; }
 QDialogButtonBox QPushButton { min-width: 90px; }
+
+/* ---- gerador de caixas: passos numerados, botões ilustrados e segmentados ---- */
+QLabel#PanelTitle { font-size: 13pt; font-weight: 800; color: %(text)s; }
+QLabel#StepNum { background: %(accent)s; color: white; border-radius: 12px; font-weight: 800; }
+QLabel#StepHint { color: %(muted)s; }
+QToolButton#Tile { background: %(surface2)s; border: 1px solid %(border)s; border-radius: 10px;
+                   padding: 4px 2px 6px 2px; color: %(text)s; font-weight: 600; }
+QToolButton#Tile:hover { border-color: %(muted)s; }
+QToolButton#Tile:checked { background: %(accent_soft)s; border: 2px solid %(accent)s; color: %(accent)s;
+                           font-weight: 700; }
+QPushButton#Seg { border-radius: 0; padding: 6px 10px; font-weight: 600; }
+QPushButton#Seg[pos="first"] { border-top-left-radius: 7px; border-bottom-left-radius: 7px; }
+QPushButton#Seg[pos="last"] { border-top-right-radius: 7px; border-bottom-right-radius: 7px; border-left: none; }
+QPushButton#Seg[pos="mid"] { border-left: none; }
+QPushButton#Seg:checked { background: %(accent)s; color: white; border-color: %(accent)s; }
+QPushButton#Chip { border-radius: 14px; padding: 4px 6px; font-weight: 600; }
+QPushButton#Chip:checked { background: %(accent_soft)s; color: %(accent)s; border: 1px solid %(accent)s; }
 """
