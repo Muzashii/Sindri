@@ -12,6 +12,47 @@ from .common import MAX_UNDO
 
 
 class EditingMixin:
+    def select_instance(self, key):
+        self.tabs.setCurrentIndex(1)
+        self.canvas.scene().clearSelection()
+        for item in self.canvas.part_items:
+            if (item.placement.part_id, item.placement.instance) == tuple(key):
+                item.setSelected(True)
+                self.canvas.ensureVisible(item)
+
+    def edit_positions(self):
+        if self.worker is not None or not self.placements:
+            return
+        from ..position_dialog import PositionDialog
+        self.tabs.setCurrentIndex(1)
+        dialog = PositionDialog(self)
+        dialog.selected.connect(self.select_instance)
+        dialog.applied.connect(self.apply_instance_position)
+        dialog.load(dialog.list.currentRow())
+        dialog.exec()
+
+    def apply_instance_position(self, key, x, y, rotation, target):
+        if self.worker is not None:
+            return
+        pl = next((p for p in self.placements if (p.part_id, p.instance) == tuple(key)), None)
+        if pl is None:
+            return
+        if self.pmap[pl.part_id].rotation_locked:
+            rotation = pl.rotation
+        target_mat = self.sheet_index().material.get(target)
+        if target_mat and target_mat != self.pmap[pl.part_id].material:
+            return
+        if (pl.x, pl.y, pl.rotation, pl.sheet_index) == (x, y, rotation, target):
+            return
+        self._push_undo()
+        self._invalidate_cut_for([pl] + [p for p in self.placements if p.sheet_index == target])
+        pl.x, pl.y, pl.rotation, pl.sheet_index = x, y, rotation, target
+        self._compact_sheets()
+        self.mark_changed()
+        self._redraw(keep_view=True)
+        self.select_instance(key)
+        self._update_status()
+
     def _invalidate_cut_for(self, placements):
         changed = {pl.sheet_index for pl in placements} & self.cut_sheets
         if not changed:
@@ -162,6 +203,7 @@ class EditingMixin:
         for it in self.canvas.selected_items():
             it.sync_from_placement()
         self._mark_collisions()
+        self._update_status()
 
     def mirror_selected(self):
         sel = self._selected_placements()

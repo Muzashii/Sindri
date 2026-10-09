@@ -194,7 +194,7 @@ class CleanupDialog(QDialog):
         self.setMinimumWidth(520)
         lay = QVBoxLayout(self)
         intro = QLabel("Os arquivos escolhidos vão para a <b>Lixeira</b> (dá para recuperar de lá). "
-                       "Projetos salvos (.sindri) que usam solicitações apagadas não vão mais abrir.")
+                       "Projetos portáteis (.sindri) preservam a geometria incorporada; guarde os originais se precisar editá-los.")
         intro.setWordWrap(True)
         lay.addWidget(intro)
         self.checks: dict[str, QCheckBox] = {}

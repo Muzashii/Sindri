@@ -14,6 +14,7 @@ from ...core.part_builder import import_files
 from ..dialogs import CleanupDialog, PresetsDialog, load_presets, save_presets, settings
 from ..prefs import get_list_value
 from ..render import clear_graphics_cache
+from ..tasks import run_task
 from .common import APP_NAME
 
 
@@ -52,6 +53,8 @@ class FilesMixin:
     def _preset_chosen(self, i: int):
         data = self.preset_combo.itemData(i)
         if data is None:
+            self.a_params.setChecked(True)
+            self.settings_panel.show()
             self.settings_panel.w.setFocus()
             self.settings_panel.w.selectAll()
             self.statusBar().showMessage("Digite a largura e a altura da placa no painel à direita.", 5000)
@@ -163,9 +166,12 @@ class FilesMixin:
         p = self.settings_panel.params()
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            rep = import_files(files, p.join_tolerance, p.curve_tolerance, **p.import_kwargs(),
-                               multipliers=self.file_multipliers, file_materials=self.file_materials,
-                               file_tags=self.file_tags, file_units=self.file_units)
+            multipliers, materials, tags, units = (dict(self.file_multipliers), dict(self.file_materials),
+                                                  dict(self.file_tags), dict(self.file_units))
+            rep = run_task(self, "Lendo e reconstruindo os arquivos DXF", lambda:
+                           import_files(list(files), p.join_tolerance, p.curve_tolerance, **p.import_kwargs(),
+                                        multipliers=multipliers, file_materials=materials,
+                                        file_tags=tags, file_units=units))
         except Exception as e:
             QApplication.restoreOverrideCursor()
             QMessageBox.critical(self, "Erro ao abrir", f"Não foi possível ler os arquivos.\n\n{e}")
@@ -300,16 +306,27 @@ class FilesMixin:
     def confirm_discard(self, add: bool = False) -> bool:
         if add or not self.files or not self.dirty:
             return True
-        r = QMessageBox.question(self, "Descartar encaixe?",
-                                 "O encaixe atual não foi salvo. Deseja continuar e descartá-lo?",
-                                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-        return r == QMessageBox.Yes
+        box = QMessageBox(self)
+        box.setWindowTitle("Alterações não salvas")
+        box.setText("Salvar o projeto de encaixe antes de continuar?")
+        save = box.addButton("Salvar", QMessageBox.AcceptRole)
+        discard = box.addButton("Descartar alterações", QMessageBox.DestructiveRole)
+        box.addButton("Cancelar", QMessageBox.RejectRole)
+        box.setDefaultButton(save)
+        box.exec()
+        if box.clickedButton() == save:
+            self.save_project()
+            return not self.dirty
+        return box.clickedButton() == discard
 
     def clear_all(self, ask: bool = True):
         """Remove todos os arquivos, peças e o encaixe (volta para a tela inicial)."""
         if not self.parts and not self.files:
             return
-        if ask:
+        if ask and self.dirty:
+            if not self.confirm_discard():
+                return
+        elif ask:
             r = QMessageBox.question(self, "Limpar tudo",
                                      "Remover todas as peças e o encaixe atual?\n"
                                      "(os arquivos DXF no disco não são alterados)",

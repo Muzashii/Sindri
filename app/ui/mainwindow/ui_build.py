@@ -64,7 +64,7 @@ class UIBuildMixin:
         self.btn_open = QPushButton("Abrir DXF")
         self.btn_open.setToolTip("Abrir um ou vários arquivos DXF (Ctrl+O). Você também pode arrastá-los para a janela.")
         self.btn_open.clicked.connect(lambda: self.open_dxf_dialog())
-        self.btn_save = QPushButton("Salvar")
+        self.btn_save = QPushButton("Salvar encaixe")
         self.btn_save.setToolTip("Salva arquivos, parâmetros e o encaixe atual em um projeto .sindri (Ctrl+S)")
         self.btn_save.clicked.connect(lambda: self.save_project())
         self.btn_intranet = QPushButton("Intranet FIAP")
@@ -177,6 +177,10 @@ class UIBuildMixin:
         head.addWidget(self.sheet_label)
         head.addWidget(self.btn_next)
         head.addWidget(self.btn_fit)
+        edit_position = QPushButton("Editar posições…")
+        edit_position.setToolTip("Selecionar uma cópia e ajustar posição/placa por teclado (Ctrl+Shift+M)")
+        edit_position.clicked.connect(self.edit_positions)
+        head.addWidget(edit_position)
         cl.addLayout(head)
 
         self.banner = QFrame()
@@ -188,7 +192,8 @@ class UIBuildMixin:
         self.banner_text.setObjectName("BannerText")
         self.banner_text.setWordWrap(True)
         self.banner_close = QToolButton()
-        self.banner_close.clicked.connect(self.banner.hide)
+        self.banner_close.setAccessibleName("Fechar aviso")
+        self.banner_close.clicked.connect(self.dismiss_banner)
         self.banner_text.setTextFormat(Qt.RichText)
         self.banner_text.linkActivated.connect(self._banner_link)
         bl.addWidget(self.banner_icon)
@@ -273,6 +278,11 @@ class UIBuildMixin:
         self.status_hint = hint
         sb.addPermanentWidget(hint)
         self._refresh_icons()
+        for widget in (self.btn_open, self.btn_save, self.btn_intranet, self.btn_gear,
+                       self.btn_export_menu, self.btn_theme):
+            widget.setAccessibleName(widget.toolTip())
+        self.canvas.setAccessibleName("Placas e peças do encaixe")
+        self.canvas.setAccessibleDescription("Use Editar posições para selecionar uma instância e ajustar X, Y, ângulo e placa por teclado.")
 
     def _build_metrics(self) -> QFrame:
         box = QFrame()
@@ -324,6 +334,7 @@ class UIBuildMixin:
     def _tool(self, tip: str, slot) -> QToolButton:
         b = QToolButton()
         b.setToolTip(tip)
+        b.setAccessibleName(tip)
         b.setIconSize(QSize(17, 17))
         b.clicked.connect(lambda *_: slot())
         return b
@@ -382,7 +393,22 @@ class UIBuildMixin:
         self.parts_panel.refresh_icons()
         self.settings_panel.refresh_icons()
 
+    def dismiss_banner(self):
+        self.banner.hide()
+        self._banner_recovery = False
+        queue = getattr(self, "_banner_queue", [])
+        if queue:
+            text, kind = queue.pop(0)
+            self.show_banner(text, kind)
+
     def show_banner(self, text: str, kind: str = "info"):
+        recovery = 'href="recover:"' in text
+        if getattr(self, "_banner_recovery", False) and not self.banner.isHidden() and not recovery:
+            queue = getattr(self, "_banner_queue", [])
+            queue.append((text, kind))
+            self._banner_queue = queue[-20:]
+            return
+        self._banner_recovery = recovery
         from ..theme import tokens
         t = tokens()
         self.banner.setProperty("kind", kind)
@@ -391,11 +417,13 @@ class UIBuildMixin:
         icon_name, col = {"info": ("info", t["accent"]), "ok": ("check", "#16a34a")}.get(kind, ("warn", t["warn"]))
         self.banner_icon.setPixmap(pixmap(icon_name, col, 18))
         self.banner_text.setText(text)
+        from ..accessibility import announce
+        announce(self.banner_text, self.banner_text.text())
         self.banner.show()
         self._banner_seq = getattr(self, "_banner_seq", 0) + 1
         if kind == "info":                     # avisos informativos somem sozinhos
             seq = self._banner_seq
-            QTimer.singleShot(9000, lambda: self.banner.hide() if self._banner_seq == seq else None)
+            QTimer.singleShot(9000, lambda: self.dismiss_banner() if self._banner_seq == seq else None)
 
     def _banner_link(self, href: str):
         from urllib.parse import unquote
@@ -406,13 +434,13 @@ class UIBuildMixin:
         elif href == "update:":
             self.install_pending_update()
         elif href == "later:":
-            self.banner.hide()
+            self.dismiss_banner()
         elif href == "recover:":
-            self.banner.hide()
             self.recover_autosave()
+            self.dismiss_banner()
         elif href == "discard:":
-            self.banner.hide()
             settings().setValue("autosave/clean", "true")
+            self.dismiss_banner()
 
     def _build_actions(self):
         mb = self.menuBar()
@@ -441,7 +469,7 @@ class UIBuildMixin:
         act(m_file, "Adicionar DXF…", lambda: self.open_dxf_dialog(add=True), "Ctrl+Shift+O")
         m_file.addSeparator()
         act(m_file, "Abrir projeto…", self.open_project_dialog, "Ctrl+Shift+P")
-        act(m_file, "Salvar projeto", self.save_project, "Ctrl+S")
+        act(m_file, "Salvar projeto de encaixe", self.save_project, "Ctrl+S")
         act(m_file, "Salvar projeto como…", lambda: self.save_project(ask=True), "Ctrl+Shift+S")
         m_file.addSeparator()
         act(m_file, "Exportar para RDWorks", self.export, "Ctrl+E")
@@ -456,6 +484,7 @@ class UIBuildMixin:
         self.a_undo = act(m_edit, "Desfazer", self.undo, "Ctrl+Z")
         self.a_redo = act(m_edit, "Refazer", self.redo, "Ctrl+Y")
         m_edit.addSeparator()
+        act(m_edit, "Editar posições por instância…", self.edit_positions, "Ctrl+Shift+M")
         act(m_edit, "Girar peça selecionada", self.rotate_selected, "R")
         act(m_edit, "Espelhar peça selecionada", self.mirror_selected, "M")
         act(m_edit, "Travar/destravar posição", self.toggle_lock_selected, "L")
@@ -511,7 +540,7 @@ class UIBuildMixin:
         if not force and (compact, tiny) == getattr(self, "_width_mode", None):
             return
         self._width_mode = (compact, tiny)
-        for b, txt in ((self.btn_open, "Abrir DXF"), (self.btn_intranet, "Intranet FIAP"), (self.btn_save, "Salvar")):
+        for b, txt in ((self.btn_open, "Abrir DXF"), (self.btn_intranet, "Intranet FIAP"), (self.btn_save, "Salvar encaixe")):
             b.setText("" if compact else txt)
         self.btn_export.setText("Exportar" if compact else "Exportar para RDWorks")
         self.preset_combo.setMinimumWidth(130 if tiny else (170 if compact else 230))
@@ -591,6 +620,7 @@ class UIBuildMixin:
             "Ctrl+P\tMostrar/ocultar parâmetros\n"
             "Ctrl+T\tTema claro/escuro\n"
             "Ctrl+1 / 2 / 3\tEncaixe / Gravação de foto / Gerador de caixas\n"
+            "Ctrl+Shift+M\tEditar posições por instância (teclado)\n"
             "Ctrl+A\tSelecionar todas as peças\n"
             "R\tGirar peça selecionada\n"
             "M\tEspelhar peça selecionada\n"
