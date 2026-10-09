@@ -356,8 +356,22 @@ class EditingMixin:
             if it.part.id == pid:
                 it.setSelected(True)
         self.canvas.scene().blockSignals(False)
+        self._canvas_selection()
 
     def _canvas_selection(self):
         sel = self.canvas.selected_items()
         if len(sel) == 1:
-            self.parts_panel.select_part(sel[0].part.id)
+            item = sel[0]
+            self.parts_panel.select_part(item.part.id)
+            width, height = item.part.size
+            text = (f"{item.part.name} · cópia {item.placement.instance + 1} · "
+                    f"{width:g} × {height:g} mm · {item.part.material or 'sem material'}")
+            if item.colliding:
+                text += " · Atenção: colisão, borda ou material incompatível"
+        elif sel:
+            text = f"{len(sel)} cópias selecionadas · R girar · L travar · Del remover"
+        else:
+            text = "Selecione uma peça para conferir seus detalhes"
+        self.selection_summary.setText(text)
+        from ..accessibility import announce
+        announce(self.selection_summary, text)

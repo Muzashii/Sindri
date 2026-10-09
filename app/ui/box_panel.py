@@ -583,20 +583,25 @@ class _Step(QFrame):
         num.setObjectName("StepNum")
         num.setFixedSize(24, 24)
         num.setAlignment(Qt.AlignCenter)
-        t = QLabel(title)
-        t.setObjectName("SectionHead")
+        from .components import SectionToggle
+        self.content = QWidget(self)
+        content_layout = QVBoxLayout(self.content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(theme.metric("space_sm"))
+        t = SectionToggle(title, self.content, expanded=title != "Encaixe das arestas")
+        self.toggle = t
         head.addWidget(num)
-        head.addWidget(t)
-        head.addStretch(1)
+        head.addWidget(t, 1)
         v.addLayout(head)
         self.hint = QLabel(hint)
         self.hint.setObjectName("StepHint")
         self.hint.setWordWrap(True)
         self.hint.setVisible(bool(hint))
-        v.addWidget(self.hint)
+        content_layout.addWidget(self.hint)
         self.body = QVBoxLayout()
-        self.body.setSpacing(8)
-        v.addLayout(self.body)
+        self.body.setSpacing(theme.metric("space_sm"))
+        content_layout.addLayout(self.body)
+        v.addWidget(self.content)
 
 
 class _Tile(QToolButton):
@@ -683,7 +688,7 @@ class BoxPanel(QWidget):
     # ================================================================== montagem
     def _build_controls(self) -> QWidget:
         col = QWidget()
-        col.setFixedWidth(392)
+        col.setFixedWidth(theme.metric("panel_box"))
         self._controls = col
         cv = QVBoxLayout(col)
         cv.setContentsMargins(12, 12, 6, 12)
@@ -1385,7 +1390,7 @@ class BoxPanel(QWidget):
             tile.setIcon(QIcon(pm))
 
     def set_compact(self, on: bool):
-        self._controls.setFixedWidth(360 if on else 392)
+        self._controls.setFixedWidth(theme.metric("panel_box_compact" if on else "panel_box"))
 
     def refresh_theme(self):
         self.refresh_icons()

@@ -26,7 +26,7 @@ from ..dialogs import settings
 from ..icons import icon, pixmap
 from ..parts_panel import PartsPanel
 from ..settings_panel import SettingsPanel
-from ..theme import apply_theme
+from ..theme import apply_theme, metric
 
 
 class UIBuildMixin:
@@ -36,7 +36,7 @@ class UIBuildMixin:
         top.setObjectName("TopBar")
         tl = QHBoxLayout(top)
         tl.setContentsMargins(14, 8, 14, 8)
-        tl.setSpacing(8)
+        tl.setSpacing(metric("space_xs"))
         from ..icons import app_icon
         mark = QLabel()
         mark.setFixedSize(30, 30)
@@ -70,6 +70,8 @@ class UIBuildMixin:
         self.btn_intranet = QPushButton("Intranet FIAP")
         self.btn_intranet.setToolTip("Baixar os arquivos de uma Solicitação Maker direto da intranet (Ctrl+I)")
         self.btn_intranet.clicked.connect(lambda: self.open_intranet())
+        for button in (self.btn_open, self.btn_intranet, self.btn_save):
+            button.setObjectName("ToolbarAction")
         tl.addWidget(self.btn_open)
         tl.addWidget(self.btn_intranet)
         tl.addWidget(self.btn_save)
@@ -162,12 +164,27 @@ class UIBuildMixin:
         self.tabs.currentChanged.connect(self._tab_changed)
         head.addWidget(self.tabs)
         head.addStretch(1)
+        self.btn_parts_panel = QToolButton()
+        self.btn_params_panel = QToolButton()
+        for button, label in ((self.btn_parts_panel, "Peças"), (self.btn_params_panel, "Parâmetros")):
+            button.setText(label)
+            button.setCheckable(True)
+            button.setChecked(True)
+            button.setToolTip("Mostrar ou recolher o painel de " + label.lower())
+            button.setAccessibleName("Painel de " + label.lower())
+            head.addWidget(button)
+        self.btn_parts_panel.toggled.connect(lambda on: self.a_parts.setChecked(on))
+        self.btn_params_panel.toggled.connect(lambda on: self.a_params.setChecked(on))
+        cl.addLayout(head)
+        head = QHBoxLayout()
+        head.setSpacing(4)
         self.btn_rot = self._tool("Girar peça selecionada (R)", self.rotate_selected)
         self.btn_lock = self._tool("Travar/destravar posição da peça selecionada (L)", self.toggle_lock_selected)
         self.btn_del = self._tool("Remover peça selecionada (Del)", self.delete_selected)
         for b in (self.btn_rot, self.btn_lock, self.btn_del):
             head.addWidget(b)
         head.addWidget(self._vsep())
+        head.addStretch(1)
         self.btn_prev = self._tool("Placa anterior (PgUp)", lambda: self.goto_sheet(self.canvas.current_sheet() - 1))
         self.sheet_label = QLabel("")
         self.sheet_label.setObjectName("Muted")
@@ -177,11 +194,19 @@ class UIBuildMixin:
         head.addWidget(self.sheet_label)
         head.addWidget(self.btn_next)
         head.addWidget(self.btn_fit)
-        edit_position = QPushButton("Editar posições…")
+        edit_position = QPushButton("Posições…")
+        self.btn_positions = edit_position
+        from PySide6.QtWidgets import QSizePolicy
+        edit_position.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         edit_position.setToolTip("Selecionar uma cópia e ajustar posição/placa por teclado (Ctrl+Shift+M)")
         edit_position.clicked.connect(self.edit_positions)
         head.addWidget(edit_position)
         cl.addLayout(head)
+        self.selection_summary = QLabel("Selecione uma peça para conferir seus detalhes")
+        self.selection_summary.setObjectName("SelectionSummary")
+        self.selection_summary.setWordWrap(True)
+        self.selection_summary.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        cl.addWidget(self.selection_summary)
 
         self.banner = QFrame()
         self.banner.setObjectName("Banner")
@@ -238,8 +263,8 @@ class UIBuildMixin:
         split.setStretchFactor(1, 1)
         split.setStretchFactor(2, 0)
         split.setSizes([330, 760, 350])
-        self.settings_panel.setMinimumWidth(330)
-        self.parts_panel.setMinimumWidth(280)
+        self.settings_panel.setMinimumWidth(280)
+        self.parts_panel.setMinimumWidth(metric("panel_parts_min"))
         split.setChildrenCollapsible(False)
 
         from ..photo_panel import PhotoPanel
@@ -287,8 +312,12 @@ class UIBuildMixin:
     def _build_metrics(self) -> QFrame:
         box = QFrame()
         box.setObjectName("Metrics")
-        h = QHBoxLayout(box)
-        h.setContentsMargins(14, 8, 14, 8)
+        outer = QVBoxLayout(box)
+        outer.setContentsMargins(12, 8, 12, 8)
+        outer.setSpacing(8)
+        h = QHBoxLayout()
+        outer.addLayout(h)
+        h.setContentsMargins(0, 0, 0, 0)
         h.setSpacing(18)
         self._metrics_layout = h
         self._metric_caps = {}
@@ -307,6 +336,7 @@ class UIBuildMixin:
             return val
 
         self.chip_util = metric("aproveitamento", big=True)
+        self._metric_caps["aproveitamento"][0].setText("aproveitamento total")
         self.chip_util.setToolTip("Área das peças ÷ área das placas usadas")
         self.progress = QProgressBar()
         self.progress.setRange(0, 1000)
@@ -322,7 +352,7 @@ class UIBuildMixin:
         self.status_label = QLabel("Pronto")
         self.status_label.setObjectName("State")
         self.status_label.setWordWrap(True)
-        h.addWidget(self.status_label)
+        outer.addWidget(self.status_label)
         return box
 
     def _vsep(self) -> QFrame:
@@ -348,7 +378,7 @@ class UIBuildMixin:
         lay.addWidget(self.empty_icon)
         t1 = QLabel("Arraste arquivos DXF para cá")
         t1.setAlignment(Qt.AlignCenter)
-        t1.setStyleSheet("font-size: 15pt; font-weight: 700;")
+        t1.setObjectName("EmptyTitle")
         t2 = QLabel("As peças são detectadas e agrupadas automaticamente. "
                     "Depois escolha a placa e clique em Encaixar.")
         t2.setObjectName("Muted")
@@ -388,6 +418,7 @@ class UIBuildMixin:
         self.btn_prev.setIcon(icon("left", c, 17, m))
         self.btn_next.setIcon(icon("right", c, 17, m))
         self.btn_fit.setIcon(icon("fit", c, 17, m))
+        self.btn_positions.setIcon(icon("settings", c, 16, m))
         self.banner_close.setIcon(icon("close", m, 14))
         self.empty_icon.setPixmap(pixmap("layers", t["accent"], 64, 1.5))
         self.parts_panel.refresh_icons()
@@ -414,7 +445,7 @@ class UIBuildMixin:
         self.banner.setProperty("kind", kind)
         self.banner.style().unpolish(self.banner)
         self.banner.style().polish(self.banner)
-        icon_name, col = {"info": ("info", t["accent"]), "ok": ("check", "#16a34a")}.get(kind, ("warn", t["warn"]))
+        icon_name, col = {"info": ("info", t["accent"]), "ok": ("check", t["success_text"])}.get(kind, ("warn", t["warn"]))
         self.banner_icon.setPixmap(pixmap(icon_name, col, 18))
         self.banner_text.setText(text)
         from ..accessibility import announce
@@ -516,6 +547,13 @@ class UIBuildMixin:
         self.a_params.setChecked(settings().value("ui/params_visible", "true") == "true")
         self.a_params.toggled.connect(self.toggle_params)
         self.settings_panel.setVisible(self.a_params.isChecked())
+        self.btn_params_panel.setChecked(self.a_params.isChecked())
+        self.a_parts = act(m_view, "Painel de peças", lambda: None, "Ctrl+Shift+P")
+        self.a_parts.setCheckable(True)
+        self.a_parts.setChecked(settings().value("ui/parts_visible", "true") == "true")
+        self.a_parts.toggled.connect(self.toggle_parts)
+        self.parts_panel.setVisible(self.a_parts.isChecked())
+        self.btn_parts_panel.setChecked(self.a_parts.isChecked())
         m_view.addSeparator()
         self.a_labels = act(m_view, "Mostrar nº em cima das peças", lambda: None, "N")
         self.a_labels.setCheckable(True)
@@ -543,13 +581,14 @@ class UIBuildMixin:
         for b, txt in ((self.btn_open, "Abrir DXF"), (self.btn_intranet, "Intranet FIAP"), (self.btn_save, "Salvar encaixe")):
             b.setText("" if compact else txt)
         self.btn_export.setText("Exportar" if compact else "Exportar para RDWorks")
-        self.preset_combo.setMinimumWidth(130 if tiny else (170 if compact else 230))
+        self.preset_combo.setMinimumWidth(170 if compact else 230)
         self.plate_lbl.setVisible(not compact)
         self.btn_nest.setMinimumWidth(0 if compact else 130)
         self.mode_tabs.setTabText(1, "Foto" if compact else "Gravação de foto")
         self.logo_lbl.setVisible(not tiny)          # telas pequenas: só o ícone (sobra lugar para as 3 abas)
-        self.parts_panel.setMinimumWidth(270)
-        self.settings_panel.setMinimumWidth(290 if tiny else 300)
+        self.parts_panel.setMinimumWidth(metric("panel_parts_min"))
+        self.settings_panel.setMinimumWidth(280)
+        self.settings_panel.set_compact(tiny)
         self.photo_panel.set_compact(tiny)
         self.box_panel.set_compact(tiny)
         self.status_hint.setText("F1 atalhos" if compact else
@@ -558,14 +597,18 @@ class UIBuildMixin:
         self.status_hint.setVisible(not tiny)
         self._metrics_layout.setSpacing(10 if compact else 18)
         for full, short in (("peças encaixadas", "peças"), ("soluções testadas", "soluções"),
-                            ("aproveitamento", "aproveit.")):
+                            ("aproveitamento", "aproveit. total")):
             cap, val = self._metric_caps[full]
-            cap.setText(short if compact else full)
+            cap.setText(short if compact else ("aproveitamento total" if full == "aproveitamento" else full))
         for wdg in self._metric_caps["soluções testadas"]:
             wdg.setVisible(not tiny)
-        self.status_label.setMaximumWidth(190 if compact else 16777215)
-        side_l = int(min(340, max(self.parts_panel.minimumWidth(), w * 0.22)))
-        side_r = int(min(360, max(self.settings_panel.minimumWidth(), w * 0.23)))
+        self.status_label.setMaximumWidth(16777215)
+        self.btn_positions.setText("" if tiny else "Posições…")
+        self.preset_combo.setMaximumWidth(170 if tiny else 230)
+        self.preset_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.preset_combo.setMinimumContentsLength(8)
+        side_l = int(min(metric("panel_parts"), max(self.parts_panel.minimumWidth(), w * 0.22)))
+        side_r = int(min(metric("panel_params"), max(self.settings_panel.minimumWidth(), w * 0.23)))
         self.split.setSizes([side_l, max(300, w - side_l - side_r), side_r])
 
     def set_mode(self, i: int):
@@ -595,7 +638,13 @@ class UIBuildMixin:
 
     def toggle_params(self, on: bool):
         self.settings_panel.setVisible(on)
+        self.btn_params_panel.setChecked(on)
         settings().setValue("ui/params_visible", "true" if on else "false")
+
+    def toggle_parts(self, on: bool):
+        self.parts_panel.setVisible(on)
+        self.btn_parts_panel.setChecked(on)
+        settings().setValue("ui/parts_visible", "true" if on else "false")
 
     def toggle_labels(self, on: bool):
         self.canvas.show_labels = on
@@ -604,6 +653,7 @@ class UIBuildMixin:
 
     def show_shortcuts(self):
         QMessageBox.information(self, "Atalhos de teclado", (
+            "Ctrl+Shift+P\tMostrar/recolher painel de peças\n"
             "Ctrl+O\tAbrir DXF\n"
             "Ctrl+Shift+O\tAdicionar DXF\n"
             "Ctrl+I\tIntranet FIAP\n"

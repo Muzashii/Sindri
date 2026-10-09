@@ -12,7 +12,7 @@ compacta possível nas placas e entrega um único DXF pronto para o **RDWorks**,
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
 ![PySide6](https://img.shields.io/badge/Qt-PySide6-41CD52?logo=qt&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows&logoColor=white)
-![Testes](https://img.shields.io/badge/testes-215%20pytest-success)
+![Testes](https://img.shields.io/badge/testes-225%20pytest-success)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-MIT-blue)
 
 [Como funciona](#-como-funciona) · [Recursos](#-recursos) · [Instalação](#-instalação-windows) ·
@@ -20,13 +20,22 @@ compacta possível nas placas e entrega um único DXF pronto para o **RDWorks**,
 
 <br>
 
-<img src="docs/tela_encaixe.png" alt="Sindri — lote com 3 solicitações encaixadas em 2 placas" width="900">
+<img src="docs/design/encaixe_claro.png" alt="Sindri — lote com 3 solicitações encaixadas em 2 placas" width="900">
 
 <sub>Um lote com 3 solicitações em MDF 3 mm: cada peça leva a cor e o nº da solicitação de quem pediu.</sub>
 
 </div>
 
 ---
+
+## Interface redesenhada
+
+Painéis de peças e parâmetros podem ser recolhidos pelos botões acima do desenho;
+`Ctrl+Shift+P` alterna as peças e `Ctrl+P` alterna os parâmetros. Cabeçalhos com seta
+recolhem as seções de configuração sem perder valores. O resumo da seleção aparece
+acima do canvas, e os rótulos ficam menores conforme o zoom.
+
+[Direção de design](DESIGN_DIRECTION.md) · [Recursos e créditos](ASSETS_CREDITS.md)
 
 ## ✨ Em resumo
 
@@ -124,7 +133,7 @@ flowchart LR
   exportações antigas para a **Lixeira**.
 
 <div align="center">
-<img src="docs/tela_escuro.png" alt="Sindri no tema escuro" width="900">
+<img src="docs/design/encaixe_escuro.png" alt="Sindri no tema escuro" width="900">
 <br><sub>Tema escuro (<code>Ctrl+T</code>)</sub>
 </div>
 
@@ -235,7 +244,7 @@ segue passos numerados, no estilo do MakerCase, com botões ilustrados; a prévi
 mostra só os passos de que precisa.
 
 <div align="center">
-<img src="docs/tela_caixa.png" alt="Sindri — gerador de caixas com tampa baú aberta na prévia 3D" width="900">
+<img src="docs/design/caixa.png" alt="Sindri — gerador de caixas com tampa baú aberta na prévia 3D" width="900">
 </div>
 
 **Modelos** (passo 1):

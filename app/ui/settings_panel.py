@@ -40,13 +40,13 @@ class _Section(QFrame):
         self.icon.setFixedSize(26, 26)
         self.icon.setAlignment(Qt.AlignCenter)
         self.icon.setObjectName("SectionIcon")
-        t = QLabel(title)
-        t.setObjectName("SectionHead")
+        from .components import SectionToggle
+        self.body = QWidget(self)
+        t = SectionToggle(title, self.body, expanded=title != "Ajustes da imagem")
+        self.toggle = t
         head.addWidget(self.icon)
-        head.addWidget(t)
-        head.addStretch(1)
+        head.addWidget(t, 1)
         v.addLayout(head)
-        self.body = QWidget()
         v.addWidget(self.body)
         _Section.instances.append(self)
         self.refresh_icon()
@@ -114,6 +114,8 @@ class SettingsPanel(QWidget):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         outer.addWidget(scroll)
         body = QWidget()
+        from PySide6.QtWidgets import QSizePolicy
+        body.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         scroll.setWidget(body)
         lay = QVBoxLayout(body)
         lay.setContentsMargins(6, 12, 12, 12)
@@ -419,7 +421,7 @@ class SettingsPanel(QWidget):
             warn = QLabel("⚠ Duas camadas com a mesma cor: no RDWorks elas ficariam juntas "
                           "(mesma velocidade e potência). Escolha cores diferentes.")
             warn.setWordWrap(True)
-            warn.setStyleSheet("color:#d97706;")
+            warn.setObjectName("InlineWarning")
             self.laser_rows.addWidget(warn)
         self.laser_box.setVisible(bool(colors))
         from .nowheel import protect
@@ -540,6 +542,15 @@ class SettingsPanel(QWidget):
         self.units.blockSignals(False)
 
     # ------------------------------------------------------------------
+    def set_compact(self, compact: bool):
+        """Empilhar rótulos em painéis estreitos para manter os campos visíveis."""
+        for form in self.findChildren(QFormLayout):
+            form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+            form.setRowWrapPolicy(QFormLayout.WrapAllRows if compact else QFormLayout.WrapLongRows)
+        self.pip.setText("Peças dentro de furos" if compact else "Peças dentro de furos (part-in-part)")
+        self.ignore_text.setText("Ignorar textos" if compact else "Ignorar textos (nomes e anotações)")
+        self.material_mode.setText("Uma cor por material" if compact else "Uma cor por material (3 mm, 6 mm…)")
+
     def set_params(self, p: NestParams):
         widgets = [self.w, self.h, self.margin, self.spacing, self.curve, self.join, self.pop,
                    self.mut, self.stop_ni, self.rot, self.mirror, self.pip, self.multi]

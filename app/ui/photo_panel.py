@@ -149,9 +149,11 @@ class PhotoPanel(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setFixedWidth(340)
+        scroll.setFixedWidth(theme.metric("panel_photo"))
         self._controls = scroll
         body = QWidget()
+        from PySide6.QtWidgets import QSizePolicy
+        body.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         scroll.setWidget(body)
         v = QVBoxLayout(body)
         v.setContentsMargins(12, 12, 6, 12)
@@ -665,7 +667,9 @@ class PhotoPanel(QWidget):
 
     def set_compact(self, on: bool):
         """Telas pequenas: coluna de controles mais estreita."""
-        self._controls.setFixedWidth(290 if on else 340)
+        self._controls.setFixedWidth(290 if on else theme.metric("panel_photo"))
+        for form in self._controls.findChildren(QFormLayout):
+            form.setRowWrapPolicy(QFormLayout.WrapAllRows if on else QFormLayout.WrapLongRows)
 
     def show_message(self, html: str):
         self.msg.setText(html)

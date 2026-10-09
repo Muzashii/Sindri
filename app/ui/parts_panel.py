@@ -22,16 +22,15 @@ class PartRow(QFrame):
         super().__init__()
         self.setObjectName("PartRow")
         self.part = part
-        theme.tokens()
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(8, 8, 8, 8)
+        lay.setContentsMargins(8, 6, 8, 6)
         lay.setSpacing(10)
 
         th = QLabel()
         th.setObjectName("Thumb")
-        th.setFixedSize(56, 56)
+        th.setFixedSize(theme.metric("thumb"), theme.metric("thumb"))
         th.setAlignment(Qt.AlignCenter)
-        th.setPixmap(thumbnail(part, 50, dark))
+        th.setPixmap(thumbnail(part, theme.metric("thumb") - 6, dark))
         lay.addWidget(th)
 
         info = QVBoxLayout()
@@ -59,16 +58,15 @@ class PartRow(QFrame):
             b.setToolTip("\n".join(warns))
             top.addWidget(b)
         top.addStretch(1)
-        info.addLayout(top)
+        if part.material or warns:
+            info.addLayout(top)
         w, h = part.size
         sub = QLabel(f"{_fmt(w)} × {_fmt(h)} mm")
         sub.setObjectName("PartSub")
         info.addWidget(sub)
         extra = [f"{part.file_quantity}× no arquivo"] + ([f"{len(part.holes)} furo(s)"] if part.holes else [])
-        sub2 = QLabel(" · ".join(extra))
-        sub2.setObjectName("PartSub")
-        sub2.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        info.addWidget(sub2)
+        # Os detalhes de origem permanecem na dica, liberando altura na lista.
+        sub.setToolTip(sub.text() + " · " + " · ".join(extra))
         lay.addLayout(info, 1)
 
         ctl = QVBoxLayout()
@@ -76,12 +74,14 @@ class PartRow(QFrame):
         self.spin = QSpinBox()
         self.spin.setRange(0, 9999)
         self.spin.setValue(part.quantity)
-        self.spin.setFixedWidth(70)
+        self.spin.setFixedWidth(54)
         self.spin.setAlignment(Qt.AlignCenter)
         self.spin.setToolTip("Quantidade a cortar")
         self.spin.setAccessibleName(f"Quantidade de {part.name}")
         self.spin.valueChanged.connect(lambda v: panel.quantityChanged.emit(part.id, v))
-        ctl.addWidget(self.spin)
+        quick = QHBoxLayout()
+        quick.setSpacing(4)
+        quick.addWidget(self.spin)
         self.lock = QCheckBox("Rotação fixa")
         self.lock.setChecked(part.rotation_locked)
         self.lock.setToolTip("Travar rotação: a peça nunca será girada\n(útil para veio da madeira ou gravações)")
@@ -100,7 +100,8 @@ class PartRow(QFrame):
         self.done_btn.setFixedWidth(70)
         self.done_btn.setToolTip("Marque quando esta peça já tiver sido cortada")
         self.done_btn.toggled.connect(self._done_toggled)
-        ctl.addWidget(self.done_btn)
+        quick.addWidget(self.done_btn)
+        ctl.insertLayout(0, quick)
         lay.addLayout(ctl)
         self._done_icon()
 
@@ -293,7 +294,7 @@ class PartsPanel(QWidget):
                           "ficam como feitas.")
             cb.setChecked(s["si"] in cut)
             if s["si"] in cut:
-                cb.setStyleSheet("color: #16a34a; font-weight: 700;")
+                cb.setObjectName("CutDone")
             cb.toggled.connect(lambda on, si=s["si"]: self.sheetToggled.emit(si, on))
             self.sheet_checks[s["si"]] = cb
             self.sheets_grid.addWidget(cb, i // cols, i % cols)

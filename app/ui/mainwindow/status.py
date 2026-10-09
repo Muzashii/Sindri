@@ -91,6 +91,16 @@ class StatusMixin:
         u = self._utilization()
         self.progress.setValue(int(round(u * 1000)))
         self.chip_util.setText(fmt_pct(u) if placed else "—")
+        params = self.settings_panel.params()
+        sheet_area = params.sheet_width * params.sheet_height
+        by_sheet = {}
+        for pl in self.placements:
+            part = self.pmap[pl.part_id]
+            by_sheet[pl.sheet_index] = by_sheet.get(pl.sheet_index, 0) + part.outer.area - sum(h.area for h in part.holes)
+        detail = "\n".join(f"Placa {index + 1}: {fmt_pct(area / sheet_area)}"
+                           for index, area in sorted(by_sheet.items())) if sheet_area else ""
+        self.chip_util.setToolTip("Aproveitamento total: área das peças ÷ área das placas usadas" +
+                                  ("\n" + detail if detail else ""))
         sheets = len({pl.sheet_index for pl in self.placements})
         self.chip_sheets.setText(str(sheets) if placed else "—")
         from ...core.dxf_export import sheet_groups

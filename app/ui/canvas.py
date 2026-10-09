@@ -73,7 +73,7 @@ class SheetItem(QGraphicsItem):
         painter.drawRect(QRectF(0, 0, w, h))
         if self.done:
             painter.fillRect(QRectF(0, 0, w, h), QColor(22, 163, 74, 38))
-            pen = QPen(QColor("#16a34a"), 4)
+            pen = QPen(theme.qcolor("success_text"), 4)
             pen.setCosmetic(True)
             painter.setPen(pen)
             painter.drawRect(QRectF(0, 0, w, h))
@@ -127,7 +127,7 @@ class SheetLabel(QGraphicsItem):
         compact = avail < self.full
         width = min(self.full, max(60.0, avail - 4)) if compact else self.full
         r = QRectF(0, -32, width, 24)
-        painter.setPen(QPen(QColor("#16a34a") if self.done else theme.qcolor("border"), 1))
+        painter.setPen(QPen(theme.qcolor("success_text") if self.done else theme.qcolor("border"), 1))
         painter.setBrush(theme.qcolor("surface"))
         painter.drawRoundedRect(r, 12, 12)
         x = 12
@@ -153,7 +153,7 @@ class SheetLabel(QGraphicsItem):
         painter.setFont(self.f2)
         if self.done:
             painter.setPen(Qt.NoPen)
-            painter.setBrush(QColor("#16a34a"))
+            painter.setBrush(theme.qcolor("success_text"))
             painter.drawRoundedRect(chip, 9, 9)
             painter.setPen(QColor("white"))
         else:
@@ -256,6 +256,12 @@ class PartItem(QGraphicsItem):
             painter.setPen(pen)
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(g.fill.boundingRect())
+        if self.colliding:
+            pen = QPen(theme.qcolor("danger"), 2, Qt.DashLine)
+            pen.setCosmetic(True)
+            painter.setPen(pen)
+            painter.setBrush(Qt.NoBrush)
+            painter.drawPath(g.fill)
         if self.canvas.show_labels and self.label_txt and not hidden:
             self._paint_label(painter)
 
@@ -269,8 +275,10 @@ class PartItem(QGraphicsItem):
         br = t.mapRect(self.gfx.rect)
         done = self._is_done()
         txt = ("✓ " + self.label_txt) if done else self.label_txt
-        size = min(br.height() * 0.38, br.width() / max(1.0, 0.66 * len(txt)), 26.0)
-        if size < 7:
+        emphasized = self.isSelected() or self.isUnderMouse()
+        size = min(br.height() * 0.28, (br.width() - 8) / max(1.0, 0.66 * len(txt)),
+                   16.0 if emphasized else 12.0)
+        if size < (8 if emphasized else 10):
             return
         c = t.map(self.label_pt)
         painter.save()
@@ -283,12 +291,13 @@ class PartItem(QGraphicsItem):
         fm = QFontMetricsF(f)
         w = fm.horizontalAdvance(txt) + 8
         r = QRectF(c.x() - w / 2, c.y() - fm.height() / 2, w, fm.height())
-        own = self.canvas.owner_colors.get(self.part.tag)
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(255, 255, 255, 225))
+        background = theme.qcolor("surface")
+        background.setAlpha(240 if emphasized else 220)
+        painter.setBrush(background)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.drawRoundedRect(r, 4, 4)
-        painter.setPen(QColor("#15803d") if done else (own.darker(150) if own is not None else QColor("#1f2937")))
+        painter.setPen(theme.qcolor("success_text" if done else "text"))
         painter.drawText(r, Qt.AlignCenter, txt)
         painter.restore()
 
@@ -519,6 +528,10 @@ class NestCanvas(QGraphicsView):
             return
         self.scene().setSceneRect(r.adjusted(-r.width(), -r.height(), r.width(), r.height()))
         self.fitInView(r.adjusted(-15, -15, 15, 15), Qt.KeepAspectRatio)
+        # As etiquetas têm altura fixa na tela, independente da escala do desenho.
+        if self.mode == "layout":
+            scale = max(abs(self.transform().m11()), 1e-3)
+            self.fitInView(r.adjusted(-15, -15, 15, 40 / scale), Qt.KeepAspectRatio)
         self.zoomChanged.emit(self.transform().m11())
 
     def focus_sheet(self, i: int):
