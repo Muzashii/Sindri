@@ -140,6 +140,7 @@ class IntranetDialog(QDialog):
         ll.addWidget(lt)
         frow = QHBoxLayout()
         self.search = QLineEdit()
+        self.search.setAccessibleName("Buscar solicitações por nome, RM ou número")
         self.search.setPlaceholderText("Buscar por nome, RM ou nº…")
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self._fill_list)
@@ -314,6 +315,8 @@ class IntranetDialog(QDialog):
     # ------------------------------------------------------------------ estado / página
     def _set_state(self, text: str, kind: str = ""):
         self.state.setText(text)
+        from .accessibility import announce
+        announce(self.state, text)
         self.state.setProperty("kind", kind)
         self.state.style().unpolish(self.state)
         self.state.style().polish(self.state)
@@ -352,7 +355,7 @@ class IntranetDialog(QDialog):
 
     def _loaded(self, ok: bool):
         if not ok:
-            self._set_state("Não foi possível carregar a intranet (sem internet?)", "warn")
+            self._set_state("Falha ao carregar a intranet. Verifique a conexão ou abra a página e clique em Atualizar.", "warn")
             return
         # pequena espera: algumas páginas terminam de montar a tabela depois do load
         QTimer.singleShot(400, self.refresh_list)
@@ -364,7 +367,12 @@ class IntranetDialog(QDialog):
         try:
             data = json.loads(raw) if raw else {}
         except (TypeError, ValueError):
-            data = {}
+            self._set_state("Não foi possível ler a página. Abra a intranet e tente Atualizar.", "warn")
+            self.btn_page.setChecked(True)
+            return
+        if not isinstance(data, dict):
+            self._set_state("Resposta da página não reconhecida. Tente Atualizar.", "warn")
+            return
         if not data.get("temFuncao"):
             # logado mas na página inicial da intranet: vai sozinho para Solicitações Maker
             if should_go_to_requests(data.get("url", ""), bool(data.get("temSenha")), self.start_url) \
@@ -374,7 +382,8 @@ class IntranetDialog(QDialog):
                 self.view.setUrl(QUrl(self.start_url))
                 return
             self._logged = False
-            self._set_state("Faça login na intranet ao lado", "warn")
+            self._set_state("Faça login na intranet ao lado" if data.get("temSenha") else
+                            "Página não reconhecida. Abra Solicitações Maker ou Atualizar; confira seu acesso no site.", "warn")
             self.btn_page.setChecked(True)
             self._rows = []
             self._fill_list()
@@ -898,7 +907,9 @@ class IntranetDialog(QDialog):
                      f"{req.receivedBytes()} bytes")
         lab = self.file_rows.get(self._fkey(d, f))
         if lab:
-            lab.setText("✓ baixado" if ok else "erro")
+            reason = req.interruptReasonString() if not ok else ""
+            lab.setText("✓ baixado" if ok else "Erro no download ou ao gravar o arquivo")
+            lab.setToolTip(reason or ("Confira a conexão, o acesso e a permissão na pasta de destino." if not ok else ""))
         if ok:
             self._dl_ok += 1
         else:
@@ -941,7 +952,7 @@ class IntranetDialog(QDialog):
         self._sending = None
         self._set_buttons(True)
         if self._dl_ok == 0:
-            self._set_state("Nenhum arquivo baixado — a sessão pode ter expirado. Faça login de novo.", "warn")
+            self._set_state("Nenhum arquivo baixado. Confira o acesso na página, a conexão e a pasta de destino; depois tente enviar novamente.", "warn")
             self.btn_page.setChecked(True)
             return
         failed = [(d, f) for d, fs in self._plan for f in fs if not f.local_path]
