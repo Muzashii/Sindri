@@ -5,17 +5,19 @@ from PySide6.QtGui import QColor, QPalette, QFont
 from PySide6.QtWidgets import QApplication
 
 LIGHT = {
+    "accent_text": "#1d4ed8", "success_text": "#166534",
     "bg": "#eef0f4", "surface": "#ffffff", "surface2": "#f5f6f8", "surface3": "#e9ecf1",
     "border": "#dde1e7", "text": "#1d2330", "muted": "#6b7383", "accent": "#2563eb",
-    "accent_hover": "#1d4ed8", "accent_soft": "#e3ecfd", "done_bg": "#dcfce7", "success": "#15803d",
+    "accent_hover": "#1d4ed8", "accent_soft": "#e3ecfd", "done_fg": "#166534", "done_bg": "#dcfce7", "success": "#15803d",
     "success_hover": "#116a32", "danger": "#dc2626", "danger_soft": "#fde8e8", "warn": "#b45309",
     "warn_soft": "#fdf1dc", "canvas": "#e4e7ec", "sheet": "#fbfbfc", "sheet_border": "#b9c0cc",
     "grid": "#0000000f", "grid2": "#00000022", "part_fill": "#2563eb22", "shadow": "#00000026",
 }
 DARK = {
+    "accent_text": "#93c5fd", "success_text": "#86efac",
     "bg": "#121419", "surface": "#1a1d24", "surface2": "#21252e", "surface3": "#2a2f3a",
-    "border": "#2c313c", "text": "#e5e7eb", "muted": "#8b93a3", "accent": "#3b82f6",
-    "accent_hover": "#2f6fdb", "accent_soft": "#1e2b45", "done_bg": "#14331f", "success": "#16a34a",
+    "border": "#2c313c", "text": "#e5e7eb", "muted": "#8b93a3", "accent": "#2563eb",
+    "accent_hover": "#1d4ed8", "accent_soft": "#1e2b45", "done_fg": "#86efac", "done_bg": "#14331f", "success": "#15803d",
     "success_hover": "#15803d", "danger": "#ef4444", "danger_soft": "#3a1d22", "warn": "#f59e0b",
     "warn_soft": "#3a2d14", "canvas": "#0f1115", "sheet": "#262b35", "sheet_border": "#4a5262",
     "grid": "#ffffff0d", "grid2": "#ffffff1f", "part_fill": "#3b82f633", "shadow": "#00000080",
@@ -25,7 +27,7 @@ _current = dict(LIGHT)
 _dark = False
 
 
-MATERIAL_COLORS = ["#2563eb", "#ea580c", "#16a34a", "#9333ea", "#db2777", "#0891b2", "#ca8a04"]
+MATERIAL_COLORS = ["#2563eb", "#c2410c", "#15803d", "#9333ea", "#db2777", "#0e7490", "#a16207"]
 
 
 def material_color(material: str) -> QColor:
@@ -41,7 +43,7 @@ def material_color(material: str) -> QColor:
         fixed = {"3": 0, "6": 1, "2": 2, "4": 3, "5": 4, "10": 5, "1": 6, "9": 6, "15": 3}
         if thick in fixed:
             return QColor(MATERIAL_COLORS[fixed[thick]])
-    others = ["#0d9488", "#be185d", "#7c3aed", "#65a30d", "#b45309", "#0369a1", "#a21caf", "#4d7c0f"]
+    others = ["#0f766e", "#be185d", "#7c3aed", "#4d7c0f", "#b45309", "#0369a1", "#a21caf", "#4d7c0f"]
     if "acr" in low:                       # acrílico: família rosa/roxa por espessura
         fam = {"2": "#db2777", "3": "#be185d", "4": "#a21caf", "5": "#7c3aed", "6": "#6d28d9"}
         if thick in fam:
@@ -96,7 +98,11 @@ def apply_theme(app: QApplication, dark: bool) -> None:
 
 
 STYLE = """
-* { outline: none; }
+QPushButton:focus, QToolButton:focus, QCheckBox:focus, QTabBar::tab:focus,
+QListWidget:focus, QTableWidget:focus, QSlider:focus {
+    border: 2px solid %(text)s;
+}
+QToolButton { min-width: 24px; min-height: 24px; }
 QMainWindow, QDialog { background: %(bg)s; }
 QToolTip { background: %(surface)s; color: %(text)s; border: 1px solid %(border)s; padding: 6px 8px;
            border-radius: 6px; }
@@ -123,12 +129,12 @@ QLabel#SectionHead { font-size: 10pt; font-weight: 700; color: %(text)s; }
 QLabel#SectionIcon { background: %(accent_soft)s; border-radius: 8px; }
 QFrame#Metrics { background: %(surface2)s; border: 1px solid %(border)s; border-radius: 9px; }
 QLabel#MetricValue { font-size: 13pt; font-weight: 800; color: %(text)s; }
-QLabel#MetricBig { font-size: 15pt; font-weight: 800; color: %(success)s; }
+QLabel#MetricBig { font-size: 15pt; font-weight: 800; color: %(success_text)s; }
 QLabel#MetricCaption { color: %(muted)s; font-size: 8pt; }
 QLabel#State { border-radius: 9px; padding: 3px 10px; font-weight: 700; background: %(surface3)s;
                color: %(muted)s; }
-QLabel#State[kind="run"] { background: %(accent_soft)s; color: %(accent)s; }
-QLabel#State[kind="ok"] { background: %(surface3)s; color: %(success)s; }
+QLabel#State[kind="run"] { background: %(accent_soft)s; color: %(accent_text)s; }
+QLabel#State[kind="ok"] { background: %(surface3)s; color: %(success_text)s; }
 QLabel#State[kind="warn"] { background: %(danger_soft)s; color: %(danger)s; }
 QToolButton#Danger:hover { background: %(danger_soft)s; }
 QLabel#FieldLabel { color: %(muted)s; }
@@ -150,14 +156,14 @@ QPushButton#ghost:hover { background: %(surface3)s; }
 QToolButton { background: transparent; color: %(text)s; border: 1px solid transparent;
               border-radius: 7px; padding: 5px; }
 QToolButton:hover { background: %(surface3)s; }
-QToolButton:checked { background: %(accent_soft)s; border-color: %(accent)s; }
+QToolButton:checked { background: %(accent_soft)s; border-color: %(accent_text)s; }
 QToolButton:disabled { color: %(muted)s; }
 
 QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit {
     background: %(surface2)s; color: %(text)s; border: 1px solid %(border)s; border-radius: 7px;
     padding: 5px 8px; min-height: 18px; selection-background-color: %(accent)s; }
 QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover, QLineEdit:hover { border-color: %(muted)s; }
-QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QLineEdit:focus { border-color: %(accent)s; }
+QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QLineEdit:focus { border-color: %(accent_text)s; }
 QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { color: %(muted)s; }
 QComboBox::drop-down { border: none; width: 22px; }
 QComboBox QAbstractItemView { background: %(surface)s; color: %(text)s; border: 1px solid %(border)s;
@@ -168,7 +174,7 @@ QSpinBox::up-button, QDoubleSpinBox::up-button, QSpinBox::down-button, QDoubleSp
 QCheckBox { color: %(text)s; spacing: 8px; }
 QCheckBox::indicator { width: 16px; height: 16px; border-radius: 4px; border: 1px solid %(muted)s;
                        background: %(surface)s; }
-QCheckBox::indicator:checked { background: %(accent)s; border-color: %(accent)s;
+QCheckBox::indicator:checked { background: %(accent)s; border-color: %(accent_text)s;
     image: url(%(check_img)s); }
 QCheckBox:disabled { color: %(muted)s; }
 
@@ -177,7 +183,7 @@ QGroupBox { background: %(surface)s; border: 1px solid %(border)s; border-radius
 QGroupBox::title { subcontrol-origin: margin; left: 10px; top: 2px; padding: 0 2px;
                    color: %(muted)s; }
 QGroupBox::indicator { width: 14px; height: 14px; border-radius: 3px; border: 1px solid %(muted)s; }
-QGroupBox::indicator:checked { background: %(accent)s; border-color: %(accent)s; }
+QGroupBox::indicator:checked { background: %(accent)s; border-color: %(accent_text)s; }
 
 QListWidget { background: transparent; border: none; }
 QListWidget::item { border: none; margin: 0 0 6px 0; padding: 0; background: transparent; }
@@ -185,10 +191,10 @@ QListWidget::item:selected { background: transparent; }
 QFrame#PartRow { background: %(surface2)s; border: 1px solid %(border)s; border-radius: 9px; }
 QFrame#PartRow[selected="true"] { border: 1.5px solid %(accent)s; background: %(accent_soft)s; }
 QFrame#PartRow[warn="true"] { border-left: 3px solid %(warn)s; }
-QFrame#PartRow[done="true"] { background: %(done_bg)s; border: 1.5px solid #16a34a; }
-QFrame#PartRow[done="true"] QLabel#PartName { color: #15803d; }
+QFrame#PartRow[done="true"] { background: %(done_bg)s; border: 1.5px solid #15803d; }
+QFrame#PartRow[done="true"] QLabel#PartName { color: %(done_fg)s; }
 QToolButton#DoneButton { border: 1px solid %(border)s; border-radius: 6px; padding: 2px 4px; }
-QToolButton#DoneButton:checked { background: #16a34a; color: white; border-color: #16a34a; font-weight: 700; }
+QToolButton#DoneButton:checked { background: #15803d; color: white; border-color: #15803d; font-weight: 700; }
 QFrame#SheetsBox { background: %(surface2)s; border: 1px solid %(border)s; border-radius: 9px; }
 QLabel#SheetsTitle { font-weight: 700; }
 QPushButton#danger { background: #dc2626; color: white; border: 1px solid #b91c1c; font-weight: 700; }
@@ -197,7 +203,7 @@ QPushButton#ReqRow { text-align: left; padding: 5px 8px; border: 1px solid %(bor
     background: %(surface)s; font-weight: 500; }
 QPushButton#ReqRow:hover { background: %(accent_soft)s; }
 QPushButton#ReqRow:checked { background: %(accent)s; color: white; font-weight: 700; }
-QPushButton#ReqAll { text-align: center; padding: 4px; border: none; background: transparent; color: %(accent)s;
+QPushButton#ReqAll { text-align: center; padding: 4px; border: none; background: transparent; color: %(accent_text)s;
     font-weight: 600; }
 QLabel#PartName { font-weight: 700; color: %(text)s; }
 QLabel#PartSub { color: %(muted)s; font-size: 8pt; }
@@ -212,7 +218,7 @@ QLabel#Thumb { background: %(surface)s; border: 1px solid %(border)s; border-rad
 QFrame#Banner { border-radius: 8px; }
 QFrame#Banner[kind="info"] { background: %(accent_soft)s; border: 1px solid %(accent)s; }
 QFrame#Banner[kind="warn"] { background: %(warn_soft)s; border: 1px solid %(warn)s; }
-QFrame#Banner[kind="ok"] { background: %(done_bg)s; border: 1px solid #16a34a; }
+QFrame#Banner[kind="ok"] { background: %(done_bg)s; border: 1px solid #15803d; }
 QLabel#BannerText { color: %(text)s; }
 
 QTabBar { background: transparent; }
@@ -255,13 +261,18 @@ QLabel#StepHint { color: %(muted)s; }
 QToolButton#Tile { background: %(surface2)s; border: 1px solid %(border)s; border-radius: 10px;
                    padding: 4px 2px 6px 2px; color: %(text)s; font-weight: 600; }
 QToolButton#Tile:hover { border-color: %(muted)s; }
-QToolButton#Tile:checked { background: %(accent_soft)s; border: 2px solid %(accent)s; color: %(accent)s;
+QToolButton#Tile:checked { background: %(accent_soft)s; border: 2px solid %(accent)s; color: %(accent_text)s;
                            font-weight: 700; }
 QPushButton#Seg { border-radius: 0; padding: 6px 10px; font-weight: 600; }
 QPushButton#Seg[pos="first"] { border-top-left-radius: 7px; border-bottom-left-radius: 7px; }
 QPushButton#Seg[pos="last"] { border-top-right-radius: 7px; border-bottom-right-radius: 7px; border-left: none; }
 QPushButton#Seg[pos="mid"] { border-left: none; }
-QPushButton#Seg:checked { background: %(accent)s; color: white; border-color: %(accent)s; }
+QPushButton#Seg:checked { background: %(accent)s; color: white; border-color: %(accent_text)s; }
 QPushButton#Chip { border-radius: 14px; padding: 4px 6px; font-weight: 600; }
-QPushButton#Chip:checked { background: %(accent_soft)s; color: %(accent)s; border: 1px solid %(accent)s; }
+QPushButton#Chip:checked { background: %(accent_soft)s; color: %(accent_text)s; border: 1px solid %(accent)s; }
+
+/* O ID mantém a prioridade sobre os estilos dos controles especiais. */
+QPushButton#primary:focus, QPushButton#success:focus, QPushButton#Seg:focus,
+QPushButton#Chip:focus, QToolButton#Tile:focus, QToolButton#DoneButton:focus,
+QToolButton#Danger:focus { border: 2px solid %(text)s; }
 """

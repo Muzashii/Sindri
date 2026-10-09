@@ -79,23 +79,23 @@ class PartRow(QFrame):
         self.spin.setFixedWidth(70)
         self.spin.setAlignment(Qt.AlignCenter)
         self.spin.setToolTip("Quantidade a cortar")
+        self.spin.setAccessibleName(f"Quantidade de {part.name}")
         self.spin.valueChanged.connect(lambda v: panel.quantityChanged.emit(part.id, v))
         ctl.addWidget(self.spin)
-        self.lock = QToolButton()
-        self.lock.setCheckable(True)
+        self.lock = QCheckBox("Rotação fixa")
         self.lock.setChecked(part.rotation_locked)
         self.lock.setToolTip("Travar rotação: a peça nunca será girada\n(útil para veio da madeira ou gravações)")
         self._lock_icon()
         self.lock.toggled.connect(self._lock_toggled)
-        self.lock.setText(" Girar" if not part.rotation_locked else " Fixa")
-        self.lock.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        self.lock.setFixedWidth(70)
+        self.lock.setAccessibleDescription("Quando marcada, a peça não gira no encaixe automático.")
+        self.lock.setMinimumWidth(104)
         self.panel = panel
         ctl.addWidget(self.lock)
         self.done_btn = QToolButton()
         self.done_btn.setObjectName("DoneButton")
         self.done_btn.setCheckable(True)
         self.done_btn.setText(" Feito")
+        self.done_btn.setAccessibleName(f"Marcar {part.name} como feita")
         self.done_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.done_btn.setFixedWidth(70)
         self.done_btn.setToolTip("Marque quando esta peça já tiver sido cortada")
@@ -112,13 +112,10 @@ class PartRow(QFrame):
         self.setToolTip("\n".join(tips))
 
     def _lock_icon(self):
-        t = theme.tokens()
-        on = self.lock.isChecked()
-        self.lock.setIcon(icon("lock" if on else "rotate", t["accent"] if on else t["muted"], 14))
+        self.lock.setAccessibleName(f"Rotação fixa de {self.part.name}")
 
     def _lock_toggled(self, v: bool):
         self._lock_icon()
-        self.lock.setText(" Fixa" if v else " Girar")
         self.panel.rotationLockChanged.emit(self.part.id, v)
 
     def _done_icon(self):
