@@ -11,6 +11,7 @@ from ...core.models import NestResult
 from ...core.project import ProjectError, load_project, save_project
 from ..dialogs import settings
 from ..render import clear_graphics_cache
+from ..tasks import run_task
 from .common import APP_NAME, now_txt
 
 
@@ -82,6 +83,9 @@ class ProjectMixin:
 
     def autosave(self):
         """Guarda o trabalho atual (encaixe + checklist) para recuperar se o programa fechar sem salvar."""
+        if getattr(self, "_ui_task_depth", 0):
+            self.schedule_autosave()
+            return
         if not self.files or not self.dirty or self.worker is not None:
             return
         try:
@@ -125,7 +129,7 @@ class ProjectMixin:
             return
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            proj = load_project(path)
+            proj = run_task(self, "Abrindo projeto de encaixe", lambda: load_project(path))
         except ProjectError as e:
             QApplication.restoreOverrideCursor()
             QMessageBox.critical(self, "Erro ao abrir projeto", str(e))

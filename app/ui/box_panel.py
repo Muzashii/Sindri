@@ -8,7 +8,7 @@ from typing import Optional
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtCore import QSize
 from PySide6.QtGui import QBrush, QColor, QFont, QIcon, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
-from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QFormLayout, QFrame, QGraphicsScene, QGraphicsSimpleTextItem,
+from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QDoubleSpinBox, QFormLayout, QFrame, QGraphicsScene, QGraphicsSimpleTextItem,
                                QGraphicsView, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea,
                                QSizePolicy, QSlider, QSpinBox, QStackedWidget, QToolButton, QVBoxLayout, QWidget)
 from shapely.geometry import box as rect
@@ -82,6 +82,8 @@ class Box3DView(QWidget):
         self._faces: list = []                 # cache: faces em 3D (independe da câmera)
         self.setMinimumSize(200, 200)
         self.setMouseTracking(False)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setAccessibleDescription("Setas giram a vista, mais e menos ajustam o zoom, F restaura a vista. Medidas e peças têm descrição textual.")
         self.setCursor(Qt.OpenHandCursor)
 
     # ---------------- dados
@@ -89,6 +91,21 @@ class Box3DView(QWidget):
         self.result = result
         self._build_faces()
         self.update()
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        if key in (Qt.Key_Left, Qt.Key_Right):
+            self.yaw += -5 if key == Qt.Key_Left else 5
+        elif key in (Qt.Key_Up, Qt.Key_Down):
+            self.pitch = max(-85, min(85, self.pitch + (5 if key == Qt.Key_Up else -5)))
+        elif key in (Qt.Key_Plus, Qt.Key_Equal, Qt.Key_Minus):
+            self.zoom = max(0.1, min(10, self.zoom * (1 / 1.1 if key == Qt.Key_Minus else 1.1)))
+        elif key == Qt.Key_F:
+            self.reset_view()
+        else:
+            return super().keyPressEvent(event)
+        self.update()
+        event.accept()
 
     def set_explode(self, f: float):
         self.explode = max(0.0, min(1.0, f))
@@ -445,120 +462,17 @@ RECIPES = [
 ]
 
 
-class ValueSlider(QWidget):
-    """Chave de arrastar com o mínimo à esquerda, o valor no meio (no botão) e o máximo à direita.
-
-    Arraste o botão ou clique na barra; setas do teclado andam de ``step`` em ``step``."""
-    valueChanged = Signal(float)
-
-    def __init__(self, lo: float, hi: float, step: float = 0.25, suffix: str = " mm", tip: str = ""):
+class ValueSlider(QDoubleSpinBox):
+    """Native numeric control: exact value, keyboard and accessible value interface."""
+    def __init__(self, lo, hi, step=0.25, suffix=" mm", tip=""):
         super().__init__()
-        self._lo, self._hi, self._step, self._suffix = lo, hi, step, suffix
-        self._v = lo
-        self._drag = False
+        self.setRange(lo, hi)
+        self.setSingleStep(step)
+        self.setDecimals(2)
+        self.setSuffix(suffix)
         self.setToolTip(tip)
-        self.setFixedHeight(36)
-        self.setMinimumWidth(180)
-        self.setFocusPolicy(Qt.StrongFocus)
-        self.setCursor(Qt.PointingHandCursor)
-
-    # ---- valor
-    def minimum(self) -> float:
-        return self._lo
-
-    def maximum(self) -> float:
-        return self._hi
-
-    def value(self) -> float:
-        return self._v
-
-    def setRange(self, lo: float, hi: float):
-        self._lo, self._hi = lo, max(lo, hi)
-        self.setValue(self._v)
-        self.update()
-
-    def setValue(self, v: float):
-        v = round(round(float(v) / self._step) * self._step, 4)
-        v = min(self._hi, max(self._lo, v))
-        if abs(v - self._v) > 1e-9:
-            self._v = v
-            self.update()
-            self.valueChanged.emit(v)
-        else:
-            self.update()
-
-    # ---- desenho
-    def _knob(self) -> QRectF:
-        w = 86.0
-        frac = 0.0 if self._hi <= self._lo else (self._v - self._lo) / (self._hi - self._lo)
-        x = 4 + frac * (self.width() - 8 - w)
-        return QRectF(x, 4, w, self.height() - 8)
-
-    @staticmethod
-    def _txt(v: float, dec: int) -> str:
-        return f"{v:.{dec}f}".replace(".", ",")
-
-    def paintEvent(self, _e):
-        tk = theme.tokens()
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        track = QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
-        p.setPen(QPen(QColor(tk["border"]), 1))
-        p.setBrush(QColor(tk["surface3"]))
-        p.drawRoundedRect(track, 8, 8)
-        f = QFont(self.font())
-        f.setBold(True)
-        p.setFont(f)
-        p.setPen(QColor(tk["muted"]))
-        p.drawText(track.adjusted(12, 0, 0, 0), Qt.AlignVCenter | Qt.AlignLeft, self._txt(self._lo, 1))
-        p.drawText(track.adjusted(0, 0, -12, 0), Qt.AlignVCenter | Qt.AlignRight, self._txt(self._hi, 1))
-        k = self._knob()
-        col = QColor(tk["accent"])
-        if not self.isEnabled():
-            col = QColor(tk["muted"])
-        elif self.hasFocus():
-            col = col.darker(115)
-        p.setPen(Qt.NoPen)
-        p.setBrush(col)
-        p.drawRoundedRect(k, 7, 7)
-        p.setPen(QColor("#ffffff"))
-        p.drawText(k, Qt.AlignCenter, self._txt(self._v, 2) + self._suffix)
-        p.end()
-
-    # ---- mouse e teclado
-    def _set_from_x(self, x: float):
-        w = self._knob().width()
-        frac = (x - 4 - w / 2) / max(1.0, self.width() - 8 - w)
-        self.setValue(self._lo + max(0.0, min(1.0, frac)) * (self._hi - self._lo))
-
-    def mousePressEvent(self, e):
-        if e.button() == Qt.LeftButton:
-            self._drag = True
-            self._set_from_x(e.position().x())
-
-    def mouseMoveEvent(self, e):
-        if self._drag:
-            self._set_from_x(e.position().x())
-
-    def mouseReleaseEvent(self, _e):
-        self._drag = False
-
-    def keyPressEvent(self, e):
-        k = e.key()
-        if k in (Qt.Key_Left, Qt.Key_Down):
-            self.setValue(self._v - self._step)
-        elif k in (Qt.Key_Right, Qt.Key_Up):
-            self.setValue(self._v + self._step)
-        elif k == Qt.Key_PageDown:
-            self.setValue(self._v - 1)
-        elif k == Qt.Key_PageUp:
-            self.setValue(self._v + 1)
-        elif k == Qt.Key_Home:
-            self.setValue(self._lo)
-        elif k == Qt.Key_End:
-            self.setValue(self._hi)
-        else:
-            super().keyPressEvent(e)
+        self.setAccessibleName("Largura do dente")
+        self.setKeyboardTracking(False)
 
 
 class DividerEditor(QWidget):
@@ -737,6 +651,8 @@ def _labeled(text: str, w: QWidget) -> QVBoxLayout:
     v = QVBoxLayout()
     v.setSpacing(3)
     lb = QLabel(text)
+    lb.setBuddy(w)
+    w.setAccessibleName(text)
     lb.setObjectName("FieldLabel")
     v.addWidget(lb)
     v.addWidget(w)
@@ -977,6 +893,11 @@ class BoxPanel(QWidget):
         self.div_editor = DividerEditor()
         self.div_editor.toggled.connect(self._toggle_divider)
         s5.body.addWidget(self.div_editor)
+        self.div_checks = QWidget()
+        self.div_checks_layout = QVBoxLayout(self.div_checks)
+        self.div_checks_layout.setContentsMargins(0, 0, 0, 0)
+        self._divider_checkboxes = {}
+        s5.body.addWidget(self.div_checks)
         self.cols_off, self.rows_off = set(), set()
         v.addWidget(s5)
 
@@ -1289,8 +1210,32 @@ class BoxPanel(QWidget):
 
     def _sync_div_editor(self):
         p_w, p_d = self.w.value(), self.d.value()
+        self.div_editor.setAccessibleDescription("Prévia das divisórias. Use as caixas de seleção abaixo para ativar cada divisória por teclado.")
         self.div_editor.set_layout(p_w, p_d, self.cols.value(), self.rows.value(), self.cols_off, self.rows_off)
         self.btn_all_div.setEnabled(bool(self.cols_off or self.rows_off))
+        keys = [("col", i) for i in range(1, self.cols.value())] + [("row", i) for i in range(1, self.rows.value())]
+        for key in list(self._divider_checkboxes):
+            if key not in keys:
+                cb = self._divider_checkboxes.pop(key)
+                self.div_checks_layout.removeWidget(cb)
+                cb.deleteLater()
+        for kind, i in keys:
+            key = (kind, i)
+            if key not in self._divider_checkboxes:
+                cb = QCheckBox(f"Divisória {'vertical' if kind == 'col' else 'horizontal'} {i}")
+                cb.toggled.connect(lambda on, kind=kind, i=i: self._set_divider(kind, i, on))
+                self._divider_checkboxes[key] = cb
+                self.div_checks_layout.addWidget(cb)
+            cb = self._divider_checkboxes[key]
+            cb.blockSignals(True)
+            cb.setChecked(i not in (self.cols_off if kind == "col" else self.rows_off))
+            cb.blockSignals(False)
+
+    def _set_divider(self, kind, i, on):
+        off = self.cols_off if kind == "col" else self.rows_off
+        (off.discard if on else off.add)(i)
+        self._sync_div_editor()
+        self._changed()
 
     def _finger_range(self, *_, emit: bool = True):
         """A largura do dente vai de 2× a 4× a espessura (acompanha o material)."""
@@ -1353,6 +1298,7 @@ class BoxPanel(QWidget):
             self._message(" ".join(self.result.warnings), "info")
         else:
             self.msg_box.hide()
+        self.view3d.setAccessibleName("Prévia 3D da caixa; medidas e peças descritas abaixo")
         self.view3d.set_result(self.result)
         if self.views.currentIndex() == 1:
             self.flat.set_result(self.result)
@@ -1371,6 +1317,8 @@ class BoxPanel(QWidget):
         kind = LID_NAMES[p.lid] if p.model == MODEL_BOX else MODEL_NAMES[p.model]
         self.foot_info.setText(f"{kind} · {n} peças · {_fmt(s['area_cm2'] * p.quantity)} cm² de "
                                f"{p.material_name()}")
+        from .accessibility import announce
+        announce(self.foot_info, self.foot_info.text())
         self._update_buttons()
 
     def _update_buttons(self):

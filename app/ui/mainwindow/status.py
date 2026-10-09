@@ -42,6 +42,7 @@ class StatusMixin:
 
     def _mark_collisions(self) -> int:
         if not self.checker or not self.canvas.part_items:
+            self._collision_count = 0
             return 0
         pls = [it.placement for it in self.canvas.part_items]
         bad = self.checker.colliding(pls)
@@ -50,6 +51,8 @@ class StatusMixin:
             if it.colliding != c:
                 it.colliding = c
                 it.update()
+        self._collision_count = len(bad)
+        self._update_status()
         return len(bad)
 
     def _update_sheet_label(self):
@@ -60,8 +63,8 @@ class StatusMixin:
         else:
             self.sheet_label.setText("")
         on = self.canvas.mode == "layout" and n > 1
-        self.btn_prev.setEnabled(on)
-        self.btn_next.setEnabled(on)
+        self.btn_prev.setEnabled(on and cur > 1)
+        self.btn_next.setEnabled(on and cur < n)
 
     def goto_sheet(self, i: int):
         if self.canvas.mode != "layout":
@@ -70,6 +73,7 @@ class StatusMixin:
         i = max(0, min(n - 1, i))
         self.canvas.focus_sheet(i)
         self.sheet_label.setText(f"  Placa {i + 1} de {n}  ")
+        self._update_sheet_label()
 
     def _utilization(self) -> float:
         if not self.placements:
@@ -112,16 +116,20 @@ class StatusMixin:
             kind, txt = "", "Sem arquivo"
         elif self.too_big:
             kind, txt = "warn", f"⚠ {len(self.too_big)} tipo(s) maior(es) que a placa"
+        elif getattr(self, "_collision_count", 0):
+            kind, txt = "warn", f"⚠ {self._collision_count} peça(s) com colisão, borda ou material incompatível"
         elif self.placements and missing > 0:
             kind, txt = "warn", f"⚠ {missing} sem lugar"
         elif self.placements:
-            kind, txt = "ok", "✓ Pronto para exportar"
+            kind, txt = "ok", "✓ Todas encaixadas · exportação fará validação final"
         else:
             kind, txt = "", "Clique em Encaixar"
         self.status_label.setProperty("kind", kind)
         self.status_label.style().unpolish(self.status_label)
         self.status_label.style().polish(self.status_label)
         self.status_label.setText(txt)
+        from ..accessibility import announce
+        announce(self.status_label, "Estado do encaixe: " + txt)
 
     def _update_buttons(self):
         running = self.worker is not None

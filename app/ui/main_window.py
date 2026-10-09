@@ -67,6 +67,8 @@ class MainWindow(UIBuildMixin, FilesMixin, ProjectMixin, NestingMixin, EditingMi
 
         self._build_ui()
         self._build_actions()
+        from .accessibility import configure
+        configure(self)
         from .nowheel import protect
         protect(self)                                 # roda do mouse não muda valores dos campos
         params = NestParams()
@@ -93,6 +95,10 @@ class MainWindow(UIBuildMixin, FilesMixin, ProjectMixin, NestingMixin, EditingMi
         self.apply_width(self.width())
 
     def closeEvent(self, e):
+        if getattr(self, "_ui_task_depth", 0):
+            self.statusBar().showMessage("Aguarde a conclusão da operação para fechar.", 5000)
+            e.ignore()
+            return
         if getattr(self, "_applying_update", False):
             self.statusBar().showMessage("Aguarde a conclusão da atualização para fechar.", 5000)
             e.ignore()

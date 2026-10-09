@@ -12,6 +12,7 @@ from ...core.models import NestResult
 from ...core.placement import Decoder
 from ...workers.nest_worker import NestWorker
 from ..dialogs import settings
+from ..tasks import run_task
 
 
 class NestingMixin:
@@ -170,11 +171,12 @@ class NestingMixin:
         self.worker.stop()
         self.statusBar().showMessage("Parando… mantendo a melhor solução.", 3000)
         if wait:
-            if not self.worker.wait(30000):
-                # ainda terminando o cálculo: guarda a referência até a thread acabar (senão o Qt aborta)
-                old = self.worker
+            old = self.worker
+            completed = run_task(self, "Parando o encaixe e preservando o melhor resultado", lambda: old.wait(30000))
+            if not completed:
                 self._old_workers = [x for x in getattr(self, "_old_workers", []) if x.isRunning()] + [old]
-            self.on_finished()
+            if self.worker is old:
+                self.on_finished(old)
 
     def unlock_all(self):
         if any(pl.locked for pl in self.placements):
@@ -205,6 +207,9 @@ class NestingMixin:
         self._params_timer.start(150)
 
     def on_params_changed(self):
+        if getattr(self, "_ui_task_depth", 0):
+            self._params_timer.start(150)
+            return
         new = self.settings_panel.params()
         try:
             new.validate()

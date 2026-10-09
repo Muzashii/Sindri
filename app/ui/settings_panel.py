@@ -83,6 +83,8 @@ def _num_edit(placeholder: str, top: float, value: float, tip: str):
     from PySide6.QtWidgets import QLineEdit
     e = QLineEdit()
     e.setPlaceholderText(placeholder)
+    e.setAccessibleName(placeholder)
+    e.setAccessibleDescription(tip)
     e.setToolTip(tip)
     e.setMinimumWidth(60)
     e.setClearButtonEnabled(True)
