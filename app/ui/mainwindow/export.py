@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import copy
 import tempfile
 
 from PySide6.QtCore import Qt
@@ -15,6 +16,7 @@ from ...core.validate import validate_layout
 from ..dialogs import ExportDialog, settings
 from ..prefs import get_list_value
 from ..report import export_pdf
+from ..tasks import run_task
 
 
 class ExportMixin:
@@ -27,7 +29,9 @@ class ExportMixin:
         pp = self.photo_panel
         if pp.result is None or not pp.btn_export.isEnabled():
             return
-        rp = pp._result_params or pp.params()
+        rp = pp.export_params()
+        if rp is None:
+            return
         ext = ".bmp" if rp.mode == "imagem" else ".dxf"
         st = settings()
         folder = st.value("photo/last_dir", "") or (os.path.dirname(pp.image_path) if pp.image_path else "")
@@ -45,7 +49,7 @@ class ExportMixin:
             base = f"{stem}_foto_{k}"
             k += 1
         path = os.path.join(folder, base + ext)
-        p = pp.params()
+        p = rp
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             w, h = pp.plate_size()
@@ -133,7 +137,8 @@ class ExportMixin:
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             check = [pl for pl in self.placements if sheet is None or pl.sheet_index == sheet]
-            issues = validate_layout(self.pmap, check, p)
+            parts_snapshot, check = copy.deepcopy(self.pmap), copy.deepcopy(check)
+            issues = run_task(self, "Validando geometria antes de exportar", lambda: validate_layout(parts_snapshot, check, p))
         finally:
             QApplication.restoreOverrideCursor()
         if issues:
@@ -191,34 +196,40 @@ class ExportMixin:
         export_stats: dict = {}
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            os.makedirs(o["folder"], exist_ok=True)
-            with tempfile.TemporaryDirectory(prefix=".sindri-export-", dir=o["folder"]) as stage:
-                dxf = export_all_sheets(self.parts, self.placements, p, stage, o["base"], o["version"],
-                                        sheet_outline=o["outline"], inner_first=o["inner"], sort_path=o["path"],
-                                        color_map=cmap, only_sheets=only,
-                                        file_suffix=suffix, stats=export_stats,
-                                        part_labels=labels or None, label_aci=int(numbers["color"]),
-                                        label_height=float(numbers.get("height") or 3.0))
-                sources = [dxf]
-                if only is None:                     # relatório só na exportação completa
-                    res = NestResult(self.placements, self.n_sheets, self._utilization(), 0.0, self.unplaced)
-                    staged_pdf = os.path.join(stage, f"{o['base']}_relatorio.pdf")
-                    export_pdf(staged_pdf, o["base"], self.pmap, res, p, header=self._report_header(),
-                               requests=self._report_requests())
-                    sources.append(staged_pdf)
-                files = []
-                try:
-                    for source in sources:
-                        target = os.path.join(o["folder"], os.path.basename(source))
-                        if os.path.exists(target):
-                            raise FileExistsError(target)
-                        os.rename(source, target)
-                        files.append(target)
-                except OSError:
-                    for target in files:
-                        os.remove(target)
-                    raise
-                pdf = files[1] if len(files) > 1 else None
+            parts, placements, pmap = copy.deepcopy((self.parts, self.placements, self.pmap))
+            n_sheets, utilization, unplaced = self.n_sheets, self._utilization(), list(self.unplaced)
+            header, requests = self._report_header(), copy.deepcopy(self._report_requests())
+            def write_outputs():
+                os.makedirs(o["folder"], exist_ok=True)
+                with tempfile.TemporaryDirectory(prefix=".sindri-export-", dir=o["folder"]) as stage:
+                    dxf = export_all_sheets(parts, placements, p, stage, o["base"], o["version"],
+                                            sheet_outline=o["outline"], inner_first=o["inner"], sort_path=o["path"],
+                                            color_map=cmap, only_sheets=only,
+                                            file_suffix=suffix, stats=export_stats,
+                                            part_labels=labels or None, label_aci=int(numbers["color"]),
+                                            label_height=float(numbers.get("height") or 3.0))
+                    sources = [dxf]
+                    if only is None:                     # relatório só na exportação completa
+                        res = NestResult(placements, n_sheets, utilization, 0.0, unplaced)
+                        staged_pdf = os.path.join(stage, f"{o['base']}_relatorio.pdf")
+                        export_pdf(staged_pdf, o["base"], pmap, res, p, header=header,
+                                   requests=requests)
+                        sources.append(staged_pdf)
+                    files = []
+                    try:
+                        for source in sources:
+                            target = os.path.join(o["folder"], os.path.basename(source))
+                            if os.path.exists(target):
+                                raise FileExistsError(target)
+                            os.rename(source, target)
+                            files.append(target)
+                    except OSError:
+                        for target in files:
+                            os.remove(target)
+                        raise
+                    pdf = files[1] if len(files) > 1 else None
+                return files, pdf
+            files, pdf = run_task(self, "Gerando DXF e relatório PDF", write_outputs)
             hist = get_list_value(st.value("export/history", []))
             st.setValue("export/history", (hist + [f for f in files if f not in hist])[-500:])
         except Exception as e:

@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import os
 import threading
-from dataclasses import asdict, fields
+from dataclasses import asdict, fields, replace
 from typing import Callable, Optional
 
 import numpy as np
@@ -125,6 +125,8 @@ class PhotoPanel(QWidget):
         self._result_params: Optional[PhotoParams] = None
         self._gen = 0
         self._busy = False
+        self._trace_active = False
+        self._trace_error = ""
         self._bridge = _Bridge()
         self._bridge.done.connect(self._traced)
         self._timer = QTimer(self)
@@ -157,6 +159,10 @@ class PhotoPanel(QWidget):
         title = QLabel("Gravação de foto")
         title.setObjectName("SectionTitle")
         v.addWidget(title)
+        scope = QLabel("Foto é um trabalho independente. Salvar projeto guarda apenas o encaixe; exporte a foto antes de fechar.")
+        scope.setWordWrap(True)
+        scope.setObjectName("Muted")
+        v.addWidget(scope)
 
         g0 = _Section("Imagem", "open")
         f0 = QVBoxLayout(g0.body)
@@ -305,6 +311,7 @@ class PhotoPanel(QWidget):
         self.msg_box.hide()
         v.addWidget(self.msg_box)
         self.view = PhotoView()
+        self.view.setAccessibleName("Prévia da foto na placa; use X e Y para posicionar")
         v.addWidget(self.view, 1)
         bottom = QHBoxLayout()
         self.info = QLabel("")
@@ -378,7 +385,7 @@ class PhotoPanel(QWidget):
     def laser_values(self, palette=None) -> dict:
         """{camada do RDWorks: (velocidade, potência)} de cada nível."""
         from ..core import laser
-        p = self.params()
+        p = self.export_params() or self.params()
         pal = palette or laser.DEFAULT_PALETTE
         if p.mode == "imagem":                       # bitmap na camada preta
             if p.dither:                             # pontilhado: um ponto é queimado ou não, potência única
@@ -408,6 +415,8 @@ class PhotoPanel(QWidget):
         self._update_size()
         if first:
             self.center()
+        self._timer.stop()
+        self._invalidate_trace()
         self.retrace()
         return True
 
@@ -442,18 +451,38 @@ class PhotoPanel(QWidget):
             wdg.setToolTip(wdg.toolTip().split("\n(Imagem")[0] + ("" if lines else
                            "\n(Imagem: só para ver na placa — no RDWorks a imagem entra onde você colocar)"))
 
+    def export_params(self):
+        if self.result is None or self._busy or self._timer.isActive() or self._done_gen != self._gen:
+            return None
+        # Position and laser controls do not change pixels; merge them into the valid snapshot.
+        current = self.params()
+        return replace(self._result_params, x_mm=current.x_mm, y_mm=current.y_mm,
+                       speed=current.speed, power_min=current.power_min, power_max=current.power_max)
+
+    def _invalidate_trace(self):
+        self._gen += 1
+        self._busy = True
+        self._trace_error = ""
+        self.btn_export.setEnabled(False)
+        self.info.setText("Gerando… aguarde a prévia atualizada para exportar.")
+
     def _changed(self, *_):
         self._mode_ui()
         self._save_settings()
         self._update_size()
         if self.gray is not None:
-            self.info.setText("Gerando…")
+            self._invalidate_trace()
             self._timer.start()
 
     def retrace(self):
         if self.gray is None:
             return
-        self._gen += 1
+        if self._trace_active:
+            self._timer.start()
+            return
+        self._trace_active = True
+        self._busy = True
+        self.btn_export.setEnabled(False)
         gen, gray, p = self._gen, self.gray, self.params()
 
         def work():
@@ -481,11 +510,19 @@ class PhotoPanel(QWidget):
     _done_gen = -1
 
     def _traced(self, gen, payload, err):
+        self._trace_active = False
         if gen != self._gen:
+            if not self._timer.isActive():
+                self._timer.start()
             return
+        self._busy = False
+        self._timer.stop()
         self._done_gen = gen
         if err is not None or payload is None:
-            self.info.setText(f"Erro ao gerar: {err}")
+            self.result = self._result_params = None
+            self._trace_error = f"Erro ao gerar: {err}. Altere um ajuste ou abra a imagem novamente para tentar."
+            self.btn_export.setEnabled(False)
+            self.info.setText(self._trace_error)
             return
         self.result, self._result_params = payload
         self._refresh_pixmap()
@@ -557,10 +594,12 @@ class PhotoPanel(QWidget):
             wdg.setValue(round(val, 1))
             wdg.blockSignals(False)
         self._save_settings()
+        self._update_info()
 
     def _moved_by_spin(self, *_):
         self._place_photo()
         self._save_settings()
+        self._update_info()
 
     def center(self):
         w, h = self.plate_size()
@@ -588,7 +627,13 @@ class PhotoPanel(QWidget):
             self.info.setText("Abra uma imagem para começar (botão à esquerda ou arraste o arquivo).")
             self.btn_export.setEnabled(False)
             return
+        if self._busy or self._timer.isActive():
+            self.btn_export.setEnabled(False)
+            self.info.setText("Gerando… aguarde a prévia atualizada para exportar.")
+            return
         if self.result is None:
+            self.btn_export.setEnabled(False)
+            self.info.setText(self._trace_error or "Altere um ajuste para gerar a prévia.")
             return
         w, h = self.plate_size()
         outside = (p.x_mm < -1e-6 or p.y_mm < -1e-6 or p.x_mm + self.result.width_mm > w + 1e-6
@@ -614,6 +659,8 @@ class PhotoPanel(QWidget):
         if outside:
             txt += "  ·  ⚠ a foto passa da borda da placa"
         self.info.setText(txt)
+        from .accessibility import announce
+        announce(self.info, txt)
         self.btn_export.setEnabled(ok)
 
     def set_compact(self, on: bool):
