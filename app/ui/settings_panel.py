@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QIcon, QPixmap, QPainter
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QFrame, QHBoxLayout,
                                QLabel, QListWidget, QListWidgetItem, QSpinBox, QVBoxLayout, QWidget,
-                               QPushButton, QScrollArea)
+                               QPushButton, QScrollArea, QToolButton)
 from ..core.geometry import aci_to_rgb
 
 from ..core.models import NestParams
@@ -103,6 +103,8 @@ class SettingsPanel(QWidget):
     materialChanged = Signal(str, dict)           # material, {"color", "speed", "power"}
     numbersChanged = Signal(dict)                 # {"on", "color", "height", "speed", "power"}
     colorOpsRequested = Signal()                  # conferir cor do arquivo -> corte/vinco/gravação
+    layerParamsRequested = Signal(str, str)       # material, camada de laser: modo, pot. mín., passadas…
+    twoTubesChanged = Signal(bool)                # máquina com dois tubos
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -185,6 +187,11 @@ class SettingsPanel(QWidget):
                                       "O contorno externo da peça é sempre corte.")
         self.btn_color_ops.clicked.connect(self.colorOpsRequested.emit)
         gv.addWidget(self.btn_color_ops)
+        self.two_tubes = QCheckBox("Máquina com 2 tubos")
+        self.two_tubes.setToolTip("Desligado (padrão do laboratório): o Sindri só mexe no tubo 1 do RDWorks.\n"
+                                  "Ligado: grava os mesmos valores nos dois tubos.")
+        self.two_tubes.toggled.connect(lambda on: self.twoTubesChanged.emit(bool(on)))
+        gv.addWidget(self.two_tubes)
         self.laser_rows = QVBoxLayout()
         self.laser_rows.setSpacing(8)
         gv.addLayout(self.laser_rows)
@@ -372,6 +379,7 @@ class SettingsPanel(QWidget):
         self.material_mode.blockSignals(True)
         self.material_mode.setChecked(bool(mode))
         self.material_mode.blockSignals(False)
+        self.btn_color_ops.setVisible(bool(mode))
         if not mode:
             key = ["grp", has_requests, numbers.get("color"), numbers.get("on")] + [g.key for g in groups]
             if key == self._laser_keys and not force:
@@ -407,13 +415,15 @@ class SettingsPanel(QWidget):
             head.addWidget(name, 1)
             cb = self._color_combo(aci, tip_color)
             head.addWidget(cb)
+            head.addWidget(self._more_button(m, "corte"))
             v.addLayout(head)
             vals = QHBoxLayout()
             vals.setSpacing(6)
             sp = _num_edit("velocidade (mm/s)", 2000, float(cfg.get("speed") or 0),
                            "Velocidade do corte deste material, em mm/s. Em branco = não mexer no RDWorks.")
             pw = _num_edit("potência (%)", 100, float(cfg.get("power") or 0),
-                           "Potência do corte deste material, em % (mínima = máxima). Em branco = não mexer.")
+                           "Potência máxima do corte deste material, em %. A mínima é 65% dela se não for "
+                           "informada em ⋯. Em branco = não mexer.")
 
             def emit(*_, mat=m, c=cb, a=sp, b=pw):
                 self.materialChanged.emit(mat, {"color": int(c.currentData()), "speed": _num(a, 2000),
@@ -442,6 +452,15 @@ class SettingsPanel(QWidget):
         from .nowheel import protect
         protect(self.laser_box)
 
+    def _more_button(self, material: str, op: str) -> QToolButton:
+        b = QToolButton()
+        b.setText("⋯")
+        b.setAutoRaise(True)
+        b.setToolTip("Modo (corte/scan), potência mínima, passadas, intervalo do scan e sopro.")
+        b.setAccessibleName("Mais parâmetros do laser")
+        b.clicked.connect(lambda _=False: self.layerParamsRequested.emit(material, op))
+        return b
+
     def _add_op_row(self, material: str, op: str, aci: int, cfg: dict):
         """Vinco ou gravação de um material: cor própria (nunca a do corte), velocidade e potência."""
         from ..core.operations import LABELS
@@ -457,6 +476,7 @@ class SettingsPanel(QWidget):
         cb = self._color_combo(aci, "Cor desta operação no DXF: uma camada própria no RDWorks, "
                                     "separada do corte.")
         head.addWidget(cb)
+        head.addWidget(self._more_button(material, op))
         v.addLayout(head)
         vals = QHBoxLayout()
         vals.setSpacing(6)

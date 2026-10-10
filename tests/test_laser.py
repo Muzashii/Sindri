@@ -191,9 +191,11 @@ def test_material_values_vai_para_a_camada_certa():
     cfg = {"MDF 3mm": {"speed": 20, "power": 60}, "MDF 6mm": {"speed": 8, "power": 0}}
     vals = laser.material_values({"MDF 3mm": 7, "MDF 6mm": 5}, cfg,
                                  {"on": True, "color": 1, "speed": 300, "power": 15}, PALETTE)
-    assert vals == {0: (20.0, 60.0), 2: (300.0, 15.0)}          # 6 mm sem potência: não mexe
-    vals = laser.material_values({"MDF 3mm": 3}, {"MDF 3mm": {"speed": 5, "power": 70}}, None, PALETTE)
-    assert vals == {3: (5.0, 70.0)}
+    # 6 mm sem potência: não mexe; mínima = 65% da máxima (a Ruida usa a mínima nos cantos)
+    assert vals == {0: (20.0, 39.0, 60.0), 2: (300.0, 9.8, 15.0)}
+    vals = laser.material_values({"MDF 3mm": 3}, {"MDF 3mm": {"speed": 5, "power": 70, "power_min": 50}},
+                                 None, PALETTE)
+    assert vals == {3: (5.0, 50.0, 70.0)}
 
 
 def test_numeros_no_canto_das_pecas(tmp_path):
@@ -264,8 +266,8 @@ def test_painel_por_material_e_numeros_do_lote(tmp_path, monkeypatch):
     assert op_colors[("MDF 3mm", "corte")] == 7 and op_colors[("MDF 6mm", "corte")] == 3
     eng = op_colors[("MDF 3mm", "gravacao_vetorial")]
     assert eng not in (7, 3, 1)                             # gravação nunca na cor de corte
-    assert vals[0] == (20.0, 60.0) and vals[2] == (300.0, 15.0)
-    assert vals[laser.nearest_layer(laser.aci_rgb(eng), laser.DEFAULT_PALETTE)] == (250.0, 12.0)
+    assert vals[0] == (20.0, 39.0, 60.0) and vals[2] == (300.0, 9.8, 15.0)
+    assert vals[laser.nearest_layer(laser.aci_rgb(eng), laser.DEFAULT_PALETTE)] == (250.0, 7.8, 12.0)
     from app.ui.color_ops_dialog import ColorOpsDialog
     asked = []
     monkeypatch.setattr(ColorOpsDialog, "exec", lambda self: asked.append(1) or 1)
@@ -458,3 +460,92 @@ def test_conferencia_camada_a_camada():
     assert lines[2].values == "20 mm/s · 13–60% · 2 passadas" and lines[0].values == "valores do RDWorks"
     html = laser.checklist_html(lines)
     assert html.count("<tr>") == 4 and "SIM" in html
+
+
+# ------------------------------------------------------- parâmetros completos + config do RDWorks
+def test_um_tubo_nao_mexe_no_tubo_2_e_le_de_volta(tmp_path):
+    data = fake_config()
+    t = laser.find_tables(data)[0]
+    new = laser.patch(data, {0: (20, 13, 60)})                       # padrão: máquina de 1 tubo
+    s, a, b, c, d = struct.unpack_from("<5d", new, t.offset)
+    assert (s, a, b) == (20, 13, 60) and (c, d) == (30, 30)          # tubo 2 como estava
+    new2 = laser.patch(data, {0: (20, 13, 60)}, single_tube=False)
+    assert struct.unpack_from("<5d", new2, t.offset) == (20, 13, 60, 13, 60)
+    cfg = tmp_path / "config"
+    cfg.write_bytes(data)
+    applied = laser.apply_to_config(str(cfg), {0: (20, 13, 60), 2: (300, 15)})
+    assert applied == [(0, 20.0, 13.0, 60.0), (2, 300.0, 15.0, 15.0)]
+    assert "preto = 20 mm/s 13–60%" in laser.applied_text(applied, PALETTE)
+    assert laser.config_version(data) == "8.0.01"
+
+
+def test_leitura_de_volta_errada_restaura_o_config(tmp_path, monkeypatch):
+    import pytest
+    data = fake_config()
+    cfg = tmp_path / "config"
+    cfg.write_bytes(data)
+    monkeypatch.setattr(laser, "verify", lambda d, v, tol=1e-6: (_ for _ in ()).throw(ValueError("não bate")))
+    with pytest.raises(ValueError):
+        laser.apply_to_config(str(cfg), {0: (20, 60)})
+    assert cfg.read_bytes() == data                                  # voltou como estava
+
+
+def test_rd_triple_minima_padrao():
+    assert laser.rd_triple(20, 60) == (20.0, 39.0, 60.0)
+    assert laser.rd_triple(20, 60, 50) == (20.0, 50.0, 60.0)
+    assert laser.rd_triple(300, 40, 0, "scan") == (300.0, 40.0, 40.0)
+    assert laser.rd_triple(0, 60) is None and laser.rd_triple(20, 0) is None
+    assert laser.rd_triple(20, 60, 80) == (20.0, 39.0, 60.0)         # mínima maior que a máxima: ignora
+    c = laser.check_from_entry(7, "MDF 6mm · corte", "corte",
+                               {"speed": 8, "power": 80, "passes": 2, "air": "ligado"})
+    assert c.values == "8 mm/s · 52–80% · 2 passadas" and c.mode_text == "Corte · sopro ligado"
+    r = laser.check_from_entry(2, "MDF · raster", "gravacao_raster", {"speed": 300, "power": 30, "interval": 0.08})
+    assert r.mode == "scan" and r.mode_text == "Scan 0.08 mm"
+
+
+def test_parametros_completos_pelo_painel(monkeypatch):
+    from app.ui.layer_params_dialog import LayerParamsDialog
+    from app.ui.main_window import MainWindow
+    w = MainWindow(workers=0)
+    assert w.single_tube()                                           # laboratório: 1 tubo
+    w.settings_panel.two_tubes.setChecked(True)
+    assert not w.single_tube()
+    w.settings_panel.two_tubes.setChecked(False)
+    w.parts = [_mpart("A", "MDF 6mm")]
+    w.pmap = {p.id: p for p in w.parts}
+    w._refresh_cut_panel()
+
+    def fake_exec(dlg):
+        dlg.speed.setValue(8)
+        dlg.pmax.setValue(80)
+        dlg.pmin.setValue(55)
+        dlg.passes.setValue(2)
+        return 1
+    monkeypatch.setattr(LayerParamsDialog, "exec", fake_exec)
+    w.edit_layer_params("MDF 6mm", "corte")
+    c = w.material_cfg()["MDF 6mm"]
+    assert (c["speed"], c["power"], c["power_min"], c["passes"]) == (8, 80, 55, 2)
+    _, op_colors, vals = w._material_plan()
+    assert vals[0] == (8.0, 55.0, 80.0)
+    w.placements = [Placement("A", 0, 0, 50, 50, 0)]
+    checks = w._layer_checks(None, w._laser_export_plan())
+    assert checks[0].values == "8 mm/s · 55–80% · 2 passadas"
+    w.dirty = False
+    w.close()
+
+
+def test_ferramenta_compara_configs():
+    import importlib.util
+    import os
+    spec = importlib.util.spec_from_file_location(
+        "config_diff", os.path.join(os.path.dirname(__file__), "..", "tools", "config_diff.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    a = fake_config()
+    b = bytearray(a)
+    t = laser.find_tables(a)[0]
+    rec = t.offset - 8 + 1 * t.stride                 # camada 1 (azul)
+    b[rec + 50] = 0x01                                # um campo depois dos 5 doubles
+    out = mod.diff(a, bytes(b))
+    assert any("tabela 0, camada 1, byte 50 do registro" in x for x in out)
+    assert mod.diff(a, a)[-1] == "nenhum byte diferente"

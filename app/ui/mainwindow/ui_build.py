@@ -249,6 +249,11 @@ class UIBuildMixin:
         self.settings_panel.laserChanged.connect(self.set_laser_value)
         self.settings_panel.materialModeChanged.connect(self.set_material_mode)
         self.settings_panel.colorOpsRequested.connect(lambda: self.confirm_color_ops(force=True))
+        self.settings_panel.layerParamsRequested.connect(self.edit_layer_params)
+        self.settings_panel.two_tubes.blockSignals(True)
+        self.settings_panel.two_tubes.setChecked(not self.single_tube())
+        self.settings_panel.two_tubes.blockSignals(False)
+        self.settings_panel.twoTubesChanged.connect(lambda on: self.set_single_tube(not on))
         self.settings_panel.materialChanged.connect(self.set_material_value)
         self.settings_panel.numbersChanged.connect(self.set_numbers_value)
 

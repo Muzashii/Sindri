@@ -193,3 +193,18 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
 60. **Aviso camada a camada**: cor, operação, modo, velocidade/potência (mín–máx e passadas quando houver) e
     saída, na ordem de trabalho (números e gravação antes do corte). Linhas que caem na mesma camada do RDWorks
     são juntadas.
+61. **Potência mín./máx.**: gravamos (velocidade, mínima, máxima). Sem mínima informada, ela é 65% da máxima no
+    modo corte (a Ruida usa a mínima nos cantos e acelerações; mín. = máx. queima o canto em MDF e derrete em
+    acrílico) e igual à máxima no scan. É ponto de partida, a validar na grade de teste de cada material.
+62. **Máquina de 1 tubo (padrão do laboratório)**: o Sindri só escreve velocidade + tubo 1 (3 doubles do
+    registro); o tubo 2 fica como estava. A opção "Máquina com 2 tubos" volta a gravar os dois.
+63. **Leitura de volta**: depois de gravar o `config`, o Sindri relê o arquivo, reencontra as tabelas e confere
+    cada camada pedida. Se algo não bater, o `config` volta a ser o de antes (a cópia `config.antes_sindri`
+    continua existindo) e o aviso diz o motivo. O aviso final mostra "Aplicado no RDWorks (RDWorks x.y, config
+    8.0.01): preto = 20 mm/s 13–20%…"; a versão do executável (Windows) e a do cabeçalho do `config` ajudam a
+    saber em que versão a tabela foi reconhecida. O ajudante como administrador grava o resultado ao lado do
+    pedido (`.ok`/`.erro`) e a janela acompanha por ~30 s.
+64. **Modo, passadas, intervalo do scan, bidirecional e sopro** ficam nos parâmetros de cada camada (⋯ no painel
+    do laser) e aparecem na conferência camada a camada e no relatório, mas **não** são gravados no `config`:
+    não sabemos ainda em que bytes o RDWorks guarda esses campos. `tools/config_diff.py` compara dois `config`
+    (antes/depois de mudar um campo no RDWorks) e diz a tabela, a camada e o byte do registro que mudou.

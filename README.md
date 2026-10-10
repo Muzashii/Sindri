@@ -211,6 +211,22 @@ Roda do mouse = zoom · botão do meio (ou `Alt` + arrastar) = mover a vista.
 
 ---
 
+## 🔥 Laser: camadas, potência e conferência
+
+- **Corte × gravação**: cada linha recebe uma operação — corte (contorno e furos), vinco, gravação vetorial ou
+  raster. O contorno externo é sempre corte; as outras cores seguem o que o técnico confirma em
+  **Cores do arquivo → corte / gravação…** (a cor do contorno é corte; as outras, gravação; nomes de camada como
+  `FUROS`, `VINCO`, `GRAVACAO` ajudam). No modo **uma cor por material**, só o corte vai para a cor do material.
+- **Material proibido**: PVC, vinil, policarbonato, ABS, fibra de vidro e couro sintético bloqueiam a exportação.
+- **Potência mín./máx.**: o Sindri preenche velocidade e potência mínima/máxima no RDWorks antes de abrir
+  (mínima automática = 65% da máxima no corte). Máquina de **1 tubo** por padrão: o tubo 2 não é tocado.
+  Depois de gravar ele **lê de volta** e mostra o que foi aplicado.
+- **⋯** em cada linha do laser: modo (corte/scan), passadas, intervalo do scan, bidirecional e sopro. Esses campos
+  aparecem na conferência para você ajustar no RDWorks.
+- Para descobrir onde o RDWorks guarda outros campos (saída, modo…): `python tools/config_diff.py antes.cfg depois.cfg`.
+
+---
+
 ## 🌐 Intranet FIAP
 
 O botão **Intranet FIAP** abre a página de *Solicitações Maker* num navegador dentro do programa.

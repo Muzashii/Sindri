@@ -197,7 +197,8 @@ class ExportMixin:
             plan["cmap"] = None
         elif labels:                                 # cores do desenho + camada dos números
             vals = self.laser_values()
-            rd = {g.rd_index: tuple(vals[g.key]) for g in groups if vals.get(g.key)}
+            rd = {g.rd_index: laser.rd_triple(*vals[g.key][:2]) for g in groups
+                  if vals.get(g.key) and laser.rd_triple(*vals[g.key][:2])}
             rd.update(laser.material_values({}, {}, numbers, self._laser_palette()))
             plan["rd_values"] = rd
         return plan
@@ -367,26 +368,20 @@ class ExportMixin:
             for (m, op), aci in plan["op_colors"].items():
                 if m not in mats or op not in used.get(m, []):
                     continue
-                c = cfg.get(m) or {}
-                if op != operations.CUT:
-                    c = (c.get("ops") or {}).get(op) or {}
-                entries.append(laser.LayerCheck(aci, f"{m or 'sem material'} · {LABELS[op].lower()}", op,
-                                                c.get("mode", ""), float(c.get("speed") or 0),
-                                                float(c.get("power_min") or 0), float(c.get("power") or 0),
-                                                int(c.get("passes") or 1)))
+                entries.append(laser.check_from_entry(aci, f"{m or 'sem material'} · {LABELS[op].lower()}", op,
+                                                      laser.op_entry(cfg.get(m) or {}, op)))
         else:
             vals = self.laser_values()
             for g in plan["groups"]:
                 if g.material not in mats:
                     continue
                 v = vals.get(g.key) or [0, 0]
-                entries.append(laser.LayerCheck(g.target_aci, f"{g.material or 'sem material'} · "
-                                                f"{', '.join(g.layers) or 'camada'}", "corte", "",
-                                                float(v[0]), 0.0, float(v[1])))
+                entries.append(laser.check_from_entry(g.target_aci, f"{g.material or 'sem material'} · "
+                                                      f"{', '.join(g.layers) or 'camada'}", "corte",
+                                                      {"speed": v[0], "power": v[1]}))
         if plan["labels"] and any(pid in plan["labels"] for pid in sheet_parts):
-            n = plan["numbers"]
-            entries.append(laser.LayerCheck(int(n["color"]), "nº da solicitação", "numeros", "",
-                                            float(n.get("speed") or 0), 0.0, float(n.get("power") or 0)))
+            entries.append(laser.check_from_entry(int(plan["numbers"]["color"]), "nº da solicitação", "numeros",
+                                                  plan["numbers"]))
         return laser.layer_checklist(entries, self._laser_palette())
 
     # ------------------------------------------------------------------ velocidade/potência
@@ -556,6 +551,31 @@ class ExportMixin:
                     out[(m, op)] = int(o["color"])
         return out
 
+    def edit_layer_params(self, material: str, op: str):
+        """⋯ de uma linha do laser: modo, potência mín./máx., passadas, intervalo do scan e sopro."""
+        from ..layer_params_dialog import LayerParamsDialog
+        entry = laser.op_entry(self.material_cfg().get(material) or {}, op)
+        dlg = LayerParamsDialog(material or "Sem material", op, entry, self)
+        if not dlg.exec():
+            return
+        self.set_material_params(material, op, dlg.values())
+        self._refresh_laser_panel(force=True)
+
+    def set_material_params(self, material: str, op: str, values: dict):
+        """Junta ``values`` nos parâmetros da camada ``op`` do material (o corte fica na raiz)."""
+        import json
+        cfg = self.material_cfg()
+        entry = dict(cfg.get(material) or {})
+        if op == operations.CUT:
+            entry.update(values)
+            entry.setdefault("color", self._material_colors().get(material, 7))
+        else:
+            ops = dict(entry.get("ops") or {})
+            ops[op] = {**(ops.get(op) or {}), **values}
+            entry["ops"] = ops
+        cfg[material] = entry
+        settings().setValue("laser/materials", json.dumps(cfg, ensure_ascii=False))
+
     # ---- operação de cada cor do arquivo (corte × vinco × gravação)
     def effective_color_ops(self) -> dict:
         return operations.merge_color_ops(self.parts, self.color_ops)
@@ -621,18 +641,29 @@ class ExportMixin:
                              f"{v[0]:g} mm/s · {v[1]:g}%")
         return lines + self._numbers_legend()
 
+    def single_tube(self) -> bool:
+        """Máquina de um tubo (padrão do laboratório): o Sindri nunca mexe no tubo 2 do RDWorks."""
+        return str(settings().value("laser/tubes", "1")) != "2"
+
+    def set_single_tube(self, on: bool):
+        settings().setValue("laser/tubes", "1" if on else "2")
+
     def _apply_laser(self, exe: str, path: str, groups: list,
                      values: dict | None = None) -> tuple[bool, str]:
         """Grava velocidade/potência no RDWorks antes de abrir. Devolve (já abriu o RDWorks?, aviso).
-        ``values``: {camada do RDWorks: (velocidade, potência)} já prontos (ex.: gravação de foto)."""
+        ``values``: {camada do RDWorks: (vel, pot) ou (vel, pot. mín., pot. máx.)} já prontos."""
         if values is None:
             vals = self.laser_values()
-            values = {g.rd_index: tuple(vals[g.key]) for g in groups if vals.get(g.key)}
+            values = {}
+            for g in groups:
+                t = laser.rd_triple(*vals[g.key][:2]) if vals.get(g.key) else None
+                if t:
+                    values[g.rd_index] = t
         if not values:
             return False, ""
         cfg = laser.config_path(exe)
         if not os.path.isfile(cfg):
-            return False, "Velocidade/potência não aplicadas: não achei o arquivo de configuração do RDWorks."
+            return False, "⚠ Velocidade/potência não aplicadas: não achei o arquivo de configuração do RDWorks."
         while laser.rdworks_running():
             box = QMessageBox(self)
             box.setIcon(QMessageBox.Warning)
@@ -645,24 +676,74 @@ class ExportMixin:
             box.setDefaultButton(again)
             box.exec()
             if box.clickedButton() != again:
-                return False, "Velocidade/potência NÃO aplicadas (o RDWorks estava aberto)."
+                return False, "⚠ Velocidade/potência NÃO aplicadas (o RDWorks estava aberto)."
+        version = self._rdworks_version_note(exe, cfg)
         try:
-            laser.apply_to_config(cfg, values)
-            return False, ""
+            applied = laser.apply_to_config(cfg, values, self.single_tube())
+            return False, (f"Aplicado no RDWorks{version}: "
+                           + laser.applied_text(applied, self._laser_palette()) + " (conferido lendo de volta).")
         except PermissionError:
             pass                                    # pasta do RDWorks protegida: ajudante como administrador
         except (OSError, ValueError) as e:
-            return False, f"Velocidade/potência não aplicadas: {e}"
+            return False, f"⚠ Velocidade/potência não aplicadas{version}: {e}"
         import json
         job = os.path.join(tempfile.gettempdir(), f"sindri_rdworks_{os.getpid()}.json")
+        for ext in (".ok", ".erro"):
+            try:
+                os.remove(job + ext)
+            except OSError:
+                pass
         with open(job, "w", encoding="utf-8") as fh:
-            json.dump({"config": cfg, "values": {str(k): v for k, v in values.items()},
-                       "exe": exe, "file": os.path.abspath(path)}, fh)
+            json.dump({"config": cfg, "values": {str(k): list(v) for k, v in values.items()},
+                       "exe": exe, "file": os.path.abspath(path), "single_tube": self.single_tube()}, fh)
         try:
             laser.launch_elevated_helper(job)
         except OSError as e:
-            return False, f"Velocidade/potência não aplicadas: {e}"
-        return True, ""
+            return False, f"⚠ Velocidade/potência não aplicadas: {e}"
+        self._watch_helper(job)
+        return True, "Velocidade/potência sendo aplicadas pelo ajudante (permissão de administrador)…"
+
+    def _rdworks_version_note(self, exe: str, cfg: str) -> str:
+        """' (RDWorks 8.1.30, config 8.0.01)' — para saber em que versão a tabela foi reconhecida."""
+        parts = []
+        v = laser.exe_version(exe)
+        if v:
+            parts.append(f"RDWorks {v}")
+        try:
+            with open(cfg, "rb") as fh:
+                cv = laser.config_version(fh.read(512))
+        except OSError:
+            cv = None
+        if cv:
+            parts.append(f"config {cv}")
+        return f" ({', '.join(parts)})" if parts else ""
+
+    def _watch_helper(self, job: str, tries: int = 60):
+        """O ajudante roda à parte: acompanha o resultado dele por até ~30 s e mostra na barra de status."""
+        from PySide6.QtCore import QTimer
+        import json
+
+        def check(n=tries):
+            if os.path.isfile(job + ".ok"):
+                try:
+                    with open(job + ".ok", encoding="utf-8") as fh:
+                        applied = [tuple(x) for x in json.load(fh)]
+                    self.statusBar().showMessage("Aplicado no RDWorks (conferido lendo de volta): "
+                                                 + laser.applied_text(applied, self._laser_palette()), 20000)
+                except (OSError, ValueError):
+                    pass
+                return
+            if os.path.isfile(job + ".erro"):
+                try:
+                    with open(job + ".erro", encoding="utf-8") as fh:
+                        err = fh.read()
+                except OSError:
+                    err = "erro desconhecido"
+                self.show_banner(f"⚠ Velocidade/potência NÃO aplicadas no RDWorks: {err}", "warn")
+                return
+            if n > 0:
+                QTimer.singleShot(500, lambda: check(n - 1))
+        QTimer.singleShot(500, check)
 
     def _open_in_rdworks(self, files: list[str], groups: list | None = None,
                          values: dict | None = None) -> str:
@@ -696,15 +777,8 @@ class ExportMixin:
                "(o Windows pode pedir permissão — o RDWorks roda como administrador).")
         msg += ("\nSe ele abrir vazio: Arquivo › Importar (Ctrl+I), Ctrl+V e Enter "
                 "— o caminho do arquivo já está copiado.")
-        applied = [g for g in (groups or []) if self.laser_values().get(g.key)]
         if laser_msg:
-            msg += "\n⚠ " + laser_msg
-        elif applied:
-            msg += "\nVelocidade/potência preenchidas no RDWorks: " + "; ".join(
-                f"{g.material or 'sem material'} {self.laser_values()[g.key][0]:g} mm/s "
-                f"{self.laser_values()[g.key][1]:g}%" for g in applied) + "."
-        elif values:
-            msg += f"\nVelocidade/potência preenchidas no RDWorks em {len(values)} camada(s)."
+            msg += "\n" + laser_msg
         return msg
 
     def _report_header(self) -> list[str]:

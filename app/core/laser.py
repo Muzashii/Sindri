@@ -209,7 +209,7 @@ def material_op_colors(parts: Iterable[Part], colors: dict[str, int], color_ops:
 
 def material_values(op_colors: dict, cfg: dict, numbers: Optional[dict],
                     palette: Optional[list] = None) -> dict[int, tuple]:
-    """{camada do RDWorks: (velocidade, potência)} das camadas que têm valores.
+    """{camada do RDWorks: (velocidade, pot. mín., pot. máx.)} das camadas que têm valores.
 
     ``op_colors``: {(material, camada de laser): cor} (veja material_op_colors) — ou, no formato antigo,
     {material: cor do corte}. ``cfg``: {material: {"speed", "power", "ops": {camada: {...}}}}."""
@@ -217,18 +217,13 @@ def material_values(op_colors: dict, cfg: dict, numbers: Optional[dict],
     out: dict[int, tuple] = {}
     items = [((k, "corte"), v) if not isinstance(k, tuple) else (k, v) for k, v in op_colors.items()]
     for (m, op), aci in items:
-        c = cfg.get(m) or {}
-        if op == "corte":
-            speed, power = float(c.get("speed") or 0), float(c.get("power") or 0)
-        else:
-            o = (c.get("ops") or {}).get(op) or {}
-            speed, power = float(o.get("speed") or 0), float(o.get("power") or 0)
-        if speed > 0 and power > 0:
-            out[nearest_layer(aci_rgb(aci), pal)] = (speed, power)
-    if numbers and numbers.get("on") and float(numbers.get("speed") or 0) > 0 \
-            and float(numbers.get("power") or 0) > 0:
-        out[nearest_layer(aci_rgb(int(numbers["color"])), pal)] = (float(numbers["speed"]),
-                                                                   float(numbers["power"]))
+        t = entry_triple(op_entry(cfg.get(m) or {}, op), op)
+        if t:
+            out[nearest_layer(aci_rgb(aci), pal)] = t
+    if numbers and numbers.get("on"):
+        t = entry_triple(numbers, "numeros")
+        if t:
+            out[nearest_layer(aci_rgb(int(numbers["color"])), pal)] = t
     return out
 
 
@@ -255,6 +250,17 @@ class LayerCheck:
     power_max: float = 0.0
     passes: int = 1
     output: bool = True
+    interval: float = 0.0           # scan
+    air: str = ""                   # sopro (informativo)
+
+    @property
+    def mode_text(self) -> str:
+        txt = MODE_LABELS.get(self.mode, self.mode)
+        if self.mode in ("scan", "scan_corte") and self.interval > 0:
+            txt += f" {self.interval:g} mm"
+        if self.air:
+            txt += f" · sopro {self.air}"
+        return txt
 
     @property
     def values(self) -> str:
@@ -266,6 +272,15 @@ class LayerCheck:
              else f"{self.power_max:g}%")
         txt = f"{self.speed:g} mm/s · {p}"
         return txt + (f" · {self.passes} passadas" if self.passes > 1 else "")
+
+
+def check_from_entry(aci: int, what: str, op: str, entry: dict) -> LayerCheck:
+    """Linha de conferência a partir dos parâmetros de uma camada (os do banco de materiais)."""
+    mode = entry.get("mode") or DEFAULT_MODE.get(op, "corte")
+    t = entry_triple(entry, op) or (0.0, 0.0, 0.0)
+    return LayerCheck(aci, what, op, mode, t[0], t[1], t[2], int(entry.get("passes") or 1),
+                      interval=float(entry.get("interval") or 0) if mode != "corte" else 0.0,
+                      air=str(entry.get("air") or ""))
 
 
 def layer_checklist(entries: Iterable[LayerCheck], palette: Optional[list] = None) -> list[LayerCheck]:
@@ -291,7 +306,7 @@ def layer_checklist(entries: Iterable[LayerCheck], palette: Optional[list] = Non
 def checklist_html(lines: list[LayerCheck]) -> str:
     """Tabela curta para o aviso final (o operador confere em 10 segundos)."""
     rows = "".join(
-        f"<tr><td>{color_name(c.aci)}</td><td>{c.what}</td><td>{MODE_LABELS.get(c.mode, c.mode)}</td>"
+        f"<tr><td>{color_name(c.aci)}</td><td>{c.what}</td><td>{c.mode_text}</td>"
         f"<td>{c.values}</td><td><b>{'SIM' if c.output else 'NÃO'}</b></td></tr>" for c in lines)
     return ("<table cellspacing='0' cellpadding='2'><tr><th align='left'>Cor</th><th align='left'>O quê</th>"
             "<th align='left'>Modo</th><th align='left'>Vel. · potência</th><th align='left'>Saída</th></tr>"
@@ -352,23 +367,89 @@ def read_layer(data: bytes, table: LayerTable, index: int) -> tuple[float, float
     return s, pmin, pmax
 
 
-def patch(data: bytes, values: dict[int, tuple]) -> bytes:
-    """Troca velocidade e potência das camadas pedidas, em todas as tabelas, nos dois tubos.
-    Cada valor é (velocidade, potência) — mín. = máx. — ou (velocidade, pot. mín., pot. máx.)."""
+def _triple(val) -> tuple[float, float, float]:
+    """(velocidade, pot. mín., pot. máx.) a partir de (vel, pot) — mín. = máx. — ou (vel, mín, máx)."""
+    if len(val) == 2:
+        return float(val[0]), float(val[1]), float(val[1])
+    return float(val[0]), float(val[1]), float(val[2])
+
+
+def patch(data: bytes, values: dict[int, tuple], single_tube: bool = True) -> bytes:
+    """Troca velocidade e potência das camadas pedidas, em todas as tabelas.
+    Cada valor é (velocidade, potência) — mín. = máx. — ou (velocidade, pot. mín., pot. máx.).
+    ``single_tube``: máquina de um tubo — o tubo 2 fica como estava (numa máquina de dois tubos,
+    gravar o mesmo valor nele poderia ligar o segundo tubo sem querer)."""
     tables = find_tables(data)
     if not tables:
         raise ValueError("não reconheci a tabela de camadas do RDWorks (versão diferente?)")
     out = bytearray(data)
     for t in tables:
         for idx, val in values.items():
-            speed, pmin, pmax = (val[0], val[1], val[1]) if len(val) == 2 else tuple(val[:3])
+            speed, pmin, pmax = _triple(val)
             if not 0 <= idx < t.count:
                 continue
             o = t.offset + idx * t.stride
             if not _plausible(out, o):
                 raise ValueError(f"registro inesperado na camada {idx}")
-            struct.pack_into("<5d", out, o, float(speed), float(pmin), float(pmax), float(pmin), float(pmax))
+            if single_tube:
+                struct.pack_into("<3d", out, o, speed, pmin, pmax)
+            else:
+                struct.pack_into("<5d", out, o, speed, pmin, pmax, pmin, pmax)
     return bytes(out)
+
+
+def verify(data: bytes, values: dict[int, tuple], tol: float = 1e-6) -> list[tuple[int, float, float, float]]:
+    """Lê de volta as camadas gravadas (em todas as tabelas) e confere com o pedido.
+    Devolve [(camada, velocidade, pot. mín., pot. máx.)]; ValueError se algo não bater."""
+    tables = find_tables(data)
+    if not tables:
+        raise ValueError("depois de gravar, a tabela de camadas do RDWorks não foi mais reconhecida")
+    applied = []
+    for idx, val in sorted(values.items()):
+        want = _triple(val)
+        for t in tables:
+            if not 0 <= idx < t.count:
+                continue
+            got = read_layer(data, t, idx)
+            if any(abs(a - b) > tol for a, b in zip(got, want)):
+                raise ValueError(f"camada {idx}: gravei {want}, mas li {got}")
+        applied.append((idx, *want))
+    return applied
+
+
+def config_version(data: bytes) -> Optional[str]:
+    """Versão gravada no cabeçalho do config ("RDFILEVER8.0.01" -> "8.0.01")."""
+    import re
+    m = re.search(rb"RDFILEVER([0-9][0-9.]*[0-9])", data[:512])
+    return m.group(1).decode("ascii") if m else None
+
+
+def exe_version(exe: Optional[str]) -> Optional[str]:
+    """Versão do RDWorksV8.exe (propriedades do arquivo no Windows); None fora do Windows."""
+    if not exe or sys.platform != "win32" or not os.path.isfile(exe):
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+        ver = ctypes.windll.version
+        size = ver.GetFileVersionInfoSizeW(exe, None)
+        if not size:
+            return None
+        buf = ctypes.create_string_buffer(size)
+        if not ver.GetFileVersionInfoW(exe, 0, size, buf):
+            return None
+        ptr, n = ctypes.c_void_p(), wintypes.UINT()
+        if not ver.VerQueryValueW(buf, "\\", ctypes.byref(ptr), ctypes.byref(n)) or not n.value:
+            return None
+
+        class FixedInfo(ctypes.Structure):
+            _fields_ = [(k, wintypes.DWORD) for k in (
+                "sig", "struc", "ms", "ls", "prod_ms", "prod_ls", "mask", "flags", "os", "type", "sub",
+                "date_ms", "date_ls")]
+        fi = ctypes.cast(ptr, ctypes.POINTER(FixedInfo)).contents
+        return f"{fi.ms >> 16}.{fi.ms & 0xFFFF}.{fi.ls >> 16}.{fi.ls & 0xFFFF}"
+    except Exception:
+        return None
 
 
 def config_path(exe: str) -> str:
@@ -385,13 +466,16 @@ def read_palette(exe: Optional[str]) -> Optional[list]:
         return None
 
 
-def apply_to_config(path: str, values: dict[int, tuple[float, float]]) -> None:
-    """Grava os valores no config do RDWorks (guarda uma cópia antes). Pode dar PermissionError."""
+def apply_to_config(path: str, values: dict[int, tuple], single_tube: bool = True) \
+        -> list[tuple[int, float, float, float]]:
+    """Grava os valores no config do RDWorks (guarda uma cópia antes), lê de volta e confere.
+    Devolve [(camada, velocidade, pot. mín., pot. máx.)] aplicados. Se a leitura de volta não bater,
+    o config volta a ser o de antes e sai ValueError. Pode dar PermissionError."""
     with open(path, "rb") as fh:
         data = fh.read()
-    new = patch(data, values)
+    new = patch(data, values, single_tube)
     if new == data:
-        return
+        return verify(data, values)
     backup = os.path.join(os.path.dirname(path), BACKUP_NAME)
     if not os.path.exists(backup):
         shutil.copy2(path, backup)
@@ -399,6 +483,55 @@ def apply_to_config(path: str, values: dict[int, tuple[float, float]]) -> None:
     with open(tmp, "wb") as fh:
         fh.write(new)
     os.replace(tmp, path)
+    with open(path, "rb") as fh:
+        back = fh.read()
+    try:
+        return verify(back, values)
+    except ValueError:
+        with open(tmp, "wb") as fh:                   # devolve o config como estava
+            fh.write(data)
+        os.replace(tmp, path)
+        raise
+
+
+def applied_text(applied: list[tuple[int, float, float, float]], palette: Optional[list] = None) -> str:
+    """'camada 0 (preto) = 20 mm/s 13–20%; …' para o aviso final."""
+    pal = palette or DEFAULT_PALETTE
+    out = []
+    for idx, s, pmin, pmax in applied:
+        rgb = tuple(pal[idx]) if idx < len(pal) else None
+        exact = _exact_aci(rgb) if rgb else None
+        name = color_name(exact).lower() if exact else f"camada {idx}"
+        pw = f"{pmin:g}–{pmax:g}%" if pmin < pmax else f"{pmax:g}%"
+        out.append(f"{name} = {s:g} mm/s {pw}")
+    return "; ".join(out)
+
+
+# ------------------------------------------------- velocidade/potência completas por operação
+MIN_POWER_FRACTION = 0.65     # mín. ≈ 60–70% da máx. no modo corte (ponto de partida a validar em teste)
+
+
+def rd_triple(speed: float, power_max: float, power_min: float = 0.0, mode: str = "corte") \
+        -> Optional[tuple[float, float, float]]:
+    """(velocidade, pot. mín., pot. máx.) gravados no RDWorks. Sem mínima informada: 65% da máxima no
+    modo corte (a Ruida usa a mínima nos cantos — mín. = máx. queima o canto); no scan, igual à máxima."""
+    speed, power_max, power_min = float(speed or 0), float(power_max or 0), float(power_min or 0)
+    if speed <= 0 or power_max <= 0:
+        return None
+    if power_min <= 0 or power_min > power_max:
+        power_min = power_max if mode == "scan" else round(power_max * MIN_POWER_FRACTION, 1)
+    return (speed, power_min, power_max)
+
+
+def op_entry(cfg_material: dict, op: str) -> dict:
+    """Parâmetros de uma camada de laser de um material (o corte fica na raiz, o resto em "ops")."""
+    c = cfg_material or {}
+    return dict(c) if op == "corte" else dict((c.get("ops") or {}).get(op) or {})
+
+
+def entry_triple(entry: dict, op: str = "corte") -> Optional[tuple[float, float, float]]:
+    mode = entry.get("mode") or DEFAULT_MODE.get(op, "corte")
+    return rd_triple(entry.get("speed") or 0, entry.get("power") or 0, entry.get("power_min") or 0, mode)
 
 
 def rdworks_running() -> bool:
@@ -420,7 +553,10 @@ def run_helper(job_path: str) -> int:
         job = json.load(fh)
     err = ""
     try:
-        apply_to_config(job["config"], {int(k): tuple(v) for k, v in job["values"].items()})
+        applied = apply_to_config(job["config"], {int(k): tuple(v) for k, v in job["values"].items()},
+                                  bool(job.get("single_tube", True)))
+        with open(job_path + ".ok", "w", encoding="utf-8") as fh:
+            json.dump(applied, fh)
     except Exception as e:                       # abre mesmo assim; o Sindri mostra o erro depois
         err = str(e)
     if err:
