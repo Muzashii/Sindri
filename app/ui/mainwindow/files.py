@@ -362,6 +362,7 @@ class FilesMixin:
         self.placements, self.n_sheets, self.unplaced = [], 0, []
         self.cut_sheets, self.done_parts = set(), set()
         self.color_ops, self.color_ops_confirmed = {}, set()
+        self.sheet_files, self.sheet_stamps = {}, {}
         self._refresh_cut_panel()
         self.too_big = set()
         self.undo_stack.clear()
@@ -406,7 +407,8 @@ class FilesMixin:
         groups = [
             ("down", "Arquivos das solicitações baixadas da intranet", downloaded_files(base), True),
             ("rep", "Relatórios PDF exportados", exported_files(hist, dirs, REPORT_PATTERNS), True),
-            ("cut", "Arquivos de corte exportados (…_todas_placas.dxf)", exported_files(hist, dirs, CUT_PATTERNS),
+            ("cut", "Arquivos de corte exportados (…_placa01.dxf, …_todas_placas.dxf)",
+             exported_files(hist, dirs, CUT_PATTERNS),
              False),
         ]
         if os.path.isfile(log):

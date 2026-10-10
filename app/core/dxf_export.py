@@ -43,8 +43,19 @@ def placed_prims_ops(part: Part, pl: Placement, dx: float = 0.0, inner_first: bo
     return [(transform_prim(part.prims[i], tf), ops[i]) for i in idx]
 
 
-def order_placements(parts: dict[str, Part], placements: list[Placement], nearest: bool = True) -> list[Placement]:
-    """Caminho do vizinho mais próximo partindo da origem (reduz deslocamentos do laser)."""
+START_CORNERS = {"inferior_esquerdo": "canto inferior esquerdo (origem do DXF)",
+                 "superior_direito": "canto superior direito (home comum da Ruida)"}
+
+
+def start_point(corner: str, width: float, height: float) -> tuple[float, float]:
+    """Ponto da placa onde o caminho de corte começa (perto do home da cabeça)."""
+    return (width, height) if corner == "superior_direito" else (0.0, 0.0)
+
+
+def order_placements(parts: dict[str, Part], placements: list[Placement], nearest: bool = True,
+                     start: tuple[float, float] = (0.0, 0.0)) -> list[Placement]:
+    """Caminho do vizinho mais próximo partindo de ``start`` (reduz deslocamentos do laser). Peças dentro
+    de furos de outra são cortadas antes da hospedeira."""
     from .validate import placed_geometry
     rest = list(range(len(placements)))
     envelopes = [placed_geometry(parts[p.part_id].outer, p) for p in placements]
@@ -52,7 +63,7 @@ def order_placements(parts: dict[str, Part], placements: list[Placement], neares
                         and envelopes[i].area > envelopes[j].area and envelopes[i].covers(envelopes[j])}
                     for i in rest}
     out = []
-    cx, cy = 0.0, 0.0
+    cx, cy = float(start[0]), float(start[1])
     while rest:
         eligible = [i for i in rest if not dependencies[i].intersection(rest)]
         k = min(eligible, key=lambda i: (placements[i].x - cx) ** 2 + (placements[i].y - cy) ** 2) if nearest else eligible[0]
@@ -385,7 +396,7 @@ def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Plac
                       remove_overlap: bool = True, stats: Optional[dict] = None,
                       part_labels: Optional[dict] = None, label_aci: int = 1,
                       label_height: float = 3.0, op_colors: Optional[dict] = None,
-                      color_ops: Optional[dict] = None) -> str:
+                      color_ops: Optional[dict] = None, start_corner: str = "inferior_esquerdo") -> str:
     """Um arquivo só (<nome>_todas_placas.dxf) com TODAS as placas de todos os materiais lado a lado,
     na mesma ordem do relatório (materiais separados por um espaço maior). É o que abre no RDWorks.
     ``color_map``: {(material, cor ACI original): cor ACI a gravar} — separa materiais em camadas.
@@ -421,7 +432,9 @@ def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Plac
                 label = f"PLACA {n_sheet}" + (f" - {mat}" if mat else "")
                 _stroke_text(msp, label, dx, params.sheet_height + hh * 0.6, hh, PLATE_LAYER, 8)
             pls = [pl for pl in placements if pl.sheet_index == si]
-            seq = order_placements(pmap, pls, nearest=sort_path) if inner_first or sort_path else pls
+            sx, sy = start_point(start_corner, params.sheet_width, params.sheet_height)
+            seq = order_placements(pmap, pls, nearest=sort_path, start=(sx, sy)) \
+                if inner_first or sort_path else pls
             sheet_prims = []
             for pl in seq:
                 part = pmap[pl.part_id]
@@ -469,3 +482,36 @@ def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Plac
     path = os.path.join(out_dir, f"{base_name}{file_suffix}.dxf")
     _finish(doc, path)
     return path
+
+
+def sheet_file_suffix(number: int, material: str = "") -> str:
+    """'_placa03_MDF3mm' — nome do arquivo de corte de uma placa."""
+    return f"_placa{number:02d}" + (f"_{material_tag(material)}" if material else "")
+
+
+def export_cut_files(parts: list[Part] | dict[str, Part], placements: list[Placement], params: NestParams,
+                     out_dir: str, base_name: str, only_sheets: Optional[set] = None, **kw) -> dict[int, str]:
+    """Um DXF por placa, pronto para cortar: origem (0, 0) no canto da chapa e SEM o contorno da placa
+    (não há camada cinza para esquecer de desligar). Devolve {índice da placa: caminho}.
+    ``kw`` vai para export_all_sheets (cores, números, ordem de corte…)."""
+    from .sheets import SheetIndex
+    pmap = parts if isinstance(parts, dict) else {p.id: p for p in parts}
+    idx = SheetIndex(pmap, placements)
+    kw.pop("sheet_outline", None)
+    kw.pop("file_suffix", None)
+    stats = kw.pop("stats", None)
+    out: dict[int, str] = {}
+    for si in idx.ordered:
+        if only_sheets is not None and si not in only_sheets:
+            continue
+        sub_stats: dict = {}
+        out[si] = export_all_sheets(pmap, placements, params, out_dir, base_name, sheet_outline=False,
+                                    only_sheets={si},
+                                    file_suffix=sheet_file_suffix(idx.number[si], idx.material.get(si, "")),
+                                    stats=sub_stats, **kw)
+        if stats is not None:
+            stats.setdefault("per_sheet", {})[si] = sub_stats
+            for k, v in sub_stats.items():
+                if isinstance(v, (int, float)):
+                    stats[k] = stats.get(k, 0) + v
+    return out

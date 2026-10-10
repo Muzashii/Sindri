@@ -177,6 +177,7 @@ class PartsPanel(QWidget):
     doneChanged = Signal(str, bool)       # peça marcada como feita (cortada)
     requestFilter = Signal(str)           # mostrar só as peças de uma solicitação ("" = todas)
     sheetToggled = Signal(int, bool)      # placa marcada como cortada
+    sheetOpenRequested = Signal(int)      # abrir só o arquivo desta placa no RDWorks
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -278,6 +279,7 @@ class PartsPanel(QWidget):
                 w.setParent(None)
                 w.deleteLater()
         self.sheet_checks = {}
+        self.sheet_open_buttons = {}
         self.sheets_box.setVisible(bool(sheets))
         if not sheets:
             return
@@ -297,7 +299,21 @@ class PartsPanel(QWidget):
                 cb.setObjectName("CutDone")
             cb.toggled.connect(lambda on, si=s["si"]: self.sheetToggled.emit(si, on))
             self.sheet_checks[s["si"]] = cb
-            self.sheets_grid.addWidget(cb, i // cols, i % cols)
+            cell = QWidget()
+            h = QHBoxLayout(cell)
+            h.setContentsMargins(0, 0, 0, 0)
+            h.setSpacing(2)
+            h.addWidget(cb, 1)
+            op = QToolButton()
+            op.setText("▶")
+            op.setAutoRaise(True)
+            op.setToolTip(f"Abrir no RDWorks só a placa {s['n']} (arquivo de corte desta placa, origem no canto "
+                          "da chapa).\nFluxo: abrir → cortar → marcar como cortada → próxima.")
+            op.setAccessibleName(f"Abrir placa {s['n']} no RDWorks")
+            op.clicked.connect(lambda _=False, si=s["si"]: self.sheetOpenRequested.emit(si))
+            self.sheet_open_buttons[s["si"]] = op
+            h.addWidget(op)
+            self.sheets_grid.addWidget(cell, i // cols, i % cols)
 
     def set_filter(self, tag: str):
         """Mostra na lista só as peças da solicitação escolhida e avisa a janela (desenho)."""

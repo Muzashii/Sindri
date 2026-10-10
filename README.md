@@ -47,7 +47,7 @@ acima do canvas, e os rótulos ficam menores conforme o zoom.
 | ✅ **Checklist de corte** | Botão **Feito** em cada peça e caixinha por placa cortada, salvos junto com o projeto |
 | 📐 **DXF fiel ao original** | Arcos continuam arcos, camadas e cores preservadas, furos antes do contorno, R2000 ou R12 |
 | 📦 **Gerador de caixas** | Caixa (6 tampas), gaveta, caixa de eletrônica (Arduino/Raspberry), bandeja com rampas e teste de kerf, com receitas prontas e prévia 3D; as peças vão direto para o encaixe |
-| ⚡ **Um clique até o laser** | `Ctrl+E` gera `todas_placas.dxf` + `relatorio.pdf` e abre o RDWorks com o arquivo |
+| ⚡ **Um clique até o laser** | `Ctrl+E` gera um DXF de corte por placa + conferência + `relatorio.pdf` e abre no RDWorks a 1ª placa |
 | 🔄 **Sempre atualizado** | Ao abrir, procura versão nova aqui no GitHub e se atualiza com backup |
 
 ---
@@ -71,17 +71,26 @@ flowchart LR
    (padrão: 40 s). O botão vira **Parar (Esc)** enquanto calcula.
 3. **Ajustar** (se quiser). Arraste peças (ficam vermelhas se colidirem), gire (`R`), trave (`L`), mova entre placas e
    encaixe de novo só o restante.
-4. **Exportar** (`Ctrl+E`). Saem dois arquivos e o RDWorks abre com as placas:
+4. **Exportar** (`Ctrl+E`). O RDWorks abre com a 1ª placa ainda não cortada:
 
    | Arquivo | Conteúdo |
    |---|---|
-   | `nome_todas_placas.dxf` | Todas as placas de todos os materiais, lado a lado, com “PLACA 1”, “PLACA 2”… |
+   | `nome_placa01_MDF3mm.dxf`, `nome_placa02_…` | **Um arquivo de corte por placa**: origem (0,0) no canto da chapa, sem contorno da placa |
+   | `nome_todas_placas.dxf` | **Conferência**: todas as placas lado a lado, com “PLACA 1”, “PLACA 2”… (não é para cortar) |
    | `nome_relatorio.pdf` | Resumo e uma página por placa, com o nº da solicitação em cada peça |
 
-5. **Cortar e marcar.** `C` marca a placa da tela como cortada e vai para a próxima. Cada peça tem o botão **Feito**.
+   O aviso final mostra, camada por camada, o que o RDWorks deve mostrar (cor, operação, modo, velocidade/potência,
+   saída). Confira em 10 segundos antes do Start.
+5. **Cortar e marcar.** No checklist (aba Peças), o botão **▶** ao lado de cada placa abre só o arquivo daquela placa
+   (se a placa mudou desde a exportação, ele exporta de novo antes). Fluxo: **abrir → cortar → marcar → próxima**.
+   `C` marca a placa da tela como cortada e vai para a próxima. Cada peça tem o botão **Feito**.
 
-> [!TIP]
-> No RDWorks, deixe a camada **cinza** (contorno e nº das placas) com **saída = NÃO** antes de cortar.
+> [!IMPORTANT]
+> **Ordem de corte no RDWorks.** O Sindri grava gravação → vinco → furos → contorno e o caminho entre peças, mas o
+> RDWorks tem a própria otimização de caminho e pode reordenar tudo. Para manter a ordem do arquivo, no diálogo de
+> otimização de caminho do RDWorks desligue a reordenação automática (e deixe as camadas na ordem do aviso final:
+> números/gravação antes do corte). Os nomes exatos dos campos variam entre versões do RDWorks V8 — confira na
+> máquina do laboratório e anote aqui o ajuste que respeita a ordem do arquivo.
 
 ---
 
@@ -119,7 +128,9 @@ flowchart LR
 - Geometria **original**, só girada e movida
 - mm, origem em (0,0), camadas e cores mantidas
 - R2000 (padrão) ou R12
-- Furos antes do contorno externo; caminho curto entre peças
+- Furos antes do contorno externo; caminho curto entre peças, começando no canto do home da cabeça
+- Um DXF de corte por placa + arquivo de conferência; botão ▶ “abrir placa N no RDWorks” no checklist
+- Gravação e vinco em camadas próprias (nunca na cor de corte); material proibido (PVC, vinil…) bloqueia
 
 </td>
 </tr>

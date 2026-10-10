@@ -134,11 +134,22 @@ def test_exporta_so_uma_placa(tmp_path, monkeypatch):
     st.setValue("export/outline2", "true")
     w.export(sheet=1)
     out = sorted(os.listdir(out_dir))
-    assert out == ["lote_placa2_MDF3mm.dxf"]                   # só a placa 2, sem relatório
-    doc = ezdxf.readfile(str(out_dir / "lote_placa2_MDF3mm.dxf"))
+    assert out == ["lote_placa02_MDF3mm.dxf"]                  # só a placa 2, sem relatório
+    doc = ezdxf.readfile(str(out_dir / "lote_placa02_MDF3mm.dxf"))
     assert len([e for e in doc.modelspace() if e.dxf.layer == "CORTE"]) == 1
+    assert not [e for e in doc.modelspace() if e.dxf.layer == "PLACA"]   # arquivo de corte: sem contorno
     w.export()
-    assert sorted(os.listdir(out_dir)) == ["lote_placa2_MDF3mm.dxf", "lote_relatorio.pdf", "lote_todas_placas.dxf"]
+    # um arquivo de corte por placa + conferência + relatório (o nome livre ganha _2)
+    assert sorted(os.listdir(out_dir)) == ["lote_2_placa01_MDF3mm.dxf", "lote_2_placa02_MDF3mm.dxf",
+                                           "lote_2_placa03_MDF3mm.dxf", "lote_2_relatorio.pdf",
+                                           "lote_2_todas_placas.dxf", "lote_placa02_MDF3mm.dxf"]
+    conf = ezdxf.readfile(str(out_dir / "lote_2_todas_placas.dxf"))
+    assert [e for e in conf.modelspace() if e.dxf.layer == "PLACA"]     # conferência mantém o contorno
+    for n in (1, 2, 3):                                                # origem no canto da chapa
+        d = ezdxf.readfile(str(out_dir / f"lote_2_placa0{n}_MDF3mm.dxf"))
+        xs = [v[0] for e in d.modelspace() if e.dxftype() == "LWPOLYLINE" for v in e.get_points()]
+        assert min(xs) >= 0 and max(xs) <= 300
+    assert w.sheet_files[2].endswith("lote_2_placa03_MDF3mm.dxf")
     w._fill_export_menu()
     texts = [a.text() for a in w._export_menu.actions()]
     assert any(t.startswith("   Placa 3") for t in texts)
@@ -394,3 +405,56 @@ def test_nome_da_camada_ajuda_a_escolher_a_operacao():
     part = Part("p", "p", "x.dxf", box(-h, -h, h, h), [], prims, [0], material="MDF")
     assert operations.default_color_ops([part]) == {("MDF", 7): "corte", ("MDF", 1): "corte",
                                                     ("MDF", 3): "vinco", ("MDF", 5): "gravacao_vetorial"}
+
+
+def test_abrir_placa_no_rdworks_usa_o_arquivo_da_placa(tmp_path, monkeypatch):
+    import os
+    from app.ui.dialogs import settings
+    from app.ui.main_window import MainWindow
+    from app.ui.mainwindow import export as mwe
+    launched = []
+    monkeypatch.setattr(mwe, "find_rdworks", lambda saved=None: "C:/RDWorksV8/RDWorksV8.exe")
+    monkeypatch.setattr(mwe, "launch", lambda exe, path: launched.append(path))
+    w = MainWindow(workers=0)
+    w.parts = [_part("P1", "MDF 3mm", 7), _part("P2", "MDF 3mm", 7)]
+    w.pmap = {p.id: p for p in w.parts}
+    w.files = ["a.dxf"]
+    w.placements = [Placement("P1", 0, 0, 40, 40, 0), Placement("P2", 0, 1, 40, 40, 0)]
+    w.n_sheets = 2
+    w.request_label = "lote"
+    st = settings()
+    st.setValue("export/last_dir", str(tmp_path))
+    st.setValue("export/open_rdworks", "true")
+    w.export()
+    assert [os.path.basename(x) for x in launched] == ["lote_placa01_MDF3mm.dxf"]   # 1ª não cortada
+    assert "Confira no RDWorks" in w.banner_text.text() and "Saída" in w.banner_text.text()
+    w.on_sheet_cut(0, True)
+    w.parts_panel.sheet_open_buttons[1].click()                     # ▶ da placa 2: abre o arquivo já pronto
+    assert os.path.basename(launched[-1]) == "lote_placa02_MDF3mm.dxf"
+    n_files = len(os.listdir(tmp_path))
+    w.placements[1].x += 30                                          # a placa mudou: exporta de novo antes
+    w.open_sheet_in_rdworks(1)
+    assert len(os.listdir(tmp_path)) == n_files + 1
+    assert os.path.basename(launched[-1]) == "lote_2_placa02_MDF3mm.dxf"
+    w.dirty = False
+    w.close()
+
+
+def test_ordem_comeca_no_canto_escolhido():
+    from app.core.dxf_export import order_placements
+    parts = {"a": _part("a", "", 7, w=20), "b": _part("b", "", 7, w=20)}
+    pls = [Placement("a", 0, 0, 30, 30, 0), Placement("b", 0, 0, 270, 170, 0)]
+    assert [p.part_id for p in order_placements(parts, pls)] == ["a", "b"]
+    assert [p.part_id for p in order_placements(parts, pls, start=(300, 200))] == ["b", "a"]
+
+
+def test_conferencia_camada_a_camada():
+    lines = laser.layer_checklist([
+        laser.LayerCheck(7, "MDF 3mm · corte", "corte", "", 20, 13, 60, 2),
+        laser.LayerCheck(3, "MDF 3mm · gravação vetorial", "gravacao_vetorial", "", 300, 0, 15),
+        laser.LayerCheck(1, "nº da solicitação", "numeros"),
+    ], PALETTE)
+    assert [c.op for c in lines] == ["numeros", "gravacao_vetorial", "corte"]   # grava antes de cortar
+    assert lines[2].values == "20 mm/s · 13–60% · 2 passadas" and lines[0].values == "valores do RDWorks"
+    html = laser.checklist_html(lines)
+    assert html.count("<tr>") == 4 and "SIM" in html

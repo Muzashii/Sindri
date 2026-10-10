@@ -183,3 +183,13 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
     vidro/FR4/G10 e couro sintético bloqueiam a exportação com o motivo; acrílico sem "cast"/"extrudado" gera
     atenção. O filtro é pelo nome (texto livre da intranet, sem acento/maiúscula); o banco de materiais pode
     marcar outros como proibidos.
+58. **Um DXF de corte por placa** (`export_cut_files`): `nome_placaNN_material.dxf`, origem (0,0) no canto da
+    chapa e **sem** contorno da placa (não existe camada cinza para esquecer de desligar). O arquivo com todas as
+    placas lado a lado continua saindo como *conferência* (com contorno/nº das placas, se marcado). `Ctrl+E` abre
+    no RDWorks só a 1ª placa ainda não cortada; o botão ▶ de cada placa no checklist abre a dela. Cada arquivo
+    exportado guarda uma impressão digital (peças, posições, cores, números): se a placa mudou, o ▶ exporta de novo.
+59. **Origem/home**: a posição das peças nunca muda; a opção "começar o corte pelo canto superior direito" só
+    move o ponto de partida do caminho do vizinho mais próximo (perto do home comum da Ruida).
+60. **Aviso camada a camada**: cor, operação, modo, velocidade/potência (mín–máx e passadas quando houver) e
+    saída, na ordem de trabalho (números e gravação antes do corte). Linhas que caem na mesma camada do RDWorks
+    são juntadas.

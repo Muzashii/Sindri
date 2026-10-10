@@ -256,6 +256,7 @@ class UIBuildMixin:
         self.split = split
         self.parts_panel.doneChanged.connect(self.on_part_done)
         self.parts_panel.sheetToggled.connect(self.on_sheet_cut)
+        self.parts_panel.sheetOpenRequested.connect(self.open_sheet_in_rdworks)
         self.parts_panel.requestFilter.connect(self.on_request_filter)
         split.addWidget(self.parts_panel)
         split.addWidget(outer)

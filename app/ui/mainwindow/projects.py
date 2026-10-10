@@ -71,7 +71,9 @@ class ProjectMixin:
     def _project_extra(self) -> dict:
         from ...core.operations import color_ops_to_json
         return {"color_ops": color_ops_to_json(self.color_ops),
-                "color_ops_confirmed": [[m, int(a)] for m, a in sorted(self.color_ops_confirmed)]}
+                "color_ops_confirmed": [[m, int(a)] for m, a in sorted(self.color_ops_confirmed)],
+                "sheet_files": [[int(si), path, self.sheet_stamps.get(si, "")]
+                                for si, path in sorted(self.sheet_files.items())]}
 
     def _load_project_extra(self, extra: dict):
         from ...core.operations import color_ops_from_json
@@ -83,6 +85,13 @@ class ProjectMixin:
                 self.color_ops_confirmed.add((str(row[0]), int(row[1])))
             except (TypeError, ValueError, IndexError):
                 pass
+        self.sheet_files, self.sheet_stamps = {}, {}
+        for row in extra.get("sheet_files") or []:
+            try:
+                si, path, stamp = int(row[0]), str(row[1]), str(row[2])
+            except (TypeError, ValueError, IndexError):
+                continue
+            self.sheet_files[si], self.sheet_stamps[si] = path, stamp
 
     @staticmethod
     def autosave_path() -> str:

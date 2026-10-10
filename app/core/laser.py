@@ -236,6 +236,68 @@ def color_name(aci: int) -> str:
     return next((n for n, a in COLOR_CHOICES if a == aci), f"cor {aci}")
 
 
+# ------------------------------------------------------------ conferência camada a camada
+MODE_LABELS = {"corte": "Corte", "scan": "Scan", "scan_corte": "Scan+Corte"}
+DEFAULT_MODE = {"corte": "corte", "vinco": "corte", "gravacao_vetorial": "corte", "gravacao_raster": "scan",
+                "numeros": "corte", "placa": "corte"}
+_CHECK_ORDER = {"numeros": 0, "gravacao_raster": 1, "gravacao_vetorial": 1, "vinco": 2, "corte": 3, "placa": 4}
+
+
+@dataclass
+class LayerCheck:
+    """Uma linha do que o RDWorks deve mostrar antes do Start."""
+    aci: int
+    what: str                       # "MDF 3mm · corte"
+    op: str                         # camada de laser, "numeros" ou "placa"
+    mode: str = ""
+    speed: float = 0.0
+    power_min: float = 0.0
+    power_max: float = 0.0
+    passes: int = 1
+    output: bool = True
+
+    @property
+    def values(self) -> str:
+        if not self.output:
+            return "—"
+        if self.speed <= 0 or self.power_max <= 0:
+            return "valores do RDWorks"
+        p = (f"{self.power_min:g}–{self.power_max:g}%" if 0 < self.power_min < self.power_max
+             else f"{self.power_max:g}%")
+        txt = f"{self.speed:g} mm/s · {p}"
+        return txt + (f" · {self.passes} passadas" if self.passes > 1 else "")
+
+
+def layer_checklist(entries: Iterable[LayerCheck], palette: Optional[list] = None) -> list[LayerCheck]:
+    """Ordena na sequência de trabalho (números e gravação antes do corte, placa por último) e junta
+    linhas que caem na mesma camada do RDWorks."""
+    pal = palette or DEFAULT_PALETTE
+    out: list[LayerCheck] = []
+    seen: dict[int, LayerCheck] = {}
+    for e in sorted(entries, key=lambda e: (_CHECK_ORDER.get(e.op, 3), e.what)):
+        if not e.mode:
+            e.mode = DEFAULT_MODE.get(e.op, "corte")
+        layer = nearest_layer(aci_rgb(e.aci), pal)
+        if layer in seen:
+            prev = seen[layer]
+            if e.what not in prev.what:
+                prev.what += " + " + e.what
+            continue
+        seen[layer] = e
+        out.append(e)
+    return out
+
+
+def checklist_html(lines: list[LayerCheck]) -> str:
+    """Tabela curta para o aviso final (o operador confere em 10 segundos)."""
+    rows = "".join(
+        f"<tr><td>{color_name(c.aci)}</td><td>{c.what}</td><td>{MODE_LABELS.get(c.mode, c.mode)}</td>"
+        f"<td>{c.values}</td><td><b>{'SIM' if c.output else 'NÃO'}</b></td></tr>" for c in lines)
+    return ("<table cellspacing='0' cellpadding='2'><tr><th align='left'>Cor</th><th align='left'>O quê</th>"
+            "<th align='left'>Modo</th><th align='left'>Vel. · potência</th><th align='left'>Saída</th></tr>"
+            f"{rows}</table>")
+
+
 # --------------------------------------------------------------------------- arquivo do RDWorks
 @dataclass
 class LayerTable:

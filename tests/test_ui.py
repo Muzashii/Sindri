@@ -111,10 +111,13 @@ def test_fluxo_completo(app, tmp_path, monkeypatch):
     monkeypatch.setattr(mwe, "find_rdworks", lambda saved=None: "C:/RDWorksV8/RDWorksV8.exe")
     monkeypatch.setattr(mwe, "launch", lambda exe, path: launched.append((exe, path)))
     w.export()
-    assert len(launched) == 1 and launched[0][1].endswith("t_todas_placas.dxf")
+    # abre no RDWorks só o arquivo de corte da 1ª placa (origem no canto da chapa)
+    assert len(launched) == 1 and launched[0][1].endswith("t_placa01.dxf")
     assert QApplication.clipboard().text() == os.path.abspath(launched[0][1])
-    # só dois arquivos: todas as placas + relatório
-    assert sorted(f for f in os.listdir(tmp_path) if f.startswith("t_")) == ["t_relatorio.pdf", "t_todas_placas.dxf"]
+    # um DXF de corte por placa + conferência (todas as placas) + relatório
+    n = len({pl.sheet_index for pl in w.placements})
+    assert sorted(f for f in os.listdir(tmp_path) if f.startswith("t_")) == \
+        [f"t_placa{i + 1:02d}.dxf" for i in range(n)] + ["t_relatorio.pdf", "t_todas_placas.dxf"]
     # 2ª vez (Ctrl+E): exporta direto, sem janela, com nome livre (_2) em vez de perguntar
     monkeypatch.setattr(mwe, "ExportDialog", None)
     w.request_label = "t"

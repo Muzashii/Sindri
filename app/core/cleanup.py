@@ -6,7 +6,7 @@ import os
 from typing import Iterable
 
 REPORT_PATTERNS = ("*_relatorio.pdf",)
-CUT_PATTERNS = ("*_todas_placas.dxf",)
+CUT_PATTERNS = ("*_todas_placas.dxf", "*_placa[0-9][0-9]*.dxf")
 
 
 def downloaded_files(base: str) -> list[str]:

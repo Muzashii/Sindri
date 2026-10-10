@@ -61,6 +61,8 @@ class MainWindow(UIBuildMixin, FilesMixin, ProjectMixin, NestingMixin, EditingMi
         self.done_parts: set[str] = set()        # peças marcadas como feitas (cortadas)
         self.color_ops: dict = {}                # (material, cor do arquivo) -> corte/vinco/gravação
         self.color_ops_confirmed: set = set()    # cores que o técnico já conferiu
+        self.sheet_files: dict[int, str] = {}    # placa -> DXF de corte exportado
+        self.sheet_stamps: dict[int, str] = {}   # placa -> impressão digital do que foi exportado
         self.request_label: Optional[str] = None
         self.request_info: Optional[dict] = None
         self.generation = 0

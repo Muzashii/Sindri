@@ -116,9 +116,10 @@ class ExportMixin:
         if self.placements and self.canvas.mode == "layout":
             self.export(sheet=self.canvas.current_sheet())
 
-    def export(self, ask: bool = False, sheet: int | None = None):
+    def export(self, ask: bool = False, sheet: int | None = None, open_rd: bool | None = None):
         """Exporta direto com as opções da última vez (Ctrl+E). Ctrl+Shift+E abre a janela de opções.
-        ``sheet``: exporta só essa placa (um DXF com o nº dela, sem relatório)."""
+        ``sheet``: exporta só essa placa (um DXF com o nº dela, sem relatório).
+        ``open_rd``: abre (ou não) no RDWorks, independentemente da opção salva."""
         if self.worker is not None:                 # exportar durante o encaixe: para e usa a melhor solução
             self.stop_nest(wait=True)
         if not self.placements:
@@ -156,6 +157,14 @@ class ExportMixin:
                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
             if r != QMessageBox.Yes:
                 return
+        o = self._export_options(ask)
+        if o is None:
+            return
+        if open_rd is not None:
+            o["open_rdworks"] = bool(open_rd)
+        self._do_export(o, p, sheet_no, sheet_mat)
+
+    def _export_options(self, ask: bool) -> dict | None:
         st = settings()
         folder = st.value("export/last_dir", "") or ""
         base = self.request_label or os.path.splitext(os.path.basename(self.project_path or self.files[0]))[0]
@@ -163,7 +172,7 @@ class ExportMixin:
             dlg = ExportDialog(folder or (os.path.dirname(self.files[0]) if self.files else os.getcwd()), base,
                                len({pl.sheet_index for pl in self.placements}), self)
             if not dlg.exec():
-                return
+                return None
             o = dlg.options()
         else:
             o = {"folder": folder, "base": base, "version": st.value("export/version", "R2000"),
@@ -171,72 +180,105 @@ class ExportMixin:
                  "inner": st.value("export/inner", "true") == "true",
                  "path": st.value("export/path", "true") == "true",
                  "open_rdworks": st.value("export/open_rdworks", "true") == "true"}
-        # nomes livres: em vez de perguntar, acrescenta _2, _3…
-        if sheet_no is not None:
-            from ...core.dxf_export import material_tag
-            o["base"] = f"{o['base']}_placa{sheet_no}" + (f"_{material_tag(sheet_mat)}" if sheet_mat else "")
-        suffix = "" if sheet_no is not None else "_todas_placas"
-        base, k = o["base"], 2
-        while any(os.path.exists(os.path.join(o["folder"], f"{base}{suf}"))
-                  for suf in (f"{suffix}.dxf", "_relatorio.pdf")):
-            base = f"{o['base']}_{k}"
-            k += 1
-        o["base"] = base
+        o.setdefault("start", st.value("export/start", "inferior_esquerdo") or "inferior_esquerdo")
+        o.setdefault("order", st.value("export/order", "caminho") or "caminho")
         st.setValue("export/last_dir", o["folder"])
-        self._compact_sheets()
-        only = None
-        if sheet_no is not None:                     # índice da placa depois de renumerar
-            idx = self.sheet_index()
-            only = {si for si in idx.ordered if idx.number[si] == sheet_no}
+        return o
+
+    def _laser_export_plan(self, only: set | None = None) -> dict:
+        """Cores e velocidade/potência do arquivo exportado (o mesmo para o lote e para cada placa)."""
         groups = self._laser_plan(only)
-        cmap, rd_values, numbers = laser.color_map(groups), None, self.numbers_cfg()
+        numbers = self.numbers_cfg()
         labels = self._part_labels()
-        op_colors, color_ops = None, self.effective_color_ops()
+        plan = {"groups": groups, "cmap": laser.color_map(groups), "rd_values": None, "numbers": numbers,
+                "labels": labels, "op_colors": None, "color_ops": self.effective_color_ops()}
         if self.material_mode():
-            _, op_colors, rd_values = self._material_plan()
-            cmap = None
+            _, plan["op_colors"], plan["rd_values"] = self._material_plan()
+            plan["cmap"] = None
         elif labels:                                 # cores do desenho + camada dos números
             vals = self.laser_values()
-            rd_values = {g.rd_index: tuple(vals[g.key]) for g in groups if vals.get(g.key)}
-            rd_values.update(laser.material_values({}, {}, numbers, self._laser_palette()))
+            rd = {g.rd_index: tuple(vals[g.key]) for g in groups if vals.get(g.key)}
+            rd.update(laser.material_values({}, {}, numbers, self._laser_palette()))
+            plan["rd_values"] = rd
+        return plan
+
+    def _export_kwargs(self, o: dict, plan: dict, stats: dict) -> dict:
+        numbers = plan["numbers"]
+        return dict(version=o["version"], inner_first=o["inner"], sort_path=o["path"],
+                    color_map=plan["cmap"], stats=stats, part_labels=plan["labels"] or None,
+                    label_aci=int(numbers["color"]), label_height=float(numbers.get("height") or 3.0),
+                    op_colors=plan["op_colors"], color_ops=plan["color_ops"],
+                    start_corner=o.get("start", "inferior_esquerdo"))
+
+    def _sheet_stamp(self, si: int, plan: dict) -> str:
+        """Impressão digital do que vai no arquivo de uma placa (peças, posições e cores): se mudar,
+        o arquivo antigo não serve mais para cortar."""
+        import hashlib
+        import json
+        pls = sorted((self.pmap[pl.part_id].identity, round(pl.x, 4), round(pl.y, 4), round(pl.rotation, 4),
+                      bool(pl.mirrored)) for pl in self.placements if pl.sheet_index == si and pl.part_id in self.pmap)
+        colors = sorted(f"{k}={v}" for k, v in (plan["op_colors"] or plan["cmap"] or {}).items())
+        payload = json.dumps([pls, colors, sorted((plan["labels"] or {}).items())], ensure_ascii=False)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def _do_export(self, o: dict, p, sheet_no: int | None = None, sheet_mat: str = ""):
+        """Grava os arquivos. Exportação completa: um DXF de CORTE por placa (origem no canto da chapa, sem
+        contorno), o arquivo de CONFERÊNCIA com todas as placas lado a lado e o relatório PDF."""
+        from ...core.dxf_export import export_cut_files, sheet_file_suffix
+        st = settings()
+        self._compact_sheets()
+        idx = self.sheet_index()
+        only = None
+        if sheet_no is not None:                     # índice da placa depois de renumerar
+            only = {si for si in idx.ordered if idx.number[si] == sheet_no}
+        sheets = [si for si in idx.ordered if only is None or si in only]
+        suffixes = [sheet_file_suffix(idx.number[si], idx.material.get(si, "")) + ".dxf" for si in sheets]
+        if only is None:
+            suffixes += ["_todas_placas.dxf", "_relatorio.pdf"]
+        # nomes livres: em vez de perguntar, acrescenta _2, _3…
+        base, k = o["base"], 2
+        while any(os.path.exists(os.path.join(o["folder"], f"{base}{suf}")) for suf in suffixes):
+            base = f"{o['base']}_{k}"
+            k += 1
+        o = {**o, "base": base}
+        plan = self._laser_export_plan(only)
         export_stats: dict = {}
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             parts, placements, pmap = copy.deepcopy((self.parts, self.placements, self.pmap))
             n_sheets, utilization, unplaced = self.n_sheets, self._utilization(), list(self.unplaced)
             header, requests = self._report_header(), copy.deepcopy(self._report_requests())
+            kw = self._export_kwargs(o, plan, export_stats)
+
             def write_outputs():
                 os.makedirs(o["folder"], exist_ok=True)
                 with tempfile.TemporaryDirectory(prefix=".sindri-export-", dir=o["folder"]) as stage:
-                    dxf = export_all_sheets(parts, placements, p, stage, o["base"], o["version"],
-                                            sheet_outline=o["outline"], inner_first=o["inner"], sort_path=o["path"],
-                                            color_map=cmap, only_sheets=only,
-                                            file_suffix=suffix, stats=export_stats,
-                                            part_labels=labels or None, label_aci=int(numbers["color"]),
-                                            label_height=float(numbers.get("height") or 3.0),
-                                            op_colors=op_colors, color_ops=color_ops)
-                    sources = [dxf]
-                    if only is None:                     # relatório só na exportação completa
+                    cut = export_cut_files(parts, placements, p, stage, o["base"], only_sheets=only, **kw)
+                    sources = [cut[si] for si in sheets]
+                    combined = pdf = None
+                    if only is None:                     # conferência + relatório só na exportação completa
+                        kw2 = {**kw, "stats": {}}
+                        combined = export_all_sheets(parts, placements, p, stage, o["base"],
+                                                     sheet_outline=o["outline"], file_suffix="_todas_placas", **kw2)
                         res = NestResult(placements, n_sheets, utilization, 0.0, unplaced)
-                        staged_pdf = os.path.join(stage, f"{o['base']}_relatorio.pdf")
-                        export_pdf(staged_pdf, o["base"], pmap, res, p, header=header,
-                                   requests=requests)
-                        sources.append(staged_pdf)
-                    files = []
+                        pdf = os.path.join(stage, f"{o['base']}_relatorio.pdf")
+                        export_pdf(pdf, o["base"], pmap, res, p, header=header, requests=requests)
+                        sources += [combined, pdf]
+                    moved = {}
                     try:
                         for source in sources:
                             target = os.path.join(o["folder"], os.path.basename(source))
                             if os.path.exists(target):
                                 raise FileExistsError(target)
                             os.rename(source, target)
-                            files.append(target)
+                            moved[source] = target
                     except OSError:
-                        for target in files:
+                        for target in moved.values():
                             os.remove(target)
                         raise
-                    pdf = files[1] if len(files) > 1 else None
-                return files, pdf
-            files, pdf = run_task(self, "Gerando DXF e relatório PDF", write_outputs)
+                    return ({si: moved[cut[si]] for si in sheets}, moved.get(combined), moved.get(pdf))
+            sheet_files, combined, pdf = run_task(self, "Gerando os DXF de corte e o relatório PDF", write_outputs)
+            files = list(sheet_files.values()) + [f for f in (combined, pdf) if f]
             hist = get_list_value(st.value("export/history", []))
             st.setValue("export/history", (hist + [f for f in files if f not in hist])[-500:])
         except Exception as e:
@@ -244,21 +286,29 @@ class ExportMixin:
             QMessageBox.critical(self, "Erro ao exportar", f"Não foi possível salvar os arquivos:\n{e}")
             return
         QApplication.restoreOverrideCursor()
+        for si, path in sheet_files.items():
+            self.sheet_files[si] = path
+            self.sheet_stamps[si] = self._sheet_stamp(si, plan)
         self._redraw(keep_view=True)
-        if rd_values is not None:
-            opened = self._open_in_rdworks(files, [], rd_values) if o.get("open_rdworks") else ""
-        else:
-            opened = self._open_in_rdworks(files, groups) if o.get("open_rdworks") else ""
+        self._refresh_cut_panel()
+        # abre a placa pedida, ou a 1ª ainda não cortada (fluxo: abrir → cortar → marcar → próxima)
+        target_si = next((si for si in sheets if si not in self.cut_sheets), sheets[0])
+        opened = self._open_sheet_file(target_si, plan) if o.get("open_rdworks") else ""
         from urllib.parse import quote
         links = (f' · <a href="open:{quote(o["folder"])}">Abrir pasta</a>'
                  + (f' · <a href="open:{quote(pdf)}">Abrir relatório</a>' if pdf else "")
+                 + (f' · <a href="open:{quote(combined)}">Conferência (todas as placas)</a>' if combined else "")
                  + ' · <a href="opts:">Opções de exportação…</a>')
-        what = (f"só a placa {sheet_no}" + (f" · {sheet_mat}" if sheet_mat else "")
-                if sheet_no is not None else "todas as placas + relatório")
-        txt = f"<b>Exportado ({what}):</b> {os.path.basename(files[0])}" + links
+        if sheet_no is not None:
+            what = f"só a placa {sheet_no}" + (f" · {sheet_mat}" if sheet_mat else "")
+        else:
+            what = f"{len(sheet_files)} arquivo(s) de corte, um por placa + conferência + relatório"
+        txt = f"<b>Exportado ({what}):</b> {os.path.basename(sheet_files[sheets[0]])}" \
+              + ("…" if len(sheets) > 1 else "") + links
         if export_stats.get("overlaps"):
             txt += (f"<br>{export_stats['overlaps']} linha(s) repetida(s) ou sobreposta(s) removida(s) — "
                     "o laser passa uma vez só em cada trecho.")
+        labels, numbers = plan["labels"], plan["numbers"]
         if labels:
             n_ok, n_skip = export_stats.get("labels", 0), export_stats.get("labels_skipped", 0)
             txt += (f"<br>Nº da solicitação gravado em {n_ok} peça(s), em "
@@ -267,11 +317,77 @@ class ExportMixin:
                     + ". No RDWorks deixe a camada dos números <b>antes</b> das de corte.")
         if opened:
             txt += "<br>" + opened.replace("\n", "<br>")
-        if o["outline"]:
-            txt += "<br><b>RDWorks:</b> na camada cinza (contorno e nº das placas) coloque <b>saída = NÃO</b>."
+        txt += ("<br><b>Confira no RDWorks antes do Start</b> (cada placa num arquivo, origem no canto da chapa, "
+                "sem contorno da placa):" + laser.checklist_html(self._layer_checks(target_si, plan)))
+        if combined and o["outline"]:
+            txt += ("<br>No arquivo de conferência a camada cinza (contorno e nº das placas) é só para olhar: "
+                    "não corte por ele.")
         self.show_banner(txt, "ok")
         self.statusBar().showMessage(f"Exportado em {o['folder']}", 8000)
         self.schedule_autosave()
+
+    def _open_sheet_file(self, si: int, plan: dict) -> str:
+        path = self.sheet_files.get(si)
+        if not path or not os.path.isfile(path):
+            return ""
+        values = plan["rd_values"]
+        groups = [] if values is not None else plan["groups"]
+        return self._open_in_rdworks([path], groups, values)
+
+    def open_sheet_in_rdworks(self, si: int):
+        """Botão "Abrir no RDWorks" do checklist: abre só o arquivo daquela placa. Se o arquivo não
+        existe ou a placa mudou desde a exportação, exporta a placa de novo antes."""
+        if self.worker is not None or not self.placements:
+            return
+        plan = self._laser_export_plan({si})
+        path = self.sheet_files.get(si)
+        if path and os.path.isfile(path) and self.sheet_stamps.get(si) == self._sheet_stamp(si, plan):
+            if not self.check_material_safety(si):
+                return
+            msg = self._open_sheet_file(si, plan)
+            n = self.sheet_index().number.get(si, si + 1)
+            self.show_banner(f"<b>Placa {n}</b> aberta no RDWorks: {os.path.basename(path)}"
+                             + ("<br>" + msg.replace("\n", "<br>") if msg else "")
+                             + "<br><b>Confira antes do Start:</b>"
+                             + laser.checklist_html(self._layer_checks(si, plan))
+                             + "<br>Depois de cortar, marque a placa como cortada.", "ok")
+            return
+        self.export(sheet=si, open_rd=True)
+
+    def _layer_checks(self, si: int | None, plan: dict) -> list:
+        """O que o RDWorks deve mostrar, camada por camada, para o arquivo da placa ``si``."""
+        from ...core.operations import LABELS
+        sheet_parts = {pl.part_id for pl in self.placements if si is None or pl.sheet_index == si}
+        mats = {self.pmap[pid].material or "" for pid in sheet_parts if pid in self.pmap}
+        entries = []
+        if plan["op_colors"] is not None:
+            cfg = self.material_cfg()
+            parts = [self.pmap[pid] for pid in sheet_parts if pid in self.pmap]
+            used = operations.layer_ops_in_use(parts, plan["color_ops"])
+            for (m, op), aci in plan["op_colors"].items():
+                if m not in mats or op not in used.get(m, []):
+                    continue
+                c = cfg.get(m) or {}
+                if op != operations.CUT:
+                    c = (c.get("ops") or {}).get(op) or {}
+                entries.append(laser.LayerCheck(aci, f"{m or 'sem material'} · {LABELS[op].lower()}", op,
+                                                c.get("mode", ""), float(c.get("speed") or 0),
+                                                float(c.get("power_min") or 0), float(c.get("power") or 0),
+                                                int(c.get("passes") or 1)))
+        else:
+            vals = self.laser_values()
+            for g in plan["groups"]:
+                if g.material not in mats:
+                    continue
+                v = vals.get(g.key) or [0, 0]
+                entries.append(laser.LayerCheck(g.target_aci, f"{g.material or 'sem material'} · "
+                                                f"{', '.join(g.layers) or 'camada'}", "corte", "",
+                                                float(v[0]), 0.0, float(v[1])))
+        if plan["labels"] and any(pid in plan["labels"] for pid in sheet_parts):
+            n = plan["numbers"]
+            entries.append(laser.LayerCheck(int(n["color"]), "nº da solicitação", "numeros", "",
+                                            float(n.get("speed") or 0), 0.0, float(n.get("power") or 0)))
+        return laser.layer_checklist(entries, self._laser_palette())
 
     # ------------------------------------------------------------------ velocidade/potência
     def laser_values(self) -> dict:
