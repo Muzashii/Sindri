@@ -135,8 +135,20 @@ class Decoder:
         return _Sheet(free_area=free, material=rem.get("material", ""), rect=rect or (0, 0, 0, 0),
                       area=spec.area, width=spec.width, remnant=rid, obstacles=list(obstacles))
 
+    def _place_in(self, sheet: _Sheet, pid: str, m_try, rot_try, criterion: str):
+        """(variante, posição, rotação, espelhado) da 1ª rotação em que a peça cabe na placa, ou None."""
+        for m in m_try:
+            for r in rot_try:
+                if self.cancelled():
+                    return None
+                v = self.cache.variant(pid, r, m)
+                pos = self._try_place(sheet, v, criterion)
+                if pos is not None:
+                    return v, pos, r, m
+        return None
+
     def _new_sheet(self, material: Optional[str] = None, used: Optional[set] = None,
-                   index: Optional[int] = None) -> _Sheet:
+                   index: Optional[int] = None, skip: Optional[set] = None) -> _Sheet:
         """Placa nova: um retalho do material (se houver algum ainda não usado), senão a chapa inteira."""
         rems = getattr(self.params, "remnants", None) or []
         if index is not None and index in self.fixed_remnants:
@@ -149,7 +161,8 @@ class Decoder:
         if material is not None and used is not None:
             for rem in rems:
                 rid = str(rem.get("id"))
-                if rid in used or rid in self.fixed_remnants.values() or (rem.get("material") or "") != material:
+                if rid in used or rid in (skip or ()) or rid in self.fixed_remnants.values() \
+                        or (rem.get("material") or "") != material:
                     continue
                 used.add(rid)
                 sh = self._remnant(rem)
@@ -323,38 +336,40 @@ class Decoder:
                         break
                     if len(sheets) >= p.max_sheets:
                         break
-                    sheets.append(self._new_sheet(mat, used_remnants))
-                    sheets[-1].material = mat
-                sheet = sheets[si]
-                if sheet.material is not None and sheet.material != mat:
-                    continue
-                if sheet.material is None and not sheet.placed and not sheet.remnant:
-                    sheets[si] = sheet = self._standard(mat)      # placa vazia: chapa do material
-                for m in m_try:
-                    for r in rot_try:
-                        if self.cancelled():
+                    # placa nova: retalhos do material primeiro (o 1º em que a peça cabe), senão chapa inteira
+                    skip: set = set()
+                    while True:
+                        cand = self._new_sheet(mat, used_remnants, skip=skip)
+                        cand.material = mat
+                        hit = self._place_in(cand, pid, m_try, rot_try, criterion)
+                        if hit is not None:
+                            sheets.append(cand)
                             break
-                        v = self.cache.variant(pid, r, m)
-                        pos = self._try_place(sheet, v, criterion)
-                        if pos is not None:
-                            if sheet.material is None:      # placa vazia criada antes de uma travada
-                                sheet.material = mat
-                            sheet.add(_Placed(pid, inst, v, pos[0], pos[1], r, m, host=pos[2]))
-                            placements.append(Placement(pid, inst, si, pos[0] / S, pos[1] / S,
-                                                        round_rot(r), m))
-                            done = True
+                        if not cand.remnant:
                             break
-                    if done:
+                        used_remnants.discard(cand.remnant)   # continua livre para peças menores
+                        skip.add(cand.remnant)
+                    if hit is None:
                         break
-                if done:
-                    break
+                else:
+                    sheet = sheets[si]
+                    if sheet.material is not None and sheet.material != mat:
+                        continue
+                    if sheet.material is None and not sheet.placed and not sheet.remnant:
+                        sheets[si] = sheet = self._standard(mat)      # placa vazia: chapa do material
+                    hit = self._place_in(sheet, pid, m_try, rot_try, criterion)
+                    if hit is None:
+                        continue
+                sheet = sheets[si]
+                v, (x, y, host), r, m = hit
+                if sheet.material is None:      # placa vazia criada antes de uma travada
+                    sheet.material = mat
+                sheet.add(_Placed(pid, inst, v, x, y, r, m, host=host))
+                placements.append(Placement(pid, inst, si, x / S, y / S, round_rot(r), m))
+                done = True
+                break
             if not done:
                 unplaced.append((pid, inst))
-                # remove folha vazia criada sem sucesso (o retalho volta a ficar livre)
-                if sheets and not sheets[-1].placed:
-                    gone = sheets.pop()
-                    if gone.remnant:
-                        used_remnants.discard(gone.remnant)
 
         # remove placas vazias e agrupa as placas por material (3mm primeiro, depois 6mm…)
         mats = sorted({sh.material or "" for sh in sheets if sh.placed})

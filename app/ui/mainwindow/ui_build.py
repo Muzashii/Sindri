@@ -470,6 +470,8 @@ class UIBuildMixin:
             QDesktopServices.openUrl(QUrl.fromLocalFile(unquote(href[5:])))
         elif href == "opts:":
             self.export(ask=True)
+        elif href.startswith("leftover:"):
+            self.save_leftover(int(href.split(":", 1)[1]))
         elif href == "colorops:":
             if self.confirm_color_ops(force=True):
                 self.dismiss_banner()
@@ -540,6 +542,7 @@ class UIBuildMixin:
         act(m_nest, "Marcar placa da tela como cortada (e ir para a próxima)", self.toggle_current_cut, "C")
         m_nest.addSeparator()
         act(m_nest, "Banco de materiais…", lambda: self.open_materials_dialog(), "Ctrl+M")
+        act(m_nest, "Retalhos…", lambda: self.open_remnants_dialog(), "Ctrl+Shift+R")
         act(m_nest, "Cores do arquivo → corte / gravação…", lambda: self.confirm_color_ops(force=True))
         act(m_view, "Mostrar todas as solicitações do lote", lambda: self.filter_request_index(0), "Alt+0")
         from PySide6.QtGui import QShortcut

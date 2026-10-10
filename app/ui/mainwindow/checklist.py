@@ -95,6 +95,7 @@ class ChecklistMixin:
             self.canvas.set_cut(self.cut_sheets)
         self._refresh_cut_panel()
         self.schedule_autosave()
+        self._remnant_on_cut(si, on)
         if on and len(self.cut_sheets) >= len(idx.number):
             self.statusBar().showMessage("Todas as placas cortadas! 🎉", 8000)
 

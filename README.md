@@ -232,6 +232,13 @@ peça pequena demais para a mesa (sugere micro-pontes), peça maior que a chapa,
 kerf** e texto que não virou curva. Cada solicitação ganha um selo **✓ OK / ⚠ atenção / ⛔ bloqueado**, no cartão do
 lote e na lista da intranet — dá para devolver o arquivo ao aluno antes de juntar no lote.
 
+### ♻️ Retalhos (`Ctrl+Shift+R`)
+
+Cadastre sobras de chapa (retângulo ou contorno de um DXF, com buracos) por material: o encaixe usa os retalhos
+**antes de abrir chapa nova**. Ao marcar uma placa como cortada, o aviso oferece **guardar o que sobrou como
+retalho**; a placa que era retalho sai da lista. Os retalhos ficam ao lado do banco de materiais (na pasta
+compartilhada, se for o caso).
+
 ### 🗂️ Banco de materiais (`Ctrl+M`)
 
 Uma tabela por material, salva em `Documentos/Sindri/materiais.json` — ou numa **pasta compartilhada do

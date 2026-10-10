@@ -156,3 +156,82 @@ class MaterialsMixin:
         self._refresh_laser_panel(force=True)
         if self.parts:
             self.on_params_changed()
+
+    # ------------------------------------------------------------------ retalhos
+    def remnant_store(self):
+        """Retalhos (mesma pasta do banco de materiais: compartilhados entre os PCs se ele estiver na rede)."""
+        from ...core.remnants import RemnantError, RemnantStore, default_path
+        path = default_path(self.material_db_path())
+        try:
+            return RemnantStore.load(path)
+        except RemnantError as e:
+            if not getattr(self, "_rem_warned", False):
+                self._rem_warned = True
+                self.show_banner(f"⚠ Retalhos: {e}", "warn")
+            return RemnantStore(path, [])
+
+    def available_remnants(self) -> list[dict]:
+        """Retalhos disponíveis dos materiais em uso, com o material escrito como nas peças (o encaixe
+        compara o nome exato)."""
+        from ...core.material_db import key
+        mats = {}
+        for pt in getattr(self, "parts", []):
+            if pt.quantity > 0 and pt.material:
+                mats.setdefault(key(pt.material), pt.material)
+        if not mats:
+            return []
+        out = []
+        for r in self.remnant_store().available(mats.values()):
+            d = r.to_params()
+            d["material"] = mats.get(key(r.material), r.material)
+            out.append(d)
+        return out
+
+    def open_remnants_dialog(self):
+        from ..remnants_dialog import RemnantsDialog
+        RemnantsDialog(self).exec()
+        if self.placements:
+            self._redraw(keep_view=True)
+        self._update_status()
+
+    def _remnant_on_cut(self, si: int, on: bool):
+        """Placa que era retalho: cortada = retalho usado (sai da lista). E oferece guardar a sobra."""
+        rid = self.sheet_remnants.get(si)
+        if rid:
+            try:
+                self.remnant_store().mark_used(rid, on)
+            except OSError as e:
+                self.statusBar().showMessage(f"Não consegui atualizar os retalhos: {e}", 10000)
+        if on:
+            n = self.sheet_index().number.get(si, si + 1)
+            self.show_banner(f"Placa {n} cortada. <a href=\"leftover:{si}\">Guardar o que sobrou como retalho</a>"
+                             " (para o próximo encaixe usar antes de abrir chapa nova).", "info")
+
+    def save_leftover(self, si: int) -> list:
+        """Sobra da placa ``si`` (placa menos as peças + espaçamento) vira retalho(s) do material dela."""
+        from ...core.remnants import leftover, make_remnant
+        from ...core.validate import fine_solid, placed_geometry
+        specs = self.sheet_specs()
+        spec = specs.get(si)
+        if spec is None:
+            return []
+        mat = self.sheet_index().material.get(si, "")
+        used = [placed_geometry(fine_solid(self.pmap[pl.part_id]), pl)
+                for pl in self.placements if pl.sheet_index == si and pl.part_id in self.pmap]
+        polys = leftover(spec.shape(), used, spec.spacing)
+        n = self.sheet_index().number.get(si, si + 1)
+        store = self.remnant_store()
+        added = []
+        for k, poly in enumerate(polys):
+            label = f"Sobra da placa {n}" + (f" ({k + 1})" if len(polys) > 1 else "")
+            r = make_remnant(mat, poly, label, f"sobra da placa {n}" + (f" · {self.request_label}"
+                                                                       if self.request_label else ""))
+            store.add(r)
+            added.append(r)
+        if added:
+            sizes = ", ".join(f"{r.size[0]:.0f}×{r.size[1]:.0f} mm" for r in added)
+            self.show_banner(f"{len(added)} retalho(s) de {mat or 'sem material'} guardado(s): {sizes}. "
+                             "O próximo encaixe deste material usa antes de abrir chapa nova.", "ok")
+        else:
+            self.show_banner("A sobra desta placa é pequena demais para valer guardar.", "info")
+        return added

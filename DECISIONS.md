@@ -236,3 +236,17 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
     arquivos que não são DXF (atenção). Aparece no cartão do lote e é guardado em `selos.json`, para a lista da
     intranet mostrar o selo de solicitações já abertas antes; no detalhe da solicitação o selo do material e dos
     arquivos aparece na hora, antes de juntar no lote.
+71. **Retalhos** (`core/remnants.py`): `retalhos.json` na mesma pasta do banco de materiais (compartilhado junto).
+    Um retalho é um contorno com buracos (retângulo, maior contorno fechado de um DXF — com a mesma correção de
+    unidade da importação — ou a sobra de uma placa cortada), com a caixa começando em (0, 0).
+72. **Retalho no encaixe**: o decodificador trata o retalho como uma placa do tamanho da caixa dele em que tudo
+    que está fora do material (e os buracos) vira **obstáculo fixo**: a região válida passa a ser
+    IFP(caixa) − ∪NFP(peças) − ∪NFP(obstáculos), reaproveitando o mesmo NFP com cache. A margem do material é
+    aplicada ao contorno do retalho. Ao precisar de placa nova, o encaixe tenta os retalhos do material (do maior
+    para o menor) e abre chapa inteira só se a peça não couber em nenhum; um retalho em que a peça não coube
+    continua livre para peças menores. Retalho usado não conta como "placa extra" na nota da solução.
+73. Cada placa guarda o retalho que usou (`sheet_remnants`, no resultado e no projeto) para desenhar, validar,
+    exportar (contorno do retalho na conferência) e "encaixar só o que falta". Marcar como cortada uma placa
+    que era retalho tira o retalho da lista (desmarcar devolve).
+74. **Guardar a sobra**: placa cortada → aviso com link; a sobra é a placa menos as peças com o espaçamento,
+    só os pedaços com ≥ 50 × 50 mm² de área e ≥ 30 mm de largura (tiras estreitas não servem).
