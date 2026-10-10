@@ -227,3 +227,12 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
 68. Os pontos de partida do banco (MDF 3/6 mm, acrílico cast 3 mm, compensado 3 mm) **não trazem velocidade nem
     potência**: cada laboratório preenche depois da grade de teste. Teste com mais de 90 dias (ou sem teste)
     aparece com ⚠ no painel do laser.
+69. **Fabricabilidade** (`core/manufacturability.py`, só avisos): parede mais fina que 1,5 × espessura (abertura
+    morfológica com quinas vivas — canto vivo não conta como fino; os trechos são pintados de laranja), furo
+    menor que 2 × kerf, peça com as duas medidas menores que a peça mínima do material (sugere micro-pontes),
+    peça maior que a área útil, rasgo retangular com largura = espessura nominal (sem compensar o kerf) e
+    texto que não virou curva. Sem cadastro: espessura 3 mm, kerf 0,15 mm, peça mínima 10 mm.
+70. **Selo por solicitação** (OK / atenção / bloqueado): material (bloqueia) + avisos de fabricabilidade e
+    arquivos que não são DXF (atenção). Aparece no cartão do lote e é guardado em `selos.json`, para a lista da
+    intranet mostrar o selo de solicitações já abertas antes; no detalhe da solicitação o selo do material e dos
+    arquivos aparece na hora, antes de juntar no lote.

@@ -20,6 +20,7 @@ def _fmt(v: float) -> str:
 class PartRow(QFrame):
     def __init__(self, part: Part, warns: list[str], dark: bool, panel: PartsPanel):
         super().__init__()
+        self.warns = list(warns)
         self.setObjectName("PartRow")
         self.part = part
         lay = QHBoxLayout(self)
@@ -389,15 +390,19 @@ class PartsPanel(QWidget):
                 b.setChecked(code == self.filter_tag)
                 b.setCursor(Qt.PointingHandCursor)
                 done = "✓ " if code in dt else ""
+                seal = getattr(self, "_seals", {}).get(code)
+                mark = f"{seal.icon} " if seal is not None and seal.status != "ok" else ""
                 count = (f"{prog[0]}/{prog[1]}" if prog and prog[1] else (f"{n} pç" if n else ""))
-                label = f"{done}{code} · {r.get('nome', '') or '—'}"
+                label = f"{done}{mark}{code} · {r.get('nome', '') or '—'}"
                 fm = b.fontMetrics()
                 tail = f"   {count}" if count else ""
                 avail = max(120, self.req_card.width() - 40 - fm.horizontalAdvance(tail)) if self.req_card.width() > 100 \
                     else 210
                 b.setText(fm.elidedText(label, Qt.ElideRight, avail) + tail)
                 b.setToolTip(f"Solicitação {code} · RM {r.get('rm', '—')} · {r.get('nome', '')}\n"
-                             "Clique para mostrar só as peças desta solicitação (clique de novo para ver todas)")
+                             + (f"Selo: {seal.label}\n" + "".join(f"• {x}\n" for x in seal.reasons)
+                                if seal is not None else "")
+                             + "Clique para mostrar só as peças desta solicitação (clique de novo para ver todas)")
                 b.setStyleSheet(f"QPushButton#ReqRow {{ border-left: 6px solid {cols.get(code, '#888')}; }}")
                 b.clicked.connect(lambda _=False, c=code: self.set_filter("" if self.filter_tag == c else c))
                 self._req_buttons[code] = b
@@ -426,6 +431,9 @@ class PartsPanel(QWidget):
         for k, lab in (("projeto", "Projeto"), ("professor", "Prof."), ("turma", "Turma")):
             if info.get(k):
                 extra.append(f"{lab}: {info[k]}")
+        seal = getattr(self, "_seals", {}).get(str(info.get("code", "")))
+        if seal is not None:
+            extra.append(f"{seal.icon} {seal.label}")
         self.req_line2.setText("  ·  ".join(extra))
         self.req_line2.setVisible(bool(extra))
         for m in info.get("materials", []):
@@ -435,6 +443,8 @@ class PartsPanel(QWidget):
             self.req_mats.addWidget(chip)
         self.req_mats.addStretch(1)
         tip = "\n".join(f"{k}: {v}" for k, v in (info.get("info") or {}).items())
+        if seal is not None and seal.reasons:
+            tip += ("\n\n" if tip else "") + f"Selo {seal.label}:\n" + "\n".join("• " + x for x in seal.reasons)
         self.req_card.setToolTip(tip)
         self.req_card.show()
 
@@ -458,6 +468,14 @@ class PartsPanel(QWidget):
         if 0 <= row < len(self.parts):
             self.partSelected.emit(self.parts[row].id)
 
+    def set_seals(self, seals: dict):
+        """Selo (OK / atenção / bloqueado) de cada solicitação, mostrado no cartão do lote."""
+        self._seals = dict(seals or {})
+
+    def set_issues(self, issues: dict[str, list[str]]):
+        """Avisos de fabricabilidade por peça (parede fina, furo pequeno…), mostrados no ⚠ da peça."""
+        self._issues = dict(issues or {})
+
     def set_parts(self, parts: list[Part], too_big: set[str] = frozenset()):
         cur = self.list.currentRow()
         self.parts = list(parts)
@@ -466,7 +484,7 @@ class PartsPanel(QWidget):
         from .owners import owner_colors
         cols = owner_colors(parts) if len({p.tag for p in parts if p.tag}) > 1 else {}
         for p in parts:
-            warns = list(p.warnings)
+            warns = list(p.warnings) + list(getattr(self, "_issues", {}).get(p.id, []))
             if p.id in too_big:
                 warns.append("Maior que a placa em todas as rotações: não será encaixada. "
                              "Aumente a placa, reduza a margem ou confira a unidade do DXF.")

@@ -225,6 +225,13 @@ Roda do mouse = zoom · botão do meio (ou `Alt` + arrastar) = mover a vista.
   aparecem na conferência para você ajustar no RDWorks.
 - Para descobrir onde o RDWorks guarda outros campos (saída, modo…): `python tools/config_diff.py antes.cfg depois.cfg`.
 
+### 🧪 A peça sobrevive ao laser?
+
+Avisos no ⚠ de cada peça (aba Peças) e no desenho: **parede fina** (pintada de laranja), furo menor que o kerf,
+peça pequena demais para a mesa (sugere micro-pontes), peça maior que a chapa, **rasgo sem compensação de
+kerf** e texto que não virou curva. Cada solicitação ganha um selo **✓ OK / ⚠ atenção / ⛔ bloqueado**, no cartão do
+lote e na lista da intranet — dá para devolver o arquivo ao aluno antes de juntar no lote.
+
 ### 🗂️ Banco de materiais (`Ctrl+M`)
 
 Uma tabela por material, salva em `Documentos/Sindri/materiais.json` — ou numa **pasta compartilhada do

@@ -207,6 +207,7 @@ class NestingMixin:
     def _rebuild_checker(self):
         p = self.nest_params()
         self.checker = CollisionChecker(self.parts, p) if self.parts else None
+        self._fab_changed = self._refresh_fabrication(p)
         self.too_big = set()
         if self.parts:
             dec = Decoder(self.checker.cache.shapes, p, cache=self.checker.cache)
@@ -215,6 +216,57 @@ class NestingMixin:
                 rots = [0.0] if pt.rotation_locked else p.rotations(pt.material or "")
                 if not dec.fits_sheet(pt.id, rots, mo):
                     self.too_big.add(pt.id)
+
+    def _refresh_fabrication(self, p=None) -> bool:
+        """Checagens de fabricabilidade por peça e selo de cada solicitação. True se algo mudou."""
+        from ...core.manufacturability import (MaterialLimits, SealStore, check_part, default_seal_path,
+                                               seal_for)
+        from shapely.ops import unary_union
+        p = p or self.nest_params()
+        db = self.material_db()
+        issues = {}
+        for pt in self.parts:
+            q = p.for_material(pt.material or "")
+            m = db.find(pt.material or "")
+            lim = MaterialLimits.from_db(m, (q.sheet_width - 2 * q.margin, q.sheet_height - 2 * q.margin))
+            key = (lim.thickness, lim.kerf, lim.min_part, lim.usable)
+            cache = pt.__dict__.setdefault("_fab", {})
+            if key not in cache:
+                cache.clear()
+                try:
+                    cache[key] = check_part(pt, lim)
+                except Exception:                     # nunca impede de trabalhar
+                    cache[key] = []
+            issues[pt.id] = cache[key]
+        msgs = {pid: [i.message for i in v] for pid, v in issues.items() if v}
+        changed = msgs != getattr(self, "_fab_msgs", None)
+        self._fab_msgs = msgs
+        self.part_issues = issues
+        self.parts_panel.set_issues(msgs)
+        geoms = {}
+        for pid, v in issues.items():
+            gs = [i.geom for i in v if i.kind == "parede_fina" and i.geom is not None]
+            if gs:
+                geoms[pid] = unary_union(gs)
+        self.canvas.issue_geoms = geoms
+        # selo por solicitação (lista da intranet e cartão do lote)
+        by_tag: dict[str, list] = {}
+        for pt in self.parts:
+            if pt.tag:
+                by_tag.setdefault(pt.tag, []).append(pt)
+        if not by_tag and self.request_info and not self.request_info.get("batch"):
+            by_tag[str(self.request_info.get("code", ""))] = list(self.parts)
+        seals = {tag: seal_for([pt.material or "" for pt in pts], [i for pt in pts for i in issues.get(pt.id, [])],
+                               lookup=self._material_forbidden)
+                 for tag, pts in by_tag.items() if tag}
+        self.request_seals = seals
+        self.parts_panel.set_seals(seals)
+        if seals:
+            try:
+                SealStore(default_seal_path()).put_many(seals)
+            except OSError:
+                pass
+        return changed
 
     def _params_debounced(self):
         """Cada passo de um campo numérico espera 150 ms antes de recalcular tudo."""
@@ -247,7 +299,7 @@ class NestingMixin:
         if self.parts:
             old_big = set(self.too_big)
             self._rebuild_checker()
-            if self.too_big != old_big:
+            if self.too_big != old_big or getattr(self, "_fab_changed", False):
                 self.parts_panel.set_parts(self.parts, self.too_big)
             if self.placements:
                 self._redraw(keep_view=(old.sheet_width == new.sheet_width and old.sheet_height == new.sheet_height))

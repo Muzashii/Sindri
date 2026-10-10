@@ -502,6 +502,7 @@ class IntranetDialog(QDialog):
         shown = 0
         t = theme.tokens()
         rows = sorted(self._rows, key=lambda r: date_key(r.get("data", "")), reverse=self._sort_desc)
+        seals = self._known_seals()
         for r in rows:
             if tf != "Todos os tipos" and r.get("tipo", "") != tf:
                 continue
@@ -525,6 +526,13 @@ class IntranetDialog(QDialog):
                     f = it.font()
                     f.setBold(True)
                     it.setFont(f)
+                    seal = seals.get(str(r["codigo"]))
+                    if seal is not None:          # selo de quando ela já foi aberta no Sindri
+                        it.setIcon(pixmap("check" if seal.status == "ok" else "warn",
+                                          t["success_text"] if seal.status == "ok" else
+                                          (t["danger"] if seal.status == "bloqueado" else t["warn"]), 14))
+                        it.setToolTip(it.toolTip() + f"\nSelo: {seal.label}"
+                                      + "".join(f"\n• {x}" for x in seal.reasons))
                     if is_open:      # marcada e travada: já está no lote aberto, não entra de novo
                         it.setFlags(it.flags() & ~Qt.ItemIsUserCheckable)
                         it.setCheckState(Qt.Checked)
@@ -677,6 +685,13 @@ class IntranetDialog(QDialog):
         tipo = info.get("Tipo de Solicitação", "")
         if tipo:
             top.addWidget(_chip(tipo, t["accent"]))
+        seal = self._detail_seal(d)
+        sc = _chip(f"{seal.icon} {seal.label}", {"ok": t["success_text"], "atencao": t["warn"],
+                                                 "bloqueado": t["danger"]}[seal.status])
+        sc.setToolTip("\n".join("• " + x for x in seal.reasons) or "Material e arquivos sem problemas conhecidos.")
+        sc.setObjectName("SealChip")
+        self.detail_seal = seal
+        top.addWidget(sc)
         self.dbody.addLayout(top)
 
         # aluno em destaque
@@ -746,6 +761,29 @@ class IntranetDialog(QDialog):
         self.dstack.setCurrentIndex(1)
 
     @staticmethod
+    def _known_seals() -> dict:
+        """Selos já calculados pelo Sindri (geometria + material), por nº da solicitação."""
+        from ..core.manufacturability import Seal, SealStore, default_seal_path
+        out = {}
+        for code, d in SealStore(default_seal_path()).load().items():
+            if isinstance(d, dict) and d.get("status") in ("ok", "atencao", "bloqueado"):
+                out[str(code)] = Seal(d["status"], [str(x) for x in d.get("reasons", [])])
+        return out
+
+    def _detail_seal(self, d: RequestDetail):
+        """Selo da solicitação aberta: material e tipo de arquivo agora, mais a geometria se ela já passou
+        pelo Sindri. Bloqueado (PVC, vinil…) aparece antes de juntar no lote."""
+        from ..core.manufacturability import Seal, seal_for
+        from ..core.material_safety import worst, SafetyResult
+        mats = [f.material for f in d.files if f.is_dxf]
+        now = seal_for(mats, non_dxf=sum(1 for f in d.files if not f.is_dxf))
+        known = self._known_seals().get(str(d.code))
+        if known is None:
+            return now
+        status = worst([SafetyResult(now.status), SafetyResult(known.status)]).status
+        return Seal(status, list(dict.fromkeys(now.reasons + known.reasons)))
+
+    @staticmethod
     def _fkey(d: RequestDetail, f) -> str:
         return f"{d.code}/{f.name}"
 
@@ -760,6 +798,15 @@ class IntranetDialog(QDialog):
             w.setObjectName("Muted")
             al.addWidget(w)
         else:
+            from ..core.material_safety import check_material
+            for m in mats:
+                r = check_material(m)
+                if r.status != "ok":
+                    w = QLabel(("⛔ " if r.blocked else "⚠ ") + f"{m}: {r.reason}"
+                               + (" O Sindri não exporta este material para o laser." if r.blocked else ""))
+                    w.setWordWrap(True)
+                    w.setObjectName("InlineWarning")
+                    al.addWidget(w)
             total = sum(len(fs) for fs in mats.values())
             if len(mats) > 1:
                 b = QPushButton(f"Enviar tudo para a placa  ·  {total} arquivo(s), placas separadas por material")

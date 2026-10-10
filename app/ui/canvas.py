@@ -297,6 +297,9 @@ class PartItem(QGraphicsItem):
             else:
                 fill = theme.qcolor("part_fill")
         painter.fillPath(g.fill, QBrush(fill))
+        warn = self.canvas.issue_path(self.part.id, self.placement.mirrored)
+        if warn is not None:                 # trechos finos demais (fabricabilidade): laranja
+            painter.fillPath(warn, QBrush(QColor(249, 115, 22, 190)))
         for col, path in g.lines:
             c = col
             if dark and c.lightness() < 60:
@@ -465,6 +468,31 @@ class NestCanvas(QGraphicsView):
 
     owner_colors: dict = {}
     specs: dict = {}                    # placa -> SheetSpec (chapa do material ou retalho)
+    issue_geoms: dict = {}              # id da peça -> região com problema (parede fina…), coords da peça
+
+    def issue_path(self, pid: str, mirrored: bool = False):
+        geom = self.issue_geoms.get(pid)
+        if geom is None or geom.is_empty:
+            return None
+        cache = self.__dict__.setdefault("_issue_paths", {})
+        key = (pid, bool(mirrored), id(geom))
+        path = cache.get(key)
+        if path is None:
+            path = QPainterPath()
+            path.setFillRule(Qt.OddEvenFill)
+            sx = -1.0 if mirrored else 1.0
+            for g in getattr(geom, "geoms", [geom]):
+                if g.geom_type != "Polygon":
+                    continue
+                for ring in [g.exterior, *g.interiors]:
+                    pts = [QPointF(sx * x, y) for x, y in ring.coords]
+                    if len(pts) > 2:
+                        path.moveTo(pts[0])
+                        for q in pts[1:]:
+                            path.lineTo(q)
+                        path.closeSubpath()
+            cache[key] = path
+        return path
     show_labels: bool = True
     cut_sheets: set = set()
     done_parts: set = set()
