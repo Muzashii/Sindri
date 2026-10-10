@@ -198,19 +198,19 @@ class PhotoPanel(QWidget):
         g2 = _Section("Linhas e tons", "layers")
         f2 = QFormLayout(g2.body)
         self.mode = QComboBox()
-        self.mode.addItem("Imagem BMP (rápido)", "imagem")
-        self.mode.addItem("Linhas DXF (vetor)", "linhas")
+        self.mode.addItem("Imagem BMP (recomendado)", "imagem")
+        self.mode.addItem("Linhas DXF (experimental)", "linhas")
         self.mode.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.mode.setMinimumContentsLength(10)
         self.mode.setToolTip(
-            "Imagem: um BMP em tons de cinza; o RDWorks grava linha a linha variando a potência entre a\n"
-            "mínima (claro) e a máxima (escuro). Abre na hora, mesmo fotos grandes.\n"
-            "Linhas: cada tom vira traços vetoriais numa camada com potência própria (arquivo bem maior;\n"
-            "o RDWorks pode demorar a abrir).")
+            "Imagem (recomendado): um BMP em tons de cinza; o RDWorks faz o scan linha a linha variando a\n"
+            "potência entre a mínima (claro) e a máxima (escuro). Abre na hora, mesmo fotos grandes.\n"
+            "Linhas (experimental): cada tom vira traços vetoriais. O RDWorks trata como corte: acelera e\n"
+            "freia em cada traço (muito mais lento) e deixa marca no início/fim de cada um.")
         f2.addRow("Exportar como", self.mode)
         self.line = _dspin(0.05, 2, 0.05, 2, " mm",
-                           "Distância entre as linhas (o ponto do laser costuma ter 0,1–0,2 mm).\n"
-                           "Menor = mais detalhe, arquivo maior e gravação mais demorada.")
+                           "Distância entre as linhas. Foto em madeira com laser de CO2: 0,08–0,1 mm (ponto de\n"
+                           "partida para teste). Menor = mais detalhe, arquivo maior e gravação mais demorada.")
         self.levels = QSpinBox()
         self.levels.setRange(1, MAX_LEVELS)
         self.levels.setToolTip("Quantas potências diferentes (cada uma vira uma camada/cor no RDWorks)")

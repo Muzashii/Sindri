@@ -229,6 +229,11 @@ class MaterialsMixin:
             store.add(r)
             added.append(r)
         if added:
+            self.saved_leftover[si] = self.saved_leftover.get(si, 0.0) + sum(r.area for r in added)
+            self.mark_changed()
+            if getattr(self, "last_export_base", ""):      # o CSV do mês conta a sobra como não-perda
+                plan = self._laser_export_plan()
+                self._write_management_csv(self._request_costs(self._sheet_times(plan)))
             sizes = ", ".join(f"{r.size[0]:.0f}×{r.size[1]:.0f} mm" for r in added)
             self.show_banner(f"{len(added)} retalho(s) de {mat or 'sem material'} guardado(s): {sizes}. "
                              "O próximo encaixe deste material usa antes de abrir chapa nova.", "ok")

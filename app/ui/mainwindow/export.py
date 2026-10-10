@@ -212,7 +212,7 @@ class ExportMixin:
                     label_aci=int(numbers["color"]), label_height=float(numbers.get("height") or 3.0),
                     op_colors=plan["op_colors"], color_ops=plan["color_ops"],
                     start_corner=o.get("start", "inferior_esquerdo"),
-                    sheet_remnants=dict(self.sheet_remnants))
+                    sheet_remnants=dict(self.sheet_remnants), order_mode=o.get("order", "caminho"))
 
     def _sheet_stamp(self, si: int, plan: dict) -> str:
         """Impressão digital do que vai no arquivo de uma placa (peças, posições e cores): se mudar,
@@ -254,6 +254,9 @@ class ExportMixin:
             header, requests = self._report_header(), copy.deepcopy(self._report_requests())
             kw = self._export_kwargs(o, plan, export_stats)
             rems = dict(self.sheet_remnants)
+            times = self._sheet_times(plan, o)
+            sheet_info = self._sheet_info(plan, times)
+            costs = self._request_costs(times)
 
             def write_outputs():
                 os.makedirs(o["folder"], exist_ok=True)
@@ -268,7 +271,8 @@ class ExportMixin:
                         res = NestResult(placements, n_sheets, utilization, 0.0, unplaced)
                         pdf = os.path.join(stage, f"{o['base']}_relatorio.pdf")
                         export_pdf(pdf, o["base"], pmap, res, p, header=header, requests=requests,
-                                   sheet_remnants=rems)
+                                   sheet_remnants=rems, sheet_info=sheet_info,
+                                   costs=[c for c in costs if c["solicitacao"] or len(costs) > 1])
                         sources += [combined, pdf]
                     moved = {}
                     try:
@@ -295,6 +299,10 @@ class ExportMixin:
         for si, path in sheet_files.items():
             self.sheet_files[si] = path
             self.sheet_stamps[si] = self._sheet_stamp(si, plan)
+        csv_path = None
+        if only is None:                             # gestão: uso por solicitação no CSV do mês
+            self.last_export_base = o["base"]
+            csv_path = self._write_management_csv(costs)
         self._redraw(keep_view=True)
         self._refresh_cut_panel()
         # abre a placa pedida, ou a 1ª ainda não cortada (fluxo: abrir → cortar → marcar → próxima)
@@ -314,6 +322,18 @@ class ExportMixin:
         if export_stats.get("overlaps"):
             txt += (f"<br>{export_stats['overlaps']} linha(s) repetida(s) ou sobreposta(s) removida(s) — "
                     "o laser passa uma vez só em cada trecho.")
+        if times:
+            idx2 = self.sheet_index()
+            total = sum(t.seconds for t in times.values())
+            txt += ("<br>Tempo estimado: " + " · ".join(f"Placa {idx2.number.get(si, si + 1)} {t.text.split(' (')[0]}"
+                                                       for si, t in sorted(times.items(),
+                                                                           key=lambda kv: idx2.number.get(kv[0], 0)))
+                    + (f" (total ~{total / 60:.0f} min)" if len(times) > 1 else "")
+                    + (" — algumas camadas sem velocidade no banco de materiais (estimativa com valor padrão)."
+                       if any(t.fallback for t in times.values()) else "."))
+        if csv_path:
+            from urllib.parse import quote as _q
+            txt += f' <a href="open:{_q(csv_path)}">Uso do mês (CSV)</a>'
         labels, numbers = plan["labels"], plan["numbers"]
         if labels:
             n_ok, n_skip = export_stats.get("labels", 0), export_stats.get("labels_skipped", 0)
@@ -331,6 +351,87 @@ class ExportMixin:
         self.show_banner(txt, "ok")
         self.statusBar().showMessage(f"Exportado em {o['folder']}", 8000)
         self.schedule_autosave()
+
+    # ------------------------------------------------------------------ gestão: tempo, uso e custo
+    def time_model(self):
+        from ...core.machine_time import TimeModel
+        st = settings()
+        try:
+            return TimeModel(float(st.value("time/travel", 300.0)), float(st.value("time/overhead", 0.3)))
+        except (TypeError, ValueError):
+            return TimeModel()
+
+    def _sheet_times(self, plan: dict, o: dict | None = None) -> dict:
+        """{placa: SheetTime} com as velocidades/passadas do banco de materiais."""
+        from ...core.dxf_export import start_point
+        from ...core.machine_time import sheet_time
+        cfg = self.material_cfg()
+        specs = self.sheet_specs()
+        corner = (o or {}).get("start", "inferior_esquerdo")
+        out = {}
+        for si, pls in self.sheet_index().by_sheet.items():
+            spec = specs.get(si)
+            start = start_point(corner, spec.width, spec.height) if spec else (0.0, 0.0)
+            out[si] = sheet_time(self.pmap, pls, lambda m, op: laser.op_entry(cfg.get(m) or {}, op),
+                                 plan["color_ops"], self.time_model(), start)
+        return out
+
+    def _sheet_info(self, plan: dict, times: dict) -> dict:
+        """O que o relatório mostra de cada placa: chapa, espessura, tempo e camadas."""
+        specs = self.sheet_specs()
+        db = self.material_db()
+        idx = self.sheet_index()
+        out = {}
+        for si in idx.ordered:
+            spec = specs.get(si)
+            m = db.find(idx.material.get(si, "") or "")
+            t = times.get(si)
+            size = ""
+            if spec is not None:
+                size = (f"retalho {spec.width:.0f} × {spec.height:.0f} mm" if spec.is_remnant
+                        else f"chapa {spec.width:g} × {spec.height:g} mm")
+            out[si] = {"size": size, "thickness": float(m.thickness) if m and m.thickness else None,
+                       "time": t.text if t else "", "time_short": t.text.split(" (")[0] if t else "—",
+                       "layers": self._layer_checks(si, plan)}
+        return out
+
+    def _request_costs(self, times: dict) -> list[dict]:
+        """Linhas de uso por solicitação × material (chapa e minutos rateados pela área ocupada)."""
+        from ...core.machine_time import fmt_num, request_shares
+        specs = self.sheet_specs()
+        shares = request_shares(self.pmap, self.placements, {si: sp.area for si, sp in specs.items()},
+                                {si: t.minutes for si, t in times.items()},
+                                getattr(self, "saved_leftover", {}))
+        names = {str(r.get("code", "")): r.get("nome", "") for _, r in self._request_numbers()}
+        idx = self.sheet_index()
+        util = self._utilization()
+        rows = []
+        for (tag, mat), s in sorted(shares.items()):
+            rows.append({"solicitacao": tag, "aluno": names.get(tag, ""), "material": mat,
+                         "placas": ", ".join(str(idx.number.get(si, si + 1)) for si in sorted(s.sheets)),
+                         "copias": s.copies, "area_pecas_cm2": fmt_num(s.parts_area / 100),
+                         "area_chapa_cm2": fmt_num(s.sheet_area / 100), "area_chapa_dm2": fmt_num(s.sheet_area / 1e4),
+                         "minutos": fmt_num(s.minutes), "minutos_maquina": fmt_num(s.minutes),
+                         "aproveitamento_pct": fmt_num(100 * util), "retalho_salvo_cm2": fmt_num(s.saved / 100)})
+        return rows
+
+    def management_folder(self) -> str:
+        return os.path.join(os.path.dirname(os.path.abspath(self.material_db_path())), "relatorios")
+
+    def _write_management_csv(self, costs: list[dict]) -> str | None:
+        """Atualiza o CSV do mês (Documentos/Sindri/relatorios/AAAA-MM.csv, ou na pasta compartilhada)."""
+        import datetime as _dt
+        from ...core.machine_time import append_monthly_csv
+        lote = getattr(self, "last_export_base", "") or self.request_label or "lote"
+        today = _dt.date.today()
+        rows = [{**c, "data": today.isoformat(), "lote": lote} for c in costs]
+        if not rows:
+            return None
+        try:
+            return append_monthly_csv(self.management_folder(), rows, today)
+        except OSError as e:
+            self.statusBar().showMessage(f"Não consegui atualizar o CSV de uso do mês: {e}", 10000)
+            return None
 
     def _open_sheet_file(self, si: int, plan: dict) -> str:
         path = self.sheet_files.get(si)

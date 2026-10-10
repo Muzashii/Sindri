@@ -65,6 +65,7 @@ class MainWindow(UIBuildMixin, FilesMixin, ProjectMixin, NestingMixin, EditingMi
         self.sheet_files: dict[int, str] = {}    # placa -> DXF de corte exportado
         self.sheet_stamps: dict[int, str] = {}   # placa -> impressão digital do que foi exportado
         self.sheet_remnants: dict[int, str] = {} # placa -> id do retalho usado (sem = chapa inteira)
+        self.saved_leftover: dict[int, float] = {}  # placa -> mm² de sobra guardada como retalho
         self.request_label: Optional[str] = None
         self.request_info: Optional[dict] = None
         self.generation = 0

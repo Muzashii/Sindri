@@ -52,10 +52,17 @@ def start_point(corner: str, width: float, height: float) -> tuple[float, float]
     return (width, height) if corner == "superior_direito" else (0.0, 0.0)
 
 
+ORDER_MODES = {"caminho": "Caminho mais curto",
+               "pequenas": "Pequenas primeiro, longe da exaustão (grandes por último)"}
+
+
 def order_placements(parts: dict[str, Part], placements: list[Placement], nearest: bool = True,
-                     start: tuple[float, float] = (0.0, 0.0)) -> list[Placement]:
+                     start: tuple[float, float] = (0.0, 0.0), mode: str = "caminho") -> list[Placement]:
     """Caminho do vizinho mais próximo partindo de ``start`` (reduz deslocamentos do laser). Peças dentro
-    de furos de outra são cortadas antes da hospedeira."""
+    de furos de outra são cortadas antes da hospedeira.
+    ``mode="pequenas"``: peças pequenas primeiro (por faixa de tamanho) e, entre parecidas, as mais longe
+    da exaustão (que fica no fundo da máquina = em cima no desenho); as grandes saem por último, então a
+    chapa perde rigidez mais tarde e peça solta tem menos chance de bater no bico."""
     from .validate import placed_geometry
     rest = list(range(len(placements)))
     envelopes = [placed_geometry(parts[p.part_id].outer, p) for p in placements]
@@ -64,9 +71,17 @@ def order_placements(parts: dict[str, Part], placements: list[Placement], neares
                     for i in rest}
     out = []
     cx, cy = float(start[0]), float(start[1])
+    import math as _m
+    size_band = [int(_m.log2(max(1.0, envelopes[i].area / 100.0))) for i in range(len(placements))]
     while rest:
         eligible = [i for i in rest if not dependencies[i].intersection(rest)]
-        k = min(eligible, key=lambda i: (placements[i].x - cx) ** 2 + (placements[i].y - cy) ** 2) if nearest else eligible[0]
+        if mode == "pequenas":
+            k = min(eligible, key=lambda i: (size_band[i], round(placements[i].y / 50.0),
+                                             (placements[i].x - cx) ** 2 + (placements[i].y - cy) ** 2))
+        elif nearest:
+            k = min(eligible, key=lambda i: (placements[i].x - cx) ** 2 + (placements[i].y - cy) ** 2)
+        else:
+            k = eligible[0]
         rest.remove(k)
         pl = placements[k]
         out.append(pl)
@@ -407,7 +422,7 @@ def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Plac
                       part_labels: Optional[dict] = None, label_aci: int = 1,
                       label_height: float = 3.0, op_colors: Optional[dict] = None,
                       color_ops: Optional[dict] = None, start_corner: str = "inferior_esquerdo",
-                      sheet_remnants: Optional[dict] = None) -> str:
+                      sheet_remnants: Optional[dict] = None, order_mode: str = "caminho") -> str:
     """Um arquivo só (<nome>_todas_placas.dxf) com TODAS as placas de todos os materiais lado a lado,
     na mesma ordem do relatório (materiais separados por um espaço maior). É o que abre no RDWorks.
     ``color_map``: {(material, cor ACI original): cor ACI a gravar} — separa materiais em camadas.
@@ -447,8 +462,8 @@ def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Plac
                 _stroke_text(msp, label, dx, spec.height + hh * 0.6, hh, PLATE_LAYER, 8)
             pls = [pl for pl in placements if pl.sheet_index == si]
             sx, sy = start_point(start_corner, spec.width, spec.height)
-            seq = order_placements(pmap, pls, nearest=sort_path, start=(sx, sy)) \
-                if inner_first or sort_path else pls
+            seq = order_placements(pmap, pls, nearest=sort_path, start=(sx, sy), mode=order_mode) \
+                if inner_first or sort_path or order_mode != "caminho" else pls
             sheet_prims = []
             for pl in seq:
                 part = pmap[pl.part_id]

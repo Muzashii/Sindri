@@ -138,6 +138,30 @@ class ExportDialog(QDialog):
                               "A posição das peças não muda — só a ordem em que são cortadas.")
         self.start.setCurrentIndex(max(0, self.start.findData(st.value("export/start", "inferior_esquerdo"))))
         form.addRow("Começar o corte pelo", self.start)
+        from ..core.dxf_export import ORDER_MODES
+        self.order = QComboBox()
+        for key, label in ORDER_MODES.items():
+            self.order.addItem(label, key)
+        self.order.setToolTip("Pequenas primeiro: a chapa perde rigidez mais tarde e peça solta tem menos chance de\n"
+                              "bater no bico. Furos e peças dentro de furos continuam antes da peça que os contém.")
+        self.order.setCurrentIndex(max(0, self.order.findData(st.value("export/order", "caminho"))))
+        form.addRow("Ordem das peças", self.order)
+        trow = QHBoxLayout()
+        self.t_travel = QDoubleSpinBox()
+        self.t_travel.setRange(10, 2000)
+        self.t_travel.setSuffix(" mm/s")
+        self.t_travel.setValue(float(st.value("time/travel", 300.0)))
+        self.t_travel.setToolTip("Velocidade de deslocamento sem laser (para a estimativa de tempo).")
+        self.t_over = QDoubleSpinBox()
+        self.t_over.setRange(0, 5)
+        self.t_over.setDecimals(2)
+        self.t_over.setSuffix(" s/contorno")
+        self.t_over.setValue(float(st.value("time/overhead", 0.3)))
+        self.t_over.setToolTip("Tempo extra por início de contorno (acelerar, acender, frear).\n"
+                               "Calibre comparando a estimativa com o tempo que o RDWorks mostra.")
+        trow.addWidget(self.t_travel)
+        trow.addWidget(self.t_over)
+        form.addRow("Estimativa de tempo", trow)
         lay.addLayout(form)
         self.outline = QCheckBox("No arquivo de conferência: contorno e nº de cada placa (camada PLACA, cinza)")
         self.outline.setToolTip("Só no arquivo com todas as placas lado a lado, que é para conferir. Os arquivos de "
@@ -180,6 +204,9 @@ class ExportDialog(QDialog):
         st.setValue("export/path", "true" if self.path.isChecked() else "false")
         st.setValue("export/open_rdworks", "true" if self.open_rd.isChecked() else "false")
         st.setValue("export/start", self.start.currentData())
+        st.setValue("export/order", self.order.currentData())
+        st.setValue("time/travel", float(self.t_travel.value()))
+        st.setValue("time/overhead", float(self.t_over.value()))
         if not self.base.text().strip():
             self.base.setText("projeto")
         self.accept()
@@ -190,7 +217,8 @@ class ExportDialog(QDialog):
                 "version": self.version.currentData(),
                 "outline": self.outline.isChecked(),
                 "inner": self.inner.isChecked(), "path": self.path.isChecked(),
-                "open_rdworks": self.open_rd.isChecked(), "start": self.start.currentData()}
+                "open_rdworks": self.open_rd.isChecked(), "start": self.start.currentData(),
+                "order": self.order.currentData()}
 
 
 class CleanupDialog(QDialog):

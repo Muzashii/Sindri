@@ -181,6 +181,7 @@ class EditingMixin:
         self.sheet_remnants = {remap[s]: r for s, r in self.sheet_remnants.items() if s in remap}
         self.sheet_files = {remap[s]: f for s, f in self.sheet_files.items() if s in remap}
         self.sheet_stamps = {remap[s]: t for s, t in self.sheet_stamps.items() if s in remap}
+        self.saved_leftover = {remap[s]: a for s, a in self.saved_leftover.items() if s in remap}
         self.n_sheets = len(nums)
 
     def _selected_placements(self) -> list[Placement]:

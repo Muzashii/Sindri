@@ -23,7 +23,7 @@ MAX_LEVELS = len(LEVEL_ACI)
 @dataclass
 class PhotoParams:
     width_mm: float = 150.0
-    line_mm: float = 0.25           # distância entre linhas (e resolução ao longo da linha)
+    line_mm: float = 0.1            # distância entre linhas: foto em madeira com CO2 fica entre 0,08 e 0,1 mm
     levels: int = 5                 # níveis de potência (1..5)
     power_min: float = 20.0         # potência do nível mais claro
     power_max: float = 70.0         # potência do nível mais escuro
@@ -38,8 +38,9 @@ class PhotoParams:
     min_seg_mm: float = 0.0         # trechos menores são descartados (0 = mantém todos)
     x_mm: float = 10.0              # posição na placa (canto inferior esquerdo)
     y_mm: float = 10.0
-    mode: str = "imagem"            # "imagem": BMP em tons de cinza (o RDWorks varia a potência sozinho)
-                                    # "linhas": DXF com uma camada por nível de potência
+    mode: str = "imagem"            # "imagem": BMP em tons de cinza (o RDWorks faz o scan e varia a potência)
+                                    # "linhas" (experimental): DXF com uma camada por nível — vira vetor no
+                                    # RDWorks (acelera e freia em cada traço): bem mais lento e marca as pontas
 
     def level_powers(self) -> list[float]:
         """Potência de cada nível (0 = mais escuro)."""

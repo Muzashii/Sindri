@@ -250,3 +250,21 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
     que era retalho tira o retalho da lista (desmarcar devolve).
 74. **Guardar a sobra**: placa cortada → aviso com link; a sobra é a placa menos as peças com o espaçamento,
     só os pedaços com ≥ 50 × 50 mm² de área e ≥ 30 mm de largura (tiras estreitas não servem).
+75. **Tempo de máquina** (`core/machine_time.py`): por placa, vetor = comprimento ÷ velocidade × passadas +
+    nº de contornos × 0,3 s; scan = (altura ÷ intervalo) × (largura ÷ velocidade + 0,05 s) × passadas; mais o
+    deslocamento entre peças a 300 mm/s. Camada sem velocidade no banco usa um valor padrão e o texto avisa.
+    As duas constantes ficam nas opções de exportação para calibrar com o tempo que o RDWorks mostra.
+76. **Uso por solicitação**: chapa e minutos de cada placa são rateados pela área líquida das peças de cada
+    solicitação (× material). A sobra guardada como retalho entra como "não-perda" (`retalho_salvo_cm2`).
+    O CSV do mês (`relatorios/AAAA-MM.csv`, ao lado do banco de materiais; `;` e vírgula decimal para o Excel
+    em português) é atualizado a cada exportação completa e ao guardar uma sobra; a mesma combinação
+    lote + solicitação + material é substituída (exportar de novo não duplica).
+77. **Relatório PDF**: coluna de tempo no checklist, tabela de uso por solicitação e, em cada placa, espessura,
+    chapa/retalho, tempo estimado, camadas (cor → operação → modo, velocidade, potência mín.–máx., passadas,
+    saída) e os campos "Cortado por" e "Data".
+78. **Ordem física** (opção de exportação): "pequenas primeiro, longe da exaustão" corta por faixa de tamanho
+    (log₂ da área), das peças de baixo (longe da exaustão, que fica no fundo da máquina) para cima, terminando
+    nas grandes; peças dentro de furos continuam antes da hospedeira.
+79. **Foto**: o modo imagem (BMP; o RDWorks faz o scan) é o recomendado e o intervalo padrão passou a 0,1 mm
+    (CO₂ em madeira: 0,08–0,1 mm como ponto de partida). O modo linhas ficou como experimental: vira vetor no
+    RDWorks (acelera e freia em cada traço), é bem mais lento e marca o início/fim de cada traço.

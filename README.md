@@ -232,6 +232,17 @@ peça pequena demais para a mesa (sugere micro-pontes), peça maior que a chapa,
 kerf** e texto que não virou curva. Cada solicitação ganha um selo **✓ OK / ⚠ atenção / ⛔ bloqueado**, no cartão do
 lote e na lista da intranet — dá para devolver o arquivo ao aluno antes de juntar no lote.
 
+### ⏱️ Tempo, custo e registro
+
+- **Tempo estimado por placa** (velocidade e passadas do banco de materiais) no aviso final e no relatório; ajuste
+  as constantes em *Opções de exportação* comparando com o tempo que o RDWorks mostra.
+- **Uso por solicitação**: chapa e minutos de máquina rateados pela área de cada solicitação, no relatório e num
+  **CSV mensal** (`relatorios/AAAA-MM.csv`, abre direto no Excel) para a gestão do laboratório. Sobra guardada
+  como retalho conta como não-perda.
+- **Relatório PDF** por placa: material e espessura, chapa ou retalho, camadas (cor → operação → modo, velocidade,
+  potência mín./máx., passadas), tempo estimado e os campos **Cortado por / Data**.
+- **Ordem das peças**: caminho mais curto ou **pequenas primeiro, longe da exaustão** (grandes por último).
+
 ### ♻️ Retalhos (`Ctrl+Shift+R`)
 
 Cadastre sobras de chapa (retângulo ou contorno de um DXF, com buracos) por material: o encaixe usa os retalhos
@@ -466,6 +477,11 @@ Use `--permitir-parcial` quando quiser exportar as peças que couberam; o retorn
 - [x] Gerar o `.exe` no Windows com `build_exe.bat` e verificar a inicialização ([registro](docs/COMPILACAO_WINDOWS.md))
 - [ ] Validar o fluxo completo de produção no executável
 - [ ] Cortar uma caixa do gerador em MDF 3 mm e ajustar o kerf padrão do laboratório
+- [ ] Conferir no RDWorks atual que velocidade e potência mín./máx. aplicadas (tubo 1) aparecem nas camadas
+- [ ] Descobrir com `tools/config_diff.py` onde o RDWorks guarda saída, modo e passadas de cada camada
+- [ ] Anotar aqui o ajuste da otimização de caminho do RDWorks que respeita a ordem do arquivo
+- [ ] Fazer a grade de teste de cada material e preencher o banco (validar a mínima de 65% da máxima)
+- [ ] Calibrar a estimativa de tempo com o tempo do RDWorks em 2–3 placas reais
 
 ---
 

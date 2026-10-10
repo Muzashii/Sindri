@@ -363,6 +363,7 @@ class FilesMixin:
         self.cut_sheets, self.done_parts = set(), set()
         self.color_ops, self.color_ops_confirmed = {}, set()
         self.sheet_files, self.sheet_stamps, self.sheet_remnants = {}, {}, {}
+        self.saved_leftover = {}
         self._refresh_cut_panel()
         self.too_big = set()
         self.undo_stack.clear()
