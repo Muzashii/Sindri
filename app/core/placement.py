@@ -42,6 +42,11 @@ class _Sheet:
     free_area: float = 0.0             # limite superior da área livre (unid²)
     material: Optional[str] = None     # placas nunca misturam materiais
     failed: set = field(default_factory=set)   # variantes que já não couberam (a placa só enche)
+    rect: tuple = (0, 0, 0, 0)         # onde o contorno com folga pode ficar (int)
+    area: float = 0.0                  # área do material (mm²), para aproveitamento e fitness
+    width: float = 0.0                 # largura da chapa (mm)
+    remnant: str = ""                  # id do retalho ("" = chapa inteira)
+    obstacles: list = field(default_factory=list)   # retalho: regiões fora do material (Variants fixas)
 
     def add(self, pl: _Placed):
         self.placed.append(pl)
@@ -67,6 +72,7 @@ class DecodeResult:
     utilization: float
     last_bbox: Optional[list[int]] = None
     sheet_materials: list = field(default_factory=list)
+    sheet_remnants: list = field(default_factory=list)     # id do retalho de cada placa ("" = chapa)
 
 
 class Decoder:
@@ -78,21 +84,85 @@ class Decoder:
         self.cache = cache or NFPCache(shapes, params.spacing, params.curve_tolerance,
                                        params.part_in_part, getattr(params, "detail", 1))
         p = params
-        half = p.spacing / 2.0
-        self.rect = (int(round((p.margin - half) * S)), int(round((p.margin - half) * S)),
-                     int(round((p.sheet_width - p.margin + half) * S)),
-                     int(round((p.sheet_height - p.margin + half) * S)))
+        self.rect = self._rect(p)
         self.sheet_area = p.sheet_width * p.sheet_height
         self.rect_area = float(self.rect[2] - self.rect[0]) * float(self.rect[3] - self.rect[1])
+        self._remnant_cache: dict[str, tuple] = {}
+        self.fixed_remnants = {int(si): str(rid) for si, rid in (getattr(p, "sheet_remnants", None) or [])}
 
-    def _new_sheet(self) -> _Sheet:
-        return _Sheet(free_area=self.rect_area)
+    @staticmethod
+    def _rect(q: NestParams) -> tuple[int, int, int, int]:
+        half = q.spacing / 2.0
+        return (int(round((q.margin - half) * S)), int(round((q.margin - half) * S)),
+                int(round((q.sheet_width - q.margin + half) * S)),
+                int(round((q.sheet_height - q.margin + half) * S)))
+
+    def _standard(self, material: Optional[str]) -> _Sheet:
+        q = self.params.for_material(material) if material is not None else self.params
+        rect = self._rect(q)
+        return _Sheet(free_area=float(rect[2] - rect[0]) * float(rect[3] - rect[1]), material=material,
+                      rect=rect, area=q.sheet_width * q.sheet_height, width=q.sheet_width)
+
+    def _remnant(self, rem: dict) -> _Sheet:
+        """Retalho: a caixa dele vira o retângulo e o que fica fora do material vira obstáculo fixo."""
+        rid = str(rem["id"])
+        cached = self._remnant_cache.get(rid)
+        if cached is None:
+            from shapely.geometry import Polygon as _P, box as _box
+            from .sheetspec import remnant_spec
+            spec = remnant_spec(self.params, rem)
+            half = self.params.for_material(rem.get("material", "")).spacing / 2.0
+            region = spec.usable().buffer(half, join_style=2)
+            if region.is_empty:
+                cached = (None, [], 0.0, spec)
+            else:
+                x0, y0, x1, y1 = region.bounds
+                outside = _box(x0, y0, x1, y1).difference(region)
+                obstacles = []
+                for k, g in enumerate(getattr(outside, "geoms", [outside])):
+                    if g.is_empty or g.geom_type != "Polygon" or g.area < 1e-6:
+                        continue
+                    path = [(int(round(x * S)), int(round(y * S))) for x, y in _P(g.exterior).exterior.coords[:-1]]
+                    if not pyclipper.Orientation(path):
+                        path = path[::-1]
+                    arr = np.asarray(path)
+                    bb = (int(arr[:, 0].min()), int(arr[:, 1].min()), int(arr[:, 0].max()), int(arr[:, 1].max()))
+                    obstacles.append(Variant(("__retalho__", rid, k), path, bb, [], [], abs(pyclipper.Area(path))))
+                rect = (int(round(x0 * S)), int(round(y0 * S)), int(round(x1 * S)), int(round(y1 * S)))
+                cached = (rect, obstacles, region.area * S * S, spec)
+            self._remnant_cache[rid] = cached
+        rect, obstacles, free, spec = cached
+        return _Sheet(free_area=free, material=rem.get("material", ""), rect=rect or (0, 0, 0, 0),
+                      area=spec.area, width=spec.width, remnant=rid, obstacles=list(obstacles))
+
+    def _new_sheet(self, material: Optional[str] = None, used: Optional[set] = None,
+                   index: Optional[int] = None) -> _Sheet:
+        """Placa nova: um retalho do material (se houver algum ainda não usado), senão a chapa inteira."""
+        rems = getattr(self.params, "remnants", None) or []
+        if index is not None and index in self.fixed_remnants:
+            rid = self.fixed_remnants[index]
+            rem = next((r for r in rems if str(r.get("id")) == rid), None)
+            if rem is not None:
+                if used is not None:
+                    used.add(rid)
+                return self._remnant(rem)
+        if material is not None and used is not None:
+            for rem in rems:
+                rid = str(rem.get("id"))
+                if rid in used or rid in self.fixed_remnants.values() or (rem.get("material") or "") != material:
+                    continue
+                used.add(rid)
+                sh = self._remnant(rem)
+                if sh.rect != (0, 0, 0, 0):
+                    return sh
+        return self._standard(material)
 
     # ------------------------------------------------------------------
     def fits_sheet(self, pid: str, rotations: list[float], mirror_opts=(False,)) -> bool:
+        rect = self._standard(self.shapes[pid].material).rect if pid in self.shapes else self.rect
         for r in rotations:
             for m in mirror_opts:
-                if self.cache.ifp_rect(self.rect, self.cache.variant(pid, r, m)) is not None:
+                if self.cache.ifp_rect(rect, self.cache.variant(pid, r, m)) is not None:
                     return True
         return False
 
@@ -108,7 +178,7 @@ class Decoder:
         return pos
 
     def _try_place_inner(self, sheet: _Sheet, v: Variant, criterion: str):
-        ifp = self.cache.ifp_rect(self.rect, v)
+        ifp = self.cache.ifp_rect(sheet.rect, v)
         candidates = []
         hosts = []   # para cada candidato: índice do anfitrião (furo) ou None
         if ifp is not None:
@@ -117,6 +187,11 @@ class Decoder:
             clips = []
             ix0, iy0 = ifp[0]
             ix1, iy1 = ifp[2]
+            for ob in sheet.obstacles:               # retalho: fora do material
+                paths, bb = self.cache.nfp_np(ob, v)
+                if bb[2] < ix0 or bb[0] > ix1 or bb[3] < iy0 or bb[1] > iy1:
+                    continue
+                clips.extend(path.tolist() for path in paths)
             for pl in sheet.placed:
                 if self.cancelled():
                     return None
@@ -207,9 +282,13 @@ class Decoder:
         p = self.params
         sheets: list[_Sheet] = []
         placements: list[Placement] = []
+        used_remnants: set = set()
+        locked_mat = {lp.sheet_index: self.shapes[lp.part_id].material for lp in locked or []}
         for lp in locked or []:
             while len(sheets) <= lp.sheet_index:
-                sheets.append(self._new_sheet())
+                k = len(sheets)
+                # placa já existente (travada): chapa do material ou o retalho que ela usava
+                sheets.append(self._new_sheet(locked_mat.get(k), None, index=k))
             v = self.cache.variant(lp.part_id, lp.rotation, lp.mirrored)
             xi, yi = int(round(lp.x * S)), int(round(lp.y * S))
             sh = sheets[lp.sheet_index]
@@ -244,11 +323,13 @@ class Decoder:
                         break
                     if len(sheets) >= p.max_sheets:
                         break
-                    sheets.append(self._new_sheet())
+                    sheets.append(self._new_sheet(mat, used_remnants))
                     sheets[-1].material = mat
                 sheet = sheets[si]
                 if sheet.material is not None and sheet.material != mat:
                     continue
+                if sheet.material is None and not sheet.placed and not sheet.remnant:
+                    sheets[si] = sheet = self._standard(mat)      # placa vazia: chapa do material
                 for m in m_try:
                     for r in rot_try:
                         if self.cancelled():
@@ -269,9 +350,11 @@ class Decoder:
                     break
             if not done:
                 unplaced.append((pid, inst))
-                # remove folha vazia criada sem sucesso
+                # remove folha vazia criada sem sucesso (o retalho volta a ficar livre)
                 if sheets and not sheets[-1].placed:
-                    sheets.pop()
+                    gone = sheets.pop()
+                    if gone.remnant:
+                        used_remnants.discard(gone.remnant)
 
         # remove placas vazias e agrupa as placas por material (3mm primeiro, depois 6mm…)
         mats = sorted({sh.material or "" for sh in sheets if sh.placed})
@@ -283,26 +366,31 @@ class Decoder:
             pl.sheet_index = remap.get(pl.sheet_index, pl.sheet_index)
         n = len(sheets)
         net = sum(self.shapes[pl.part_id].net_area for pl in placements)
-        util = net / (n * self.sheet_area) if n else 0.0
+        total = sum(sh.area or self.sheet_area for sh in sheets)
+        util = net / total if n and total else 0.0
         last_bbox = sheets[-1].bbox if sheets else None
         fitness = self.fitness(n, last_bbox, len(unplaced), sheets)
         return DecodeResult(placements, n, unplaced, fitness, util, last_bbox,
-                            [sh.material or "" for sh in sheets])
+                            [sh.material or "" for sh in sheets], [sh.remnant for sh in sheets])
 
     def fitness(self, n_sheets, last_bbox, n_unplaced, sheets) -> float:
-        """Menor é melhor: peças sem lugar, placas extras e compactação da última placa de cada material."""
+        """Menor é melhor: peças sem lugar, placas extras e compactação da última placa de cada material.
+        Retalho usado não conta como placa extra (é sobra que já existia)."""
         groups: dict = {}
         for sh in sheets:
             groups.setdefault(sh.material or "", []).append(sh)
-        f = 100.0 * n_unplaced + 2.0 * max(0, n_sheets - max(1, len(groups)))
+        full = sum(1 for sh in sheets if not sh.remnant)
+        f = 100.0 * n_unplaced + 2.0 * max(0, full - max(1, len(groups)))
         for shs in groups.values():
             for k, sh in enumerate(shs):
                 if sh.bbox is None:
                     continue
+                area = sh.area or self.sheet_area
+                width = sh.width or self.params.sheet_width
                 w = (sh.bbox[2] - sh.bbox[0]) / S
                 h = (sh.bbox[3] - sh.bbox[1]) / S
-                if k == len(shs) - 1:
-                    f += (w * h) / self.sheet_area + 0.1 * w / self.params.sheet_width
+                if k == len(shs) - 1 and not sh.remnant:
+                    f += (w * h) / area + 0.1 * w / width
                 else:
-                    f += 0.05 * (w * h) / self.sheet_area
+                    f += 0.05 * (w * h) / area
         return f

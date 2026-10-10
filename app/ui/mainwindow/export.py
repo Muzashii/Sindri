@@ -131,7 +131,7 @@ class ExportMixin:
             if sheet_no is None:
                 return
             sheet_mat = idx0.material.get(sheet, "")
-        p = self.settings_panel.params()
+        p = self.nest_params()
         # problemas numa única confirmação (só aparece se houver algum)
         problems = []
         self._mark_collisions()
@@ -139,7 +139,9 @@ class ExportMixin:
         try:
             check = [pl for pl in self.placements if sheet is None or pl.sheet_index == sheet]
             parts_snapshot, check = copy.deepcopy(self.pmap), copy.deepcopy(check)
-            issues = run_task(self, "Validando geometria antes de exportar", lambda: validate_layout(parts_snapshot, check, p))
+            rems = dict(self.sheet_remnants)
+            issues = run_task(self, "Validando geometria antes de exportar",
+                              lambda: validate_layout(parts_snapshot, check, p, sheet_remnants=rems))
         finally:
             QApplication.restoreOverrideCursor()
         if issues:
@@ -209,7 +211,8 @@ class ExportMixin:
                     color_map=plan["cmap"], stats=stats, part_labels=plan["labels"] or None,
                     label_aci=int(numbers["color"]), label_height=float(numbers.get("height") or 3.0),
                     op_colors=plan["op_colors"], color_ops=plan["color_ops"],
-                    start_corner=o.get("start", "inferior_esquerdo"))
+                    start_corner=o.get("start", "inferior_esquerdo"),
+                    sheet_remnants=dict(self.sheet_remnants))
 
     def _sheet_stamp(self, si: int, plan: dict) -> str:
         """Impressão digital do que vai no arquivo de uma placa (peças, posições e cores): se mudar,
@@ -250,6 +253,7 @@ class ExportMixin:
             n_sheets, utilization, unplaced = self.n_sheets, self._utilization(), list(self.unplaced)
             header, requests = self._report_header(), copy.deepcopy(self._report_requests())
             kw = self._export_kwargs(o, plan, export_stats)
+            rems = dict(self.sheet_remnants)
 
             def write_outputs():
                 os.makedirs(o["folder"], exist_ok=True)
@@ -263,7 +267,8 @@ class ExportMixin:
                                                      sheet_outline=o["outline"], file_suffix="_todas_placas", **kw2)
                         res = NestResult(placements, n_sheets, utilization, 0.0, unplaced)
                         pdf = os.path.join(stage, f"{o['base']}_relatorio.pdf")
-                        export_pdf(pdf, o["base"], pmap, res, p, header=header, requests=requests)
+                        export_pdf(pdf, o["base"], pmap, res, p, header=header, requests=requests,
+                                   sheet_remnants=rems)
                         sources += [combined, pdf]
                     moved = {}
                     try:
@@ -419,40 +424,8 @@ class ExportMixin:
         settings().setValue("laser/material_mode", "true" if on else "false")
         self._refresh_laser_panel(force=True)
 
-    def material_cfg(self) -> dict:
-        """{material: {"color", "speed", "power"}} lembrados entre usos."""
-        return self._json_setting("laser/materials", {})
-
     def numbers_cfg(self) -> dict:
         return {**laser.NUMBERS_DEFAULT, **self._json_setting("laser/numbers", {})}
-
-    def set_material_value(self, material: str, data: dict):
-        """Linha do painel do laser. ``data`` com "op" = vinco/gravação daquele material."""
-        import json
-        cfg = self.material_cfg()
-        entry = dict(cfg.get(material) or {})
-        op = data.get("op")
-        if op:
-            o = dict((entry.get("ops") or {}).get(op) or {})
-            old = o.get("color")
-            for k in ("speed", "power", "color"):
-                if k in data:
-                    o[k] = round(float(data[k] or 0), 2 if k == "speed" else 1) if k != "color" else int(data[k])
-            entry["ops"] = {**(entry.get("ops") or {}), op: o}
-            cfg[material] = entry
-            settings().setValue("laser/materials", json.dumps(cfg, ensure_ascii=False))
-            if "color" in data and int(data["color"]) != (old or 0):
-                self._refresh_laser_panel(force=True)
-            return
-        old = entry.get("color")
-        cur = self._material_colors().get(material)
-        entry.update({"color": int(data.get("color", cur or 7)),
-                      "speed": round(float(data.get("speed") or 0), 2),
-                      "power": round(float(data.get("power") or 0), 1)})
-        cfg[material] = entry
-        settings().setValue("laser/materials", json.dumps(cfg, ensure_ascii=False))
-        if cfg[material]["color"] != (old if old is not None else cur):
-            self._refresh_laser_panel(force=True)    # outra cor: os outros materiais podem mudar
 
     def set_numbers_value(self, data: dict):
         import json
@@ -479,6 +452,7 @@ class ExportMixin:
 
     def _refresh_laser_panel(self, force: bool = False):
         from ...core.laser import groups_from_parts
+        self.settings_panel.set_sheet_note(self.material_sheets() if self.parts else {})
         op_colors = self._material_plan()[1] if self.material_mode() and self.parts else {}
         self.settings_panel.set_laser_state(groups_from_parts(self.parts), self.laser_values(),
                                             self.material_mode(), self._material_colors(), self.material_cfg(),
@@ -560,21 +534,6 @@ class ExportMixin:
             return
         self.set_material_params(material, op, dlg.values())
         self._refresh_laser_panel(force=True)
-
-    def set_material_params(self, material: str, op: str, values: dict):
-        """Junta ``values`` nos parâmetros da camada ``op`` do material (o corte fica na raiz)."""
-        import json
-        cfg = self.material_cfg()
-        entry = dict(cfg.get(material) or {})
-        if op == operations.CUT:
-            entry.update(values)
-            entry.setdefault("color", self._material_colors().get(material, 7))
-        else:
-            ops = dict(entry.get("ops") or {})
-            ops[op] = {**(ops.get(op) or {}), **values}
-            entry["ops"] = ops
-        cfg[material] = entry
-        settings().setValue("laser/materials", json.dumps(cfg, ensure_ascii=False))
 
     # ---- operação de cada cor do arquivo (corte × vinco × gravação)
     def effective_color_ops(self) -> dict:

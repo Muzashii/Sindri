@@ -53,7 +53,9 @@ class PositionDialog(QDialog):
         self.list.clear()
         idx = self.owner.sheet_index()
         row = 0
-        bad_indices = self.owner.checker.colliding(self.owner.placements) if self.owner.checker else set()
+        bad_indices = (self.owner.checker.colliding(self.owner.placements,
+                                                    sheet_remnants=self.owner.sheet_remnants)
+                       if self.owner.checker else set())
         for n, pl in enumerate(self.owner.placements):
             part = self.owner.pmap[pl.part_id]
             key_pl = (pl.part_id, pl.instance)

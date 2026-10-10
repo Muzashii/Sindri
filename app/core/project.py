@@ -232,7 +232,15 @@ def _load_project(path: str) -> Project:
             result = None
         else:
             from .validate import validate_layout
-            issues = validate_layout({p.id: p for p in report.parts}, result.placements, params)
+            extra = data.get("extra") if isinstance(data.get("extra"), dict) else {}
+            rems = {}
+            for row in extra.get("sheet_remnants") or []:
+                try:
+                    rems[int(row[0])] = str(row[1])
+                except (TypeError, ValueError, IndexError):
+                    continue
+            issues = validate_layout({p.id: p for p in report.parts}, result.placements, params,
+                                     sheet_remnants=rems)
             if issues:
                 warnings.append("Encaixe salvo inválido; execute Encaixar novamente. " + issues[0])
                 result = None

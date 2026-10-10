@@ -21,28 +21,64 @@ def sheet_offset(params: NestParams, index: int) -> float:
     return index * (params.sheet_width + gap)
 
 
+def _spec_of(params: NestParams):
+    from ..core.sheetspec import SheetSpec
+    return SheetSpec(params.sheet_width, params.sheet_height, params.margin, params.spacing)
+
+
+def _ring_path(pts, close=True) -> QPainterPath:
+    path = QPainterPath()
+    if pts:
+        path.moveTo(QPointF(*pts[0]))
+        for x, y in pts[1:]:
+            path.lineTo(QPointF(x, y))
+        if close:
+            path.closeSubpath()
+    return path
+
+
 class SheetItem(QGraphicsItem):
-    def __init__(self, params: NestParams, index: int, dark: bool, material: str = "", done: bool = False):
+    """Uma placa: chapa inteira do tamanho do material ou retalho (contorno próprio)."""
+
+    def __init__(self, params: NestParams, index: int, dark: bool, material: str = "", done: bool = False,
+                 spec=None, slot: NestParams | None = None):
         super().__init__()
         self.params = params
+        self.spec = spec or _spec_of(params)
         self.index = index
         self.dark = dark
         self.material = material
         self.done = done
         self.setZValue(-10)
-        self.setPos(sheet_offset(params, index), 0)
+        self.setPos(sheet_offset(slot or params, index), 0)
+        if self.spec.is_remnant:
+            self.setToolTip(f"Retalho {self.spec.name or self.spec.remnant_id} · "
+                            f"{self.spec.width:.0f} × {self.spec.height:.0f} mm")
 
     def boundingRect(self) -> QRectF:
-        return QRectF(-1, -1, self.params.sheet_width + 2, self.params.sheet_height + 2)
+        return QRectF(-1, -1, self.spec.width + 2, self.spec.height + 2)
+
+    def _shape_path(self) -> QPainterPath:
+        path = _ring_path(self.spec.outline)
+        for hole in self.spec.holes:
+            path.addPath(_ring_path(hole))
+        path.setFillRule(Qt.OddEvenFill)
+        return path
 
     def paint(self, painter: QPainter, option, widget=None):
-        p = self.params
-        w, h = p.sheet_width, p.sheet_height
+        w, h = self.spec.width, self.spec.height
         lod = option.levelOfDetailFromTransform(painter.worldTransform())
         # sombra
         sh = 6.0 / max(lod, 1e-3)
-        painter.fillRect(QRectF(sh * 0.4, -sh, w, h), theme.qcolor("shadow"))
-        painter.fillRect(QRectF(0, 0, w, h), theme.qcolor("sheet"))
+        if self.spec.is_remnant:
+            shape = self._shape_path()
+            painter.fillPath(shape.translated(sh * 0.4, -sh), theme.qcolor("shadow"))
+            painter.fillPath(shape, theme.qcolor("sheet"))
+            painter.save()
+            painter.setClipPath(shape)
+        else:
+            painter.fillRect(QRectF(sh * 0.4, -sh, w, h), theme.qcolor("shadow"))
+            painter.fillRect(QRectF(0, 0, w, h), theme.qcolor("sheet"))
         step = 10 if lod > 1.0 else 50
         pen = QPen(theme.qcolor("grid"), 0)
         pen2 = QPen(theme.qcolor("grid2"), 0)
@@ -58,25 +94,49 @@ class SheetItem(QGraphicsItem):
                 break
             painter.setPen(pen2 if y % 100 == 0 else pen)
             painter.drawLine(QPointF(0, y), QPointF(w, y))
-        m = p.margin
-        if m > 0:
-            mc = theme.qcolor("warn")
-            mc.setAlpha(150)
+        if self.spec.is_remnant:
+            painter.restore()
+        m = self.spec.margin
+        mc = theme.qcolor("warn")
+        mc.setAlpha(150)
+        if m > 0 and not self.spec.is_remnant:
             painter.setPen(QPen(mc, 0, Qt.DashLine))
             painter.drawRect(QRectF(m, m, w - 2 * m, h - 2 * m))
+        elif self.spec.is_remnant:
+            usable = self.spec.usable()
+            painter.setPen(QPen(mc, 0, Qt.DashLine))
+            for g in getattr(usable, "geoms", [usable]):
+                if g.is_empty:
+                    continue
+                painter.drawPath(_ring_path(list(g.exterior.coords)))
+                for ring in g.interiors:
+                    painter.drawPath(_ring_path(list(ring.coords)))
         if self.material:
             pen = QPen(theme.material_color(self.material), 3)
             pen.setCosmetic(True)
             painter.setPen(pen)
         else:
             painter.setPen(QPen(theme.qcolor("sheet_border"), 0))
-        painter.drawRect(QRectF(0, 0, w, h))
+        if self.spec.is_remnant:
+            pen = painter.pen()
+            pen.setStyle(Qt.DashDotLine)
+            painter.setPen(pen)
+            painter.drawPath(self._shape_path())
+        else:
+            painter.drawRect(QRectF(0, 0, w, h))
         if self.done:
-            painter.fillRect(QRectF(0, 0, w, h), QColor(22, 163, 74, 38))
+            done_path = self._shape_path() if self.spec.is_remnant else None
+            if done_path is not None:
+                painter.fillPath(done_path, QColor(22, 163, 74, 38))
+            else:
+                painter.fillRect(QRectF(0, 0, w, h), QColor(22, 163, 74, 38))
             pen = QPen(theme.qcolor("success_text"), 4)
             pen.setCosmetic(True)
             painter.setPen(pen)
-            painter.drawRect(QRectF(0, 0, w, h))
+            if done_path is not None:
+                painter.drawPath(done_path)
+            else:
+                painter.drawRect(QRectF(0, 0, w, h))
 
 
 class SheetLabel(QGraphicsItem):
@@ -404,35 +464,49 @@ class NestCanvas(QGraphicsView):
         self.fit_all()
 
     owner_colors: dict = {}
+    specs: dict = {}                    # placa -> SheetSpec (chapa do material ou retalho)
     show_labels: bool = True
     cut_sheets: set = set()
     done_parts: set = set()
     filter_tag: str = ""
 
     def show_layout(self, parts: dict[str, Part], placements: list[Placement], params: NestParams,
-                    n_sheets: int, keep_view: bool = False):
+                    n_sheets: int, keep_view: bool = False, specs: dict | None = None):
+        """``specs``: {placa: SheetSpec} — chapa de cada material (banco de materiais) ou retalho. As placas
+        ficam em "vagas" do tamanho da maior, para arrastar peças entre placas continuar simples."""
+        import copy
         old = self.transform() if keep_view else None
         center = self.mapToScene(self.viewport().rect().center()) if keep_view else None
         selected = {(it.placement.part_id, it.placement.instance) for it in self.part_items if it.isSelected()}
         self.clear()
         self.mode = "layout"
-        self.params = params
         n = max(1, n_sheets)
         from ..core.sheets import SheetIndex
+        from ..core.sheetspec import standard_spec
         idx = SheetIndex(parts, placements)
+        specs = dict(specs or {})
+        for i in range(n):
+            specs.setdefault(i, standard_spec(params, idx.material.get(i)) if i in idx.material
+                             else _spec_of(params))
+        slot = copy.copy(params)
+        slot.sheet_width = max([params.sheet_width] + [sp.width for sp in specs.values()])
+        slot.sheet_height = max([params.sheet_height] + [sp.height for sp in specs.values()])
+        self.params = slot
+        self.specs = specs
         for i in range(n):
             mat = idx.material.get(i, "")
             done = i in self.cut_sheets
-            s = SheetItem(params, i, self.dark, mat, done)
+            sp = specs[i]
+            s = SheetItem(params, i, self.dark, mat, done, spec=sp, slot=slot)
             self.scene().addItem(s)
             self.sheet_items.append(s)
             cnt = idx.count(i)
-            util = idx.net_area(i) / (params.sheet_width * params.sheet_height)
-            txt = f"Placa {idx.number.get(i, i + 1)}"
+            util = idx.net_area(i) / sp.area if sp.area else 0.0
+            txt = f"Placa {idx.number.get(i, i + 1)}" + (" · retalho" if sp.is_remnant else "")
             sub_txt = (f"{cnt} {'peça' if cnt == 1 else 'peças'} · {100 * util:.1f}%".replace(".", ",")
                        if cnt else "vazia")
-            label = SheetLabel(txt, sub_txt, mat, done, params.sheet_width)
-            label.setPos(sheet_offset(params, i), params.sheet_height)
+            label = SheetLabel(txt, sub_txt, mat, done, sp.width)
+            label.setPos(sheet_offset(slot, i), sp.height)
             label.index = i
             self.scene().addItem(label)
             self.sheet_labels.append(label)
@@ -536,7 +610,8 @@ class NestCanvas(QGraphicsView):
 
     def focus_sheet(self, i: int):
         p = self.params
-        r = QRectF(sheet_offset(p, i), 0, p.sheet_width, p.sheet_height)
+        sp = getattr(self, "specs", {}).get(i)
+        r = QRectF(sheet_offset(p, i), 0, sp.width if sp else p.sheet_width, sp.height if sp else p.sheet_height)
         self.fitInView(r.adjusted(-15, -25, 15, 25), Qt.KeepAspectRatio)
 
     def current_sheet(self) -> int:

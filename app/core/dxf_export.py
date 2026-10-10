@@ -212,11 +212,21 @@ def _finish(doc, path: str):
     doc.saveas(path)
 
 
-def _plate(msp, params: NestParams, dx: float):
+def _plate(msp, params, dx: float):
+    """Contorno da placa (camada cinza). ``params``: NestParams (chapa inteira) ou SheetSpec (pode ser
+    retalho: desenha o contorno dele e os buracos)."""
     _ensure_layer(msp.doc, PLATE_LAYER, 8)
-    w, h = params.sheet_width, params.sheet_height
-    pts = [(dx, 0), (dx + w, 0), (dx + w, h), (dx, h)]
     at = {"layer": PLATE_LAYER, "color": 8}
+    outline = getattr(params, "outline", ())
+    if outline:
+        for ring in [outline, *getattr(params, "holes", ())]:
+            pts = [(x + dx, y) for x, y in ring]
+            for i in range(len(pts)):
+                msp.add_line(pts[i], pts[(i + 1) % len(pts)], dxfattribs=at)
+        return
+    w = getattr(params, "sheet_width", None) or params.width
+    h = getattr(params, "sheet_height", None) or params.height
+    pts = [(dx, 0), (dx + w, 0), (dx + w, h), (dx, h)]
     for i in range(4):
         msp.add_line(pts[i], pts[(i + 1) % 4], dxfattribs=at)
 
@@ -396,7 +406,8 @@ def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Plac
                       remove_overlap: bool = True, stats: Optional[dict] = None,
                       part_labels: Optional[dict] = None, label_aci: int = 1,
                       label_height: float = 3.0, op_colors: Optional[dict] = None,
-                      color_ops: Optional[dict] = None, start_corner: str = "inferior_esquerdo") -> str:
+                      color_ops: Optional[dict] = None, start_corner: str = "inferior_esquerdo",
+                      sheet_remnants: Optional[dict] = None) -> str:
     """Um arquivo só (<nome>_todas_placas.dxf) com TODAS as placas de todos os materiais lado a lado,
     na mesma ordem do relatório (materiais separados por um espaço maior). É o que abre no RDWorks.
     ``color_map``: {(material, cor ACI original): cor ACI a gravar} — separa materiais em camadas.
@@ -411,6 +422,8 @@ def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Plac
     dx = 0.0
     from .sheets import SheetIndex
     idx = SheetIndex(pmap, placements)
+    from .sheetspec import sheet_specs
+    specs = sheet_specs(params, idx.material, sheet_remnants)
     first = True
     solid_cache: dict = {}
     ops_cache: dict = {}
@@ -425,14 +438,15 @@ def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Plac
         first = False
         for si in sis:
             n_sheet = idx.number[si]
+            spec = specs[si]
             if sheet_outline:
-                _plate(msp, params, dx)
+                _plate(msp, spec, dx)
                 # nº da placa acima dela, na mesma camada cinza do contorno (desativar no RDWorks)
-                hh = min(40.0, max(12.0, 0.05 * params.sheet_height))
-                label = f"PLACA {n_sheet}" + (f" - {mat}" if mat else "")
-                _stroke_text(msp, label, dx, params.sheet_height + hh * 0.6, hh, PLATE_LAYER, 8)
+                hh = min(40.0, max(12.0, 0.05 * spec.height))
+                label = f"PLACA {n_sheet}" + (f" - {mat}" if mat else "") + (" - RETALHO" if spec.is_remnant else "")
+                _stroke_text(msp, label, dx, spec.height + hh * 0.6, hh, PLATE_LAYER, 8)
             pls = [pl for pl in placements if pl.sheet_index == si]
-            sx, sy = start_point(start_corner, params.sheet_width, params.sheet_height)
+            sx, sy = start_point(start_corner, spec.width, spec.height)
             seq = order_placements(pmap, pls, nearest=sort_path, start=(sx, sy)) \
                 if inner_first or sort_path else pls
             sheet_prims = []
@@ -478,7 +492,7 @@ def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Plac
                     stats["overlaps"] = stats.get("overlaps", 0) + n_rm
             for pr in sheet_prims:
                 write_prim(msp, pr, version)
-            dx += params.sheet_width + gap
+            dx += spec.width + gap
     path = os.path.join(out_dir, f"{base_name}{file_suffix}.dxf")
     _finish(doc, path)
     return path

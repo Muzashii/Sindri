@@ -61,7 +61,7 @@ class ProjectMixin:
 
     def _write_project(self, path: str):
         res = NestResult(self.placements, self.n_sheets, self._utilization(), 0.0, self.unplaced)
-        save_project(path, self.files, self.settings_panel.params(), self.parts, res,
+        save_project(path, self.files, self.nest_params(), self.parts, res,
                      multipliers=self.file_multipliers, label=self.request_label,
                      materials=self.file_materials, request=self.request_info, tags=self.file_tags,
                      checklist={"cut": sorted(self.cut_sheets), "done": sorted(self.done_parts)},
@@ -73,7 +73,8 @@ class ProjectMixin:
         return {"color_ops": color_ops_to_json(self.color_ops),
                 "color_ops_confirmed": [[m, int(a)] for m, a in sorted(self.color_ops_confirmed)],
                 "sheet_files": [[int(si), path, self.sheet_stamps.get(si, "")]
-                                for si, path in sorted(self.sheet_files.items())]}
+                                for si, path in sorted(self.sheet_files.items())],
+                "sheet_remnants": [[int(si), rid] for si, rid in sorted(self.sheet_remnants.items())]}
 
     def _load_project_extra(self, extra: dict):
         from ...core.operations import color_ops_from_json
@@ -92,6 +93,12 @@ class ProjectMixin:
             except (TypeError, ValueError, IndexError):
                 continue
             self.sheet_files[si], self.sheet_stamps[si] = path, stamp
+        self.sheet_remnants = {}
+        for row in extra.get("sheet_remnants") or []:
+            try:
+                self.sheet_remnants[int(row[0])] = str(row[1])
+            except (TypeError, ValueError, IndexError):
+                continue
 
     @staticmethod
     def autosave_path() -> str:

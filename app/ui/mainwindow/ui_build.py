@@ -250,6 +250,7 @@ class UIBuildMixin:
         self.settings_panel.materialModeChanged.connect(self.set_material_mode)
         self.settings_panel.colorOpsRequested.connect(lambda: self.confirm_color_ops(force=True))
         self.settings_panel.layerParamsRequested.connect(self.edit_layer_params)
+        self.settings_panel.materialsRequested.connect(self.open_materials_dialog)
         self.settings_panel.two_tubes.blockSignals(True)
         self.settings_panel.two_tubes.setChecked(not self.single_tube())
         self.settings_panel.two_tubes.blockSignals(False)
@@ -537,6 +538,9 @@ class UIBuildMixin:
         act(m_nest, "Destravar todas as peças", self.unlock_all)
         m_nest.addSeparator()
         act(m_nest, "Marcar placa da tela como cortada (e ir para a próxima)", self.toggle_current_cut, "C")
+        m_nest.addSeparator()
+        act(m_nest, "Banco de materiais…", lambda: self.open_materials_dialog(), "Ctrl+M")
+        act(m_nest, "Cores do arquivo → corte / gravação…", lambda: self.confirm_color_ops(force=True))
         act(m_view, "Mostrar todas as solicitações do lote", lambda: self.filter_request_index(0), "Alt+0")
         from PySide6.QtGui import QShortcut
         self._req_shortcuts = []

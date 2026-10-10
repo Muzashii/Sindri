@@ -41,7 +41,7 @@ class Individual:
 def part_rotations(part: Part, params: NestParams) -> list[float]:
     if part.rotation_locked:
         return [0.0]
-    return params.rotations()
+    return params.rotations(part.material or "")
 
 
 def shapes_from_parts(parts: list[Part], params: NestParams) -> dict[str, PartShape]:
@@ -50,7 +50,9 @@ def shapes_from_parts(parts: list[Part], params: NestParams) -> dict[str, PartSh
         outer = np.asarray(p.outer.exterior.coords)[:-1]
         holes = [np.asarray(h.exterior.coords)[:-1] for h in p.holes]
         net = p.outer.area - sum(h.area for h in p.holes)
-        shapes[p.id] = PartShape(p.id, outer, holes, net, part_rotations(p, params), p.material)
+        spacing = params.for_material(p.material or "").spacing
+        shapes[p.id] = PartShape(p.id, outer, holes, net, part_rotations(p, params), p.material,
+                                 spacing if spacing != params.spacing else -1.0)
     return shapes
 
 
@@ -174,7 +176,7 @@ class GeneticNester:
     def _to_result(self, res, ind: Individual) -> NestResult:
         return NestResult(res.placements, res.sheets_used, res.utilization, res.fitness,
                           list(res.unplaced) + list(self.too_big), self.generation, self.evaluated,
-                          list(res.sheet_materials))
+                          list(res.sheet_materials), list(getattr(res, "sheet_remnants", [])))
 
     def _consider(self, ind: Individual, res, on_best) -> None:
         self.evaluated += 1

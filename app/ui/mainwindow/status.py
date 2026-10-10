@@ -33,7 +33,8 @@ class StatusMixin:
         self.canvas.engrave_labels = self._part_labels()
         self.canvas.engrave_height = float(nc.get("height") or 3.0)
         self.canvas.engrave_aci = int(nc.get("color", 1))
-        self.canvas.show_layout(self.pmap, self.placements, self.settings_panel.params(), n, keep_view)
+        self.canvas.show_layout(self.pmap, self.placements, self.nest_params(), n, keep_view,
+                                specs=self.sheet_specs())
         self.canvas.set_editable(self.worker is None)
         if self.worker is None:              # enquanto calcula, o encaixe não tem colisões e o checklist recomeça
             self._refresh_cut_panel()
@@ -45,7 +46,7 @@ class StatusMixin:
             self._collision_count = 0
             return 0
         pls = [it.placement for it in self.canvas.part_items]
-        bad = self.checker.colliding(pls)
+        bad = self.checker.colliding(pls, sheet_remnants=self.sheet_remnants)
         for i, it in enumerate(self.canvas.part_items):
             c = i in bad
             if it.colliding != c:
@@ -78,12 +79,12 @@ class StatusMixin:
     def _utilization(self) -> float:
         if not self.placements:
             return 0.0
-        p = self.settings_panel.params()
-        max(pl.sheet_index for pl in self.placements) + 1
+        specs = self.sheet_specs()
         used = {pl.sheet_index for pl in self.placements}
         area = sum(self.pmap[pl.part_id].outer.area - sum(h.area for h in self.pmap[pl.part_id].holes)
                    for pl in self.placements)
-        return area / (len(used) * p.sheet_width * p.sheet_height) if used else 0.0
+        total = sum(specs[si].area for si in used if si in specs)
+        return area / total if total else 0.0
 
     def _update_status(self):
         total = sum(p.quantity for p in self.parts)
@@ -91,14 +92,13 @@ class StatusMixin:
         u = self._utilization()
         self.progress.setValue(int(round(u * 1000)))
         self.chip_util.setText(fmt_pct(u) if placed else "—")
-        params = self.settings_panel.params()
-        sheet_area = params.sheet_width * params.sheet_height
+        specs = self.sheet_specs() if self.placements else {}
         by_sheet = {}
         for pl in self.placements:
             part = self.pmap[pl.part_id]
             by_sheet[pl.sheet_index] = by_sheet.get(pl.sheet_index, 0) + part.outer.area - sum(h.area for h in part.holes)
-        detail = "\n".join(f"Placa {index + 1}: {fmt_pct(area / sheet_area)}"
-                           for index, area in sorted(by_sheet.items())) if sheet_area else ""
+        detail = "\n".join(f"Placa {index + 1}: {fmt_pct(area / specs[index].area)}"
+                           for index, area in sorted(by_sheet.items()) if index in specs and specs[index].area)
         self.chip_util.setToolTip("Aproveitamento total: área das peças ÷ área das placas usadas" +
                                   ("\n" + detail if detail else ""))
         sheets = len({pl.sheet_index for pl in self.placements})

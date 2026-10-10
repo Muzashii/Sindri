@@ -129,7 +129,7 @@ class EditingMixin:
                 pl.y = it.pos().y()
                 involved.add(s)
             pls.append(pl)
-        bad = self.checker.colliding(pls, involved)          # só as placas envolvidas no arraste
+        bad = self.checker.colliding(pls, involved, self.sheet_remnants)   # só as placas envolvidas no arraste
         for i, it in enumerate(self.canvas.part_items):
             if pls[i].sheet_index not in involved:
                 continue
@@ -178,6 +178,9 @@ class EditingMixin:
         for pl in self.placements:
             pl.sheet_index = remap.get(pl.sheet_index, pl.sheet_index)
         self.cut_sheets = {remap[s] for s in self.cut_sheets if s in remap}
+        self.sheet_remnants = {remap[s]: r for s, r in self.sheet_remnants.items() if s in remap}
+        self.sheet_files = {remap[s]: f for s, f in self.sheet_files.items() if s in remap}
+        self.sheet_stamps = {remap[s]: t for s, t in self.sheet_stamps.items() if s in remap}
         self.n_sheets = len(nums)
 
     def _selected_placements(self) -> list[Placement]:
@@ -189,16 +192,21 @@ class EditingMixin:
         sel = self._selected_placements()
         if not sel:
             return
-        p = self.settings_panel.params()
-        steps = len(p.rotations())
-        step = 360.0 / steps
+        p = self.nest_params()
         self._push_undo()
         self._invalidate_cut_for(sel)
         for pl in sel:
             if self.pmap[pl.part_id].rotation_locked:
                 self.statusBar().showMessage("Esta peça está com rotação travada.", 4000)
                 continue
-            pl.rotation = round((pl.rotation + step) % 360.0, 4)
+            # próxima rotação permitida (material com veio: só 0° e 180°)
+            rots = sorted(p.rotations(self.pmap[pl.part_id].material or ""))
+            cur = round(pl.rotation % 360.0, 4)
+            nxt = next((r for r in rots if r > cur + 1e-6), rots[0])
+            if len(rots) == 1 and abs(rots[0] - cur) < 1e-6:
+                self.statusBar().showMessage("Este material só permite esta rotação.", 4000)
+                continue
+            pl.rotation = round(nxt % 360.0, 4)
         self.mark_changed()
         for it in self.canvas.selected_items():
             it.sync_from_placement()

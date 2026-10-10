@@ -208,3 +208,22 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
     do laser) e aparecem na conferência camada a camada e no relatório, mas **não** são gravados no `config`:
     não sabemos ainda em que bytes o RDWorks guarda esses campos. `tools/config_diff.py` compara dois `config`
     (antes/depois de mudar um campo no RDWorks) e diz a tabela, a camada e o byte do registro que mudou.
+65. **Banco de materiais** (`core/material_db.py`): `materiais.json` versionado (`format`/`version`), em
+    `Documentos/Sindri` ou numa pasta compartilhada escolhida no diálogo (todos os PCs passam a usar o mesmo).
+    Por material: espessura, chapa padrão, margem, espaçamento, kerf, peça mínima, veio, tipo de acrílico,
+    data do teste e quem validou, proibido + motivo e os parâmetros de cada camada (corte, vinco, gravação
+    vetorial, raster). Substitui os valores que ficavam só no QSettings do PC (migrados na criação do banco).
+    Nomes são comparados sem caixa/acento/espaço ("mdf 3 mm" = "MDF 3mm").
+66. **Gravação concorrente**: cada gravação relê o arquivo e junta os materiais que outro PC criou nesse meio
+    tempo (para o mesmo material, vale o último a salvar); troca atômica. Arquivo estragado ou de versão mais
+    nova nunca é sobrescrito: o Sindri usa os pontos de partida só na memória e avisa. No painel do laser, a
+    digitação muda o material na memória na hora e grava no arquivo 0,7 s depois (e ao fechar).
+67. **Chapa por material**: 0/"do painel" em chapa, margem e espaçamento = usar o painel, para o banco nunca
+    mudar o encaixe de surpresa; o painel mostra quais materiais usam valores do banco. O encaixe guarda isso em
+    `NestParams.material_sheets`; cada placa nasce do tamanho do material dela e cada peça recebe a folga do
+    espaçamento do SEU material (peças de materiais diferentes nunca dividem placa, então cada par de vizinhas
+    tem o mesmo espaçamento). Validação, colisão, canvas, DXF e PDF usam o formato de cada placa
+    (`core/sheetspec.py`). Material com veio: só 0° e 180° (encaixe e tecla R).
+68. Os pontos de partida do banco (MDF 3/6 mm, acrílico cast 3 mm, compensado 3 mm) **não trazem velocidade nem
+    potência**: cada laboratório preenche depois da grade de teste. Teste com mais de 90 dias (ou sem teste)
+    aparece com ⚠ no painel do laser.

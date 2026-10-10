@@ -44,17 +44,25 @@ def placed_geometry(solid: Polygon, pl: Placement) -> Polygon:
 
 
 def validate_layout(parts: dict[str, Part], placements: list[Placement], params: NestParams,
-                    tol: float = 0.02) -> list[str]:
+                    tol: float = 0.02, sheet_remnants: dict | None = None) -> list[str]:
+    """Problemas do encaixe (lista vazia = pode exportar). Cada placa é conferida com a chapa do material
+    dela (banco de materiais) ou com o retalho usado (``sheet_remnants``: {placa: id do retalho})."""
     issues: list[str] = []
     try:
         params.validate()
     except ValueError as e:
         return [str(e)]
+    from collections import Counter
+    from .sheetspec import sheet_specs
     seen = set()
     solids: dict[str, Polygon] = {}
     by_sheet: dict[int, list[tuple[Placement, Polygon]]] = {}
-    m = params.margin
-    usable = box(m - tol, m - tol, params.sheet_width - m + tol, params.sheet_height - m + tol)
+    mats: dict[int, Counter] = {}
+    for pl in placements:
+        if pl.part_id in parts and type(pl.sheet_index) is int:
+            mats.setdefault(pl.sheet_index, Counter())[parts[pl.part_id].material] += 1
+    specs = sheet_specs(params, {si: c.most_common(1)[0][0] for si, c in mats.items()}, sheet_remnants)
+    usable_of = {si: sp.usable(tol) for si, sp in specs.items()}
     for pl in placements:
         key = (pl.part_id, pl.instance)
         if pl.part_id not in parts:
@@ -72,17 +80,21 @@ def validate_layout(parts: dict[str, Part], placements: list[Placement], params:
         if pl.part_id not in solids:
             solids[pl.part_id] = fine_solid(part)
         g = placed_geometry(solids[pl.part_id], pl)
+        usable = usable_of.get(pl.sheet_index) or box(params.margin - tol, params.margin - tol,
+                                                       params.sheet_width - params.margin + tol,
+                                                       params.sheet_height - params.margin + tol)
         if not usable.covers(g):
             issues.append(f"{part.name} #{pl.instance + 1} fora da área útil da placa {pl.sheet_index + 1}")
         by_sheet.setdefault(pl.sheet_index, []).append((pl, g))
-    min_d = params.spacing - tol
     for sheet, items in by_sheet.items():
+        spacing = specs[sheet].spacing if sheet in specs else params.spacing
+        min_d = spacing - tol
         if len({parts[pl.part_id].material for pl, _ in items}) > 1:
             issues.append(f"Placa {sheet + 1}: materiais diferentes na mesma placa")
         geoms = [g for _, g in items]
         tree = STRtree(geoms)
         for i, (pl, g) in enumerate(items):
-            for j in tree.query(g.buffer(params.spacing)):
+            for j in tree.query(g.buffer(spacing)):
                 j = int(j)
                 if j <= i:
                     continue
@@ -92,5 +104,5 @@ def validate_layout(parts: dict[str, Part], placements: list[Placement], params:
                     a = parts[pl.part_id].name
                     b = parts[items[j][0].part_id].name
                     kind = "sobreposição" if overlap else f"distância {d:.2f} mm"
-                    issues.append(f"Placa {sheet + 1}: {a} e {b} — {kind} (mínimo {params.spacing} mm)")
+                    issues.append(f"Placa {sheet + 1}: {a} e {b} — {kind} (mínimo {spacing:g} mm)")
     return issues

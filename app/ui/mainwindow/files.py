@@ -362,7 +362,7 @@ class FilesMixin:
         self.placements, self.n_sheets, self.unplaced = [], 0, []
         self.cut_sheets, self.done_parts = set(), set()
         self.color_ops, self.color_ops_confirmed = {}, set()
-        self.sheet_files, self.sheet_stamps = {}, {}
+        self.sheet_files, self.sheet_stamps, self.sheet_remnants = {}, {}, {}
         self._refresh_cut_panel()
         self.too_big = set()
         self.undo_stack.clear()

@@ -29,6 +29,20 @@ class NestingMixin:
             return
         self.start_nest()
 
+    def nest_params(self):
+        """Parâmetros do painel + chapa/margem/espaçamento/veio de cada material (banco de materiais),
+        retalhos disponíveis e os retalhos das placas que já existem."""
+        p = self.settings_panel.params()
+        p.material_sheets = self.material_sheets()
+        p.remnants = self.available_remnants() if hasattr(self, "available_remnants") else []
+        p.sheet_remnants = [[int(si), rid] for si, rid in sorted(self.sheet_remnants.items()) if rid]
+        return p
+
+    def sheet_specs(self) -> dict:
+        """{placa: SheetSpec} do encaixe atual (tamanho de cada placa, retalho ou chapa inteira)."""
+        from ...core.sheetspec import sheet_specs
+        return sheet_specs(self.nest_params(), self.sheet_index().material, self.sheet_remnants)
+
     def start_nest(self):
         if not self.parts or self.worker is not None:
             return
@@ -53,7 +67,7 @@ class NestingMixin:
                 keep_cut = True
             elif box.clickedButton() != b_all:
                 return
-        p = self.settings_panel.params()
+        p = self.nest_params()
         try:
             p.validate()
         except ValueError as e:
@@ -70,6 +84,9 @@ class NestingMixin:
             p = copy.copy(p)
             p.closed_sheets = sorted(self.cut_sheets)
         locked = [pl for pl in self.placements if pl.locked and pl.instance < self.pmap[pl.part_id].quantity]
+        locked_sheets = {pl.sheet_index for pl in locked}
+        self.sheet_remnants = {si: rid for si, rid in self.sheet_remnants.items() if si in locked_sheets}
+        p.sheet_remnants = [[si, rid] for si, rid in sorted(self.sheet_remnants.items())]
         if self.placements:
             self._push_undo()
         self.placements = list(locked)
@@ -101,6 +118,7 @@ class NestingMixin:
             return
         self.placements = list(res.placements)
         self.unplaced = list(res.unplaced)
+        self.sheet_remnants = {i: rid for i, rid in enumerate(getattr(res, "sheet_remnants", []) or []) if rid}
         keys = getattr(self, "_cut_keys", set())
         if keys:                         # "só o que falta": as placas cortadas continuam marcadas
             self.cut_sheets = {pl.sheet_index for pl in self.placements if (pl.part_id, pl.instance) in keys}
@@ -187,14 +205,14 @@ class NestingMixin:
             self._redraw(keep_view=True)
 
     def _rebuild_checker(self):
-        p = self.settings_panel.params()
+        p = self.nest_params()
         self.checker = CollisionChecker(self.parts, p) if self.parts else None
         self.too_big = set()
         if self.parts:
             dec = Decoder(self.checker.cache.shapes, p, cache=self.checker.cache)
             mo = (False, True) if p.allow_mirror else (False,)
             for pt in self.parts:
-                rots = [0.0] if pt.rotation_locked else p.rotations()
+                rots = [0.0] if pt.rotation_locked else p.rotations(pt.material or "")
                 if not dec.fits_sheet(pt.id, rots, mo):
                     self.too_big.add(pt.id)
 
@@ -210,7 +228,7 @@ class NestingMixin:
         if getattr(self, "_ui_task_depth", 0):
             self._params_timer.start(150)
             return
-        new = self.settings_panel.params()
+        new = self.nest_params()
         try:
             new.validate()
         except ValueError as e:
@@ -221,7 +239,7 @@ class NestingMixin:
         if self.parts and old != new:
             self.mark_changed()
         self._sync_preset_combo()
-        settings().setValue("ui/last_params", json.dumps(new.to_json()))
+        settings().setValue("ui/last_params", json.dumps(self.settings_panel.params().to_json()))
         if self.files and abs(new.curve_tolerance - old.curve_tolerance) > 1e-9 and self.worker is None:
             # a discretização das peças depende da tolerância de curva: reprocessar
             self._import(self.files, keep_quantities=True)

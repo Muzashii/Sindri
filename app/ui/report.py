@@ -80,9 +80,10 @@ def _label_point(poly):
 
 def render_sheet(painter: QPainter, target: QRectF, parts: dict[str, Part], placements: list[Placement],
                  params: NestParams, sheet: int, owners: dict[str, Owner] | None = None,
-                 label_mode: str = "tag"):
-    """Desenha a placa. Peças pintadas com a cor da solicitação e o nº escrito em cima."""
-    w, h = params.sheet_width, params.sheet_height
+                 label_mode: str = "tag", spec=None):
+    """Desenha a placa (do tamanho dela, ou o contorno do retalho). Peças pintadas com a cor da
+    solicitação e o nº escrito em cima."""
+    w, h = (spec.width, spec.height) if spec is not None else (params.sheet_width, params.sheet_height)
     placements = [pl for pl in placements if pl.sheet_index == sheet]
     s = min(target.width() / w, target.height() / h)
     ox = target.left() + (target.width() - w * s) / 2
@@ -91,9 +92,22 @@ def render_sheet(painter: QPainter, target: QRectF, parts: dict[str, Part], plac
     painter.save()
     painter.translate(ox, oy)
     painter.scale(s, -s)
-    painter.fillRect(QRectF(0, 0, w, h), QColor("#f4f5f7"))
-    painter.setPen(QPen(QColor("#555"), 0))
-    painter.drawRect(QRectF(0, 0, w, h))
+    if spec is not None and spec.is_remnant:
+        from PySide6.QtGui import QPainterPath
+        path = QPainterPath()
+        for ring in [spec.outline, *spec.holes]:
+            path.moveTo(*ring[0])
+            for x, y in ring[1:]:
+                path.lineTo(x, y)
+            path.closeSubpath()
+        path.setFillRule(Qt.OddEvenFill)
+        painter.fillPath(path, QColor("#f4f5f7"))
+        painter.setPen(QPen(QColor("#555"), 0, Qt.DashDotLine))
+        painter.drawPath(path)
+    else:
+        painter.fillRect(QRectF(0, 0, w, h), QColor("#f4f5f7"))
+        painter.setPen(QPen(QColor("#555"), 0))
+        painter.drawRect(QRectF(0, 0, w, h))
     for pl in pls:
         part = parts[pl.part_id]
         g = part_graphics(part, pl.mirrored)
@@ -138,10 +152,11 @@ def render_sheet(painter: QPainter, target: QRectF, parts: dict[str, Part], plac
 
 
 def sheet_stats(parts: dict[str, Part], placements: list[Placement], params: NestParams, sheet: int,
-                index=None):
+                index=None, spec=None):
     from ..core.sheets import SheetIndex
     idx = index or SheetIndex(parts, placements)
-    return idx.count(sheet), idx.net_area(sheet) / (params.sheet_width * params.sheet_height)
+    area = spec.area if spec is not None else params.sheet_width * params.sheet_height
+    return idx.count(sheet), idx.net_area(sheet) / area if area else 0.0
 
 
 def sheet_titles(parts, placements, index=None) -> list[tuple[int, int, str, str]]:
@@ -282,13 +297,16 @@ def _add_clickable_boxes(path: str, boxes: list[tuple[int, QRectF, str]], paint_
 
 
 def export_pdf(path: str, title: str, parts: dict[str, Part], result: NestResult, params: NestParams,
-               header: list[str] | None = None, requests: list[dict] | None = None) -> str:
+               header: list[str] | None = None, requests: list[dict] | None = None,
+               sheet_remnants: dict | None = None) -> str:
     pls = result.placements
     owners = owners_for(parts, pls, requests)
     batch = any(k for k in owners)
     label_mode = "tag" if len([k for k in owners if k]) > 1 else "num"
     from ..core.sheets import SheetIndex
+    from ..core.sheetspec import sheet_specs
     idx = SheetIndex(parts, pls)
+    specs = sheet_specs(params, idx.material, sheet_remnants)
     titles = sheet_titles(parts, pls, idx)
     by_tag: dict[str, list] = {}
     for pl in pls:
@@ -332,7 +350,7 @@ def export_pdf(path: str, title: str, parts: dict[str, Part], result: NestResult
     table_head("Checklist de corte — marque cada placa ao terminar", cols)
     for si, n, stitle, mat in titles:
         d.need(row, lambda: table_head("Checklist de corte (continuação)", cols))
-        cnt, util = sheet_stats(parts, pls, params, si, idx)
+        cnt, util = sheet_stats(parts, pls, params, si, idx, specs.get(si))
         d.font(10)
         d.checkbox(40, d.y + (row - cb) / 2, cb, f"placa{n}")
         d.font(10, True)
@@ -389,7 +407,7 @@ def export_pdf(path: str, title: str, parts: dict[str, Part], result: NestResult
     legend_w = 420.0
     for si, n, stitle, mat in titles:
         d.new_page()
-        cnt, util = sheet_stats(parts, pls, params, si, idx)
+        cnt, util = sheet_stats(parts, pls, params, si, idx, specs.get(si))
         d.font(16, True)
         d.text(0, 0, d.W - 260, 48, f"{stitle}")
         d.font(10)
@@ -398,7 +416,7 @@ def export_pdf(path: str, title: str, parts: dict[str, Part], result: NestResult
         d.font(12, True)
         d.text(d.W - 206, 4, 206, 48, "Placa cortada")
         area = QRectF(0, 90, d.W - legend_w - 20, d.H - 90)
-        render_sheet(p, area, parts, pls, params, si, owners, label_mode)
+        render_sheet(p, area, parts, pls, params, si, owners, label_mode, specs.get(si))
         # legenda
         lx = d.W - legend_w
         ly = 96.0

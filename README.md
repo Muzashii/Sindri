@@ -225,6 +225,17 @@ Roda do mouse = zoom · botão do meio (ou `Alt` + arrastar) = mover a vista.
   aparecem na conferência para você ajustar no RDWorks.
 - Para descobrir onde o RDWorks guarda outros campos (saída, modo…): `python tools/config_diff.py antes.cfg depois.cfg`.
 
+### 🗂️ Banco de materiais (`Ctrl+M`)
+
+Uma tabela por material, salva em `Documentos/Sindri/materiais.json` — ou numa **pasta compartilhada do
+laboratório** (botão *Usar pasta compartilhada…*), para todos os PCs usarem os mesmos parâmetros:
+
+- espessura, **chapa padrão, margem e espaçamento** (vazio = usar o painel), peça mínima e **veio** (só 0°/180°);
+- por camada (corte, vinco, gravação, raster): modo, velocidade, potência mín./máx., passadas, intervalo do scan;
+- **kerf medido, data do último teste e quem validou** — teste com mais de 90 dias aparece com ⚠ no painel do
+  laser (o tubo de CO₂ perde potência com o tempo: refaça a grade em vez de ir subindo a potência);
+- **proibido** + motivo: bloqueia a exportação daquele material.
+
 ---
 
 ## 🌐 Intranet FIAP

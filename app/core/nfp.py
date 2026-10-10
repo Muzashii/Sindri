@@ -36,6 +36,7 @@ class PartShape:
     net_area: float
     rotations: list[float]
     material: str = ""
+    spacing: float = -1.0        # espaçamento do material da peça (< 0 = o do encaixe)
 
 
 @dataclass
@@ -118,6 +119,7 @@ class NFPCache:
         if v is not None:
             return v
         sh = self.shapes[pid]
+        half = self._half_spacing(pid)
         tf = Transform(rot, mirror)
         simp = Polygon(tf.pts_array(self._base_outline(pid)))
         if not simp.is_valid:
@@ -128,7 +130,7 @@ class NFPCache:
         extra = self._simp.get(pid, self.simplify_tol) - self.simplify_tol
         # simplificação maior que a do nível de detalhe: folga extra proporcional (garante que o contorno
         # usado no cálculo contém a peça inteira, mesmo com os arredondamentos do offset)
-        offset = self.offset + (extra * 1.25 + 0.05 if extra > 1e-9 else 0.0)
+        offset = (self.offset - self.spacing / 2.0 + half) + (extra * 1.25 + 0.05 if extra > 1e-9 else 0.0)
         off = pco.Execute(offset * CLIPPER_SCALE)
         off = [p for p in off if pyclipper.Orientation(p)]
         path = max(off, key=lambda p: abs(pyclipper.Area(p))) if off else base
@@ -142,7 +144,8 @@ class NFPCache:
                     hp = hp.buffer(0)
                 if hp.is_empty or hp.geom_type != "Polygon":
                     continue
-                shrunk = offset_int([polygon_to_int(hp)], -self.hole_shrink, arc_tol_mm=self.arc_tol)
+                shrunk = offset_int([polygon_to_int(hp)], -(self.hole_shrink - self.spacing / 2.0 + half),
+                                    arc_tol_mm=self.arc_tol)
                 for s in shrunk:
                     if pyclipper.Orientation(s) and abs(pyclipper.Area(s)) > 0:
                         holes.append(s)
@@ -151,6 +154,12 @@ class NFPCache:
         self._variants[key] = v
         self._trim(self._variants)
         return v
+
+    def _half_spacing(self, pid: str) -> float:
+        """Meio espaçamento da peça: o do material dela (banco de materiais) ou o do encaixe. Peças de
+        materiais diferentes nunca dividem placa, então cada par de vizinhas tem o mesmo espaçamento."""
+        sp = getattr(self.shapes[pid], "spacing", -1.0)
+        return (float(sp) if sp is not None and sp >= 0 else self.spacing) / 2.0
 
     def _base_outline(self, pid: str) -> np.ndarray:
         """Contorno externo simplificado (e com reentrâncias estreitas fechadas) em coordenadas locais.

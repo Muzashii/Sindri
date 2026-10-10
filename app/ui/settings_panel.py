@@ -105,6 +105,7 @@ class SettingsPanel(QWidget):
     colorOpsRequested = Signal()                  # conferir cor do arquivo -> corte/vinco/gravação
     layerParamsRequested = Signal(str, str)       # material, camada de laser: modo, pot. mín., passadas…
     twoTubesChanged = Signal(bool)                # máquina com dois tubos
+    materialsRequested = Signal(str)              # abrir o banco de materiais (no material indicado)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -163,6 +164,11 @@ class SettingsPanel(QWidget):
         f1.addRow("Largura", self.w)
         f1.addRow("Altura", self.h)
         f1.addRow("Margem da borda", self.margin)
+        self.sheet_note = QLabel()
+        self.sheet_note.setObjectName("Muted")
+        self.sheet_note.setWordWrap(True)
+        self.sheet_note.setVisible(False)
+        f1.addRow(self.sheet_note)
         lay.addWidget(g1)
 
         gl = _Section("Laser (RDWorks)", "zap")
@@ -192,6 +198,12 @@ class SettingsPanel(QWidget):
                                   "Ligado: grava os mesmos valores nos dois tubos.")
         self.two_tubes.toggled.connect(lambda on: self.twoTubesChanged.emit(bool(on)))
         gv.addWidget(self.two_tubes)
+        self.btn_materials = QPushButton("Banco de materiais…")
+        self.btn_materials.setObjectName("ghost")
+        self.btn_materials.setToolTip("Chapa, espaçamento, kerf, data do teste e parâmetros de cada material —\n"
+                                      "iguais em todos os PCs se o banco ficar numa pasta compartilhada.")
+        self.btn_materials.clicked.connect(lambda: self.materialsRequested.emit(""))
+        gv.addWidget(self.btn_materials)
         self.laser_rows = QVBoxLayout()
         self.laser_rows.setSpacing(8)
         gv.addLayout(self.laser_rows)
@@ -434,6 +446,18 @@ class SettingsPanel(QWidget):
             vals.addWidget(sp, 1)
             vals.addWidget(pw, 1)
             v.addLayout(vals)
+            age = cfg.get("test_age")
+            if cfg.get("forbidden") or age is None or cfg.get("stale"):
+                note = QLabel("⛔ proibido no laser" if cfg.get("forbidden") else
+                              "⚠ sem grade de teste registrada" if age is None else
+                              f"⚠ teste de {age} dias atrás: refaça a grade")
+                note.setObjectName("InlineWarning" if cfg.get("forbidden") or cfg.get("stale") else "Muted")
+                note.setToolTip("Abra o banco de materiais para registrar o teste.")
+                v.addWidget(note)
+            elif cfg.get("tested"):
+                note = QLabel(f"teste: {cfg['tested'][8:10]}/{cfg['tested'][5:7]}/{cfg['tested'][:4]}")
+                note.setObjectName("Muted")
+                v.addWidget(note)
             self.laser_rows.addWidget(row)
             for (mm, op), oc in op_colors.items():
                 if mm == m and op != "corte":
@@ -495,6 +519,23 @@ class SettingsPanel(QWidget):
         vals.addWidget(pw, 1)
         v.addLayout(vals)
         self.laser_rows.addWidget(row)
+
+    def set_sheet_note(self, overrides: dict):
+        """Materiais cuja chapa/margem/espaçamento vêm do banco de materiais (e não deste painel)."""
+        parts = []
+        for m, o in sorted(overrides.items()):
+            bits = []
+            if o.get("sheet_width"):
+                bits.append(f"chapa {o['sheet_width']:g}×{o['sheet_height']:g}")
+            if "margin" in o:
+                bits.append(f"margem {o['margin']:g}")
+            if o.get("spacing"):
+                bits.append(f"espaço {o['spacing']:g} mm")
+            if o.get("grain"):
+                bits.append("só 0°/180° (veio)")
+            parts.append(f"<b>{m}</b>: {', '.join(bits)}")
+        self.sheet_note.setText("Do banco de materiais — " + "; ".join(parts) if parts else "")
+        self.sheet_note.setVisible(bool(parts))
 
     def set_laser_groups(self, groups: list, values: dict):
         """Uma linha por camada (material × cor): cor, nome, velocidade e potência."""

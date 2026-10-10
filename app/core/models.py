@@ -125,6 +125,7 @@ class NestResult:
     generation: int = 0
     evaluated: int = 0
     sheet_materials: list[str] = field(default_factory=list)
+    sheet_remnants: list[str] = field(default_factory=list)   # id do retalho de cada placa ("" = chapa)
 
     def to_json(self) -> dict:
         return {
@@ -134,6 +135,7 @@ class NestResult:
             "fitness": self.fitness,
             "unplaced": [list(u) for u in self.unplaced],
             "sheet_materials": list(self.sheet_materials),
+            "sheet_remnants": list(self.sheet_remnants),
         }
 
     @staticmethod
@@ -145,6 +147,7 @@ class NestResult:
             fitness=d["fitness"],
             unplaced=[tuple(u) for u in d.get("unplaced", [])],
             sheet_materials=list(d.get("sheet_materials", [])),
+            sheet_remnants=[str(x) for x in d.get("sheet_remnants", [])],
         )
 
 
@@ -171,14 +174,40 @@ class NestParams:
     ignore_text: bool = True          # textos costumam ser nomes/anotações, não gravação
     excluded_layers: list = field(default_factory=list)   # camadas que não entram no encaixe
     closed_sheets: list = field(default_factory=list)     # placas já cortadas: não recebem peças novas
+    # chapa por material (do banco de materiais): {material: {"sheet_width", "sheet_height", "margin",
+    # "spacing", "grain"}} — só as chaves informadas substituem os valores acima
+    material_sheets: dict = field(default_factory=dict)
+    # retalhos que podem ser usados ANTES de abrir chapa nova: [{"id", "material", "outline", "holes"}]
+    remnants: list = field(default_factory=list)
+    # placas que já existem e são retalhos (encaixar "só o que falta"): [[índice da placa, id do retalho]]
+    sheet_remnants: list = field(default_factory=list)
 
     def import_kwargs(self) -> dict:
         return {"units_override": self.units_override if self.units_override >= 0 else None,
                 "ignore_text": self.ignore_text, "excluded_layers": set(self.excluded_layers)}
 
-    def rotations(self) -> list[float]:
+    def rotations(self, material: Optional[str] = None) -> list[float]:
+        """Rotações permitidas. Material com veio (``grain``): só 0° e 180°."""
         steps = 24 if self.free_rotation else max(1, int(self.rotation_steps))
-        return [round(360.0 * i / steps, 6) for i in range(steps)]
+        rots = [round(360.0 * i / steps, 6) for i in range(steps)]
+        if material is not None and (self.material_sheets.get(material) or {}).get("grain"):
+            rots = [r for r in rots if r in (0.0, 180.0)] or [0.0]
+        return rots
+
+    MATERIAL_KEYS = ("sheet_width", "sheet_height", "margin", "spacing")
+
+    def for_material(self, material: Optional[str]) -> "NestParams":
+        """Cópia com a chapa/margem/espaçamento daquele material (banco de materiais), se houver."""
+        o = self.material_sheets.get(material or "") if material is not None else None
+        if not o:
+            return self
+        import copy
+        p = copy.copy(self)
+        for k in self.MATERIAL_KEYS:
+            v = o.get(k)
+            if isinstance(v, (int, float)) and math.isfinite(v) and (v > 0 or (k == "margin" and v >= 0)):
+                setattr(p, k, float(v))
+        return p
 
     def to_json(self) -> dict:
         return asdict(self)
@@ -210,6 +239,12 @@ class NestParams:
                 raise ValueError(f"{name}: informe um inteiro positivo.")
         if self.mutation_rate > 1:
             raise ValueError("mutation_rate deve estar entre 0 e 1.")
+        if not isinstance(self.material_sheets, dict) or not isinstance(self.remnants, list):
+            raise ValueError("material_sheets/remnants inválidos.")
+        for m in self.material_sheets:
+            q = self.for_material(m)
+            if 2 * q.margin >= min(q.sheet_width, q.sheet_height):
+                raise ValueError(f"{m}: a margem deixa a chapa sem área útil.")
 
 
 @dataclass
