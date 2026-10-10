@@ -119,3 +119,52 @@ def test_retalhos_na_janela(tmp_path, monkeypatch):
     assert w.sheet_remnants == {0: rems[0]["id"]}
     w.dirty = False
     w.close()
+
+
+def test_so_o_que_falta_mantem_o_retalho_da_placa_cortada(tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    from app.ui.main_window import MainWindow
+    w = MainWindow(workers=0)
+    w.parts = [_rect_part("A", 80, 60, 2)]
+    w.pmap = {p.id: p for p in w.parts}
+    rem = w.remnant_store().add(rectangle("MDF 3mm", 200, 150))
+    w.placements = [Placement("A", 0, 0, 50, 40, 0), Placement("A", 1, 1, 60, 60, 0)]
+    w.n_sheets = 2
+    w.sheet_remnants = {0: rem.id}
+    w.on_sheet_cut(0, True)                                # cortou o retalho: ele sai da lista…
+    assert w.remnant_store().available(["MDF 3mm"]) == []
+    # …mas a placa 0 continua desenhada/validada como o retalho
+    assert any(d["id"] == rem.id for d in w.nest_params().remnants)
+    assert w.sheet_specs()[0].is_remnant
+    # ao encaixar "só o que falta", o retalho cortado fica preso à placa 0 e não é oferecido para placa nova
+    clicked = {}
+
+    def fake_exec(box):
+        clicked["b"] = next(b for b in box.buttons() if b.text() == "Só o que falta")
+        return 0
+    monkeypatch.setattr(QMessageBox, "exec", fake_exec)
+    monkeypatch.setattr(QMessageBox, "clickedButton", lambda box: clicked["b"])
+    from app.workers import nest_worker
+    captured = {}
+
+    class FakeWorker:
+        def __init__(self, parts, params, locked, workers=None):
+            captured["params"], captured["locked"] = params, locked
+
+        def __getattr__(self, name):
+            raise AttributeError(name)
+    monkeypatch.setattr("app.ui.mainwindow.nesting.NestWorker", FakeWorker)
+    try:
+        w.start_nest()
+    except AttributeError:
+        pass
+    p = captured["params"]
+    assert p.sheet_remnants == [[0, rem.id]] and any(d["id"] == rem.id for d in p.remnants)
+    from app.core.placement import Decoder
+    from app.core.optimizer import shapes_from_parts
+    dec = Decoder(shapes_from_parts(w.parts, p), p)
+    res = dec.decode([("A", 1)], [0.0], [False], locked=captured["locked"])
+    assert res.sheet_remnants[0] == rem.id and res.sheet_remnants[1] == ""
+    w.worker = None
+    w.dirty = False
+    w.close()

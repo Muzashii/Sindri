@@ -87,6 +87,7 @@ class NestingMixin:
         locked_sheets = {pl.sheet_index for pl in locked}
         self.sheet_remnants = {si: rid for si, rid in self.sheet_remnants.items() if si in locked_sheets}
         p.sheet_remnants = [[si, rid] for si, rid in sorted(self.sheet_remnants.items())]
+        p.remnants = self.available_remnants()          # sem os retalhos de placas que vão ser refeitas
         if self.placements:
             self._push_undo()
         self.placements = list(locked)

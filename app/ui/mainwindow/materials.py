@@ -163,12 +163,22 @@ class MaterialsMixin:
         from ...core.remnants import RemnantError, RemnantStore, default_path
         path = default_path(self.material_db_path())
         try:
-            return RemnantStore.load(path)
+            st = os.stat(path)
+            mtime = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            mtime = (0, 0)
+        cached = self.__dict__.get("_rem_cache")
+        if cached is not None and cached[0] == path and cached[1] == mtime:
+            return cached[2]                           # a tela redesenha muito: não relê o arquivo à toa
+        try:
+            store = RemnantStore.load(path)
         except RemnantError as e:
             if not getattr(self, "_rem_warned", False):
                 self._rem_warned = True
                 self.show_banner(f"⚠ Retalhos: {e}", "warn")
-            return RemnantStore(path, [])
+            store = RemnantStore(path, [])
+        self.__dict__["_rem_cache"] = (path, mtime, store)
+        return store
 
     def available_remnants(self) -> list[dict]:
         """Retalhos disponíveis dos materiais em uso, com o material escrito como nas peças (o encaixe
@@ -178,13 +188,21 @@ class MaterialsMixin:
         for pt in getattr(self, "parts", []):
             if pt.quantity > 0 and pt.material:
                 mats.setdefault(key(pt.material), pt.material)
-        if not mats:
-            return []
+        store = self.remnant_store()
         out = []
-        for r in self.remnant_store().available(mats.values()):
-            d = r.to_params()
-            d["material"] = mats.get(key(r.material), r.material)
-            out.append(d)
+        if mats:
+            for r in store.available(mats.values()):
+                d = r.to_params()
+                d["material"] = mats.get(key(r.material), r.material)
+                out.append(d)
+        # retalhos das placas que já existem (mesmo já cortados): para desenhar, validar e travar no lugar
+        have = {d["id"] for d in out}
+        for rid in dict.fromkeys(self.sheet_remnants.values()):
+            r = store.find(rid)
+            if r is not None and rid not in have:
+                d = r.to_params()
+                d["material"] = mats.get(key(r.material), r.material)
+                out.append(d)
         return out
 
     def open_remnants_dialog(self):
