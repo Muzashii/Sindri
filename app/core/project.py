@@ -36,6 +36,7 @@ class Project:
     checklist: dict = field(default_factory=dict)
     units: dict = field(default_factory=dict)
     source_hashes: dict = field(default_factory=dict)
+    extra: dict = field(default_factory=dict)       # estado do laser/retalhos (veja save_project)
 
 
 def source_hash(path):
@@ -86,7 +87,10 @@ def save_project(path: str, files: list[str], params: NestParams, parts: list[Pa
                  label: Optional[str] = None, materials: Optional[dict] = None,
                  request: Optional[dict] = None, tags: Optional[dict] = None,
                  checklist: Optional[dict] = None, file_units: Optional[dict] = None,
-                 source_hashes: Optional[dict] = None, report: Optional[ImportReport] = None) -> None:
+                 source_hashes: Optional[dict] = None, report: Optional[ImportReport] = None,
+                 extra: Optional[dict] = None) -> None:
+    """``extra``: dados que só precisam voltar como estavam (JSON puro): operação de cada cor do
+    arquivo, retalhos usados por placa etc."""
     params.validate()
     base = os.path.dirname(os.path.abspath(path))
     data = {
@@ -104,6 +108,7 @@ def save_project(path: str, files: list[str], params: NestParams, parts: list[Pa
         "materials": [[relative_path(k, base), v] for k, v in (materials or {}).items()],
         "request": request,
         "checklist": checklist or {},
+        "extra": extra or {},
         "tags": [[relative_path(k, base), v] for k, v in (tags or {}).items()],
         "geometry": [_part_json(p) for p in parts],
         "import_report": {"preview": [[p.to_json(), issue] for p, issue in report.preview],
@@ -233,4 +238,5 @@ def _load_project(path: str) -> Project:
                 result = None
     return Project(files, params, report.parts, result, report, sorted(set(warnings)), multipliers,
                    data.get("label"), materials, data.get("request"), tags,
-                   (data.get("checklist") or {}) if result else {}, units, hashes)
+                   (data.get("checklist") or {}) if result else {}, units, hashes,
+                   data.get("extra") if isinstance(data.get("extra"), dict) else {})

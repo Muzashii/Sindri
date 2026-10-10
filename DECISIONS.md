@@ -166,3 +166,20 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
     DISCO (Ø do pivô, automático 4 × espessura) tem furo retangular para a LINGUETA da parede da caixa e não
     gira. A parede da caixa do lado da dobradiça termina logo acima da lingueta; a lateral da caixa ganha o
     recorte da diagonal e do nó com folga (e sem ponta fina perto da borda). Simulação: 0–100° sem colisão.
+
+## Relatório de bancada (out/2026) — da exportação à máquina
+54. **Operação por primitiva** (`core/operations.py`): cada primitiva vira `corte_externo`, `corte_interno`,
+    `vinco`, `gravacao_vetorial` ou `gravacao_raster`. O contorno externo é sempre corte; as outras primitivas
+    seguem a operação escolhida para a cor delas (por material). Padrão: as cores que aparecem no contorno
+    externo são corte, as outras são gravação vetorial (arquivo todo preto continua todo corte). Corrige o
+    "uma cor por material", que mandava a gravação azul para a cor de corte (um círculo de gravação virava furo).
+55. No modo por material só o corte vai para a cor do material; vinco e gravação ganham, cada um, uma cor
+    própria por material, nunca a de corte de nenhum material nem a dos números (preferências: vinco azul,
+    gravação verde, raster amarelo). Esgotadas as 5 cores exatas, usa ACIs que caem cada uma numa camada
+    diferente da paleta do RDWorks. Dentro da peça a ordem é gravação → vinco → furos → contorno.
+56. Arquivo com mais de uma cor num material: aviso na importação ("azul → gravação vetorial") e diálogo de
+    confirmação na 1ª exportação. As escolhas e as cores já conferidas vão no projeto (`extra`).
+57. **Material proibido** (`core/material_safety.py`): PVC, vinil, policarbonato (Lexan/Makrolon), ABS, fibra de
+    vidro/FR4/G10 e couro sintético bloqueiam a exportação com o motivo; acrílico sem "cast"/"extrudado" gera
+    atenção. O filtro é pelo nome (texto livre da intranet, sem acento/maiúscula); o banco de materiais pode
+    marcar outros como proibidos.

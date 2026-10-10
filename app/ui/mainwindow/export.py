@@ -8,7 +8,7 @@ import tempfile
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
-from ...core import laser
+from ...core import laser, material_safety, operations
 from ...core.dxf_export import export_all_sheets
 from ...core.models import NestResult
 from ...core.rdworks import files_to_open, find_rdworks, launch
@@ -144,6 +144,10 @@ class ExportMixin:
         if issues:
             QMessageBox.warning(self, "Encaixe inválido", "Corrija o encaixe antes de exportar:\n\n" + "\n".join(issues[:8]))
             return
+        if not self.check_material_safety(sheet):
+            return
+        if not self.confirm_color_ops():
+            return
         missing = sum(pt.quantity for pt in self.parts) - len(self.placements)
         if missing > 0 and sheet is None:
             problems.append(f"{missing} peça(s) não estão no encaixe (ficam de fora do arquivo).")
@@ -187,8 +191,10 @@ class ExportMixin:
         groups = self._laser_plan(only)
         cmap, rd_values, numbers = laser.color_map(groups), None, self.numbers_cfg()
         labels = self._part_labels()
+        op_colors, color_ops = None, self.effective_color_ops()
         if self.material_mode():
-            _, cmap, rd_values = self._material_plan()
+            _, op_colors, rd_values = self._material_plan()
+            cmap = None
         elif labels:                                 # cores do desenho + camada dos números
             vals = self.laser_values()
             rd_values = {g.rd_index: tuple(vals[g.key]) for g in groups if vals.get(g.key)}
@@ -207,7 +213,8 @@ class ExportMixin:
                                             color_map=cmap, only_sheets=only,
                                             file_suffix=suffix, stats=export_stats,
                                             part_labels=labels or None, label_aci=int(numbers["color"]),
-                                            label_height=float(numbers.get("height") or 3.0))
+                                            label_height=float(numbers.get("height") or 3.0),
+                                            op_colors=op_colors, color_ops=color_ops)
                     sources = [dxf]
                     if only is None:                     # relatório só na exportação completa
                         res = NestResult(placements, n_sheets, utilization, 0.0, unplaced)
@@ -309,13 +316,29 @@ class ExportMixin:
         return {**laser.NUMBERS_DEFAULT, **self._json_setting("laser/numbers", {})}
 
     def set_material_value(self, material: str, data: dict):
+        """Linha do painel do laser. ``data`` com "op" = vinco/gravação daquele material."""
         import json
         cfg = self.material_cfg()
-        old = (cfg.get(material) or {}).get("color")
+        entry = dict(cfg.get(material) or {})
+        op = data.get("op")
+        if op:
+            o = dict((entry.get("ops") or {}).get(op) or {})
+            old = o.get("color")
+            for k in ("speed", "power", "color"):
+                if k in data:
+                    o[k] = round(float(data[k] or 0), 2 if k == "speed" else 1) if k != "color" else int(data[k])
+            entry["ops"] = {**(entry.get("ops") or {}), op: o}
+            cfg[material] = entry
+            settings().setValue("laser/materials", json.dumps(cfg, ensure_ascii=False))
+            if "color" in data and int(data["color"]) != (old or 0):
+                self._refresh_laser_panel(force=True)
+            return
+        old = entry.get("color")
         cur = self._material_colors().get(material)
-        cfg[material] = {"color": int(data.get("color", cur or 7)),
-                         "speed": round(float(data.get("speed") or 0), 2),
-                         "power": round(float(data.get("power") or 0), 1)}
+        entry.update({"color": int(data.get("color", cur or 7)),
+                      "speed": round(float(data.get("speed") or 0), 2),
+                      "power": round(float(data.get("power") or 0), 1)})
+        cfg[material] = entry
         settings().setValue("laser/materials", json.dumps(cfg, ensure_ascii=False))
         if cfg[material]["color"] != (old if old is not None else cur):
             self._refresh_laser_panel(force=True)    # outra cor: os outros materiais podem mudar
@@ -345,9 +368,11 @@ class ExportMixin:
 
     def _refresh_laser_panel(self, force: bool = False):
         from ...core.laser import groups_from_parts
+        op_colors = self._material_plan()[1] if self.material_mode() and self.parts else {}
         self.settings_panel.set_laser_state(groups_from_parts(self.parts), self.laser_values(),
                                             self.material_mode(), self._material_colors(), self.material_cfg(),
-                                            self.numbers_cfg(), bool(self.request_info), force=force)
+                                            self.numbers_cfg(), bool(self.request_info), force=force,
+                                            op_colors=op_colors)
 
     def _request_numbers(self) -> list[tuple[str, dict]]:
         """[(nº da solicitação, dados)] na ordem do lote: a 1ª leva o número 1, a 2ª o 2…"""
@@ -392,22 +417,79 @@ class ExportMixin:
         return laser.plan_layers(groups, self._laser_palette(), order)
 
     def _material_plan(self) -> tuple[dict, dict, dict]:
-        """(cores por material, color_map do DXF, {camada do RDWorks: (vel, pot)})."""
+        """(cor do corte por material, {(material, camada de laser): cor no DXF},
+        {camada do RDWorks: (vel, pot)}). Só o corte vai para a cor do material; vinco e gravação
+        ganham cores próprias."""
         colors = self._material_colors()
         placed = {pl.part_id for pl in self.placements}
-        cmap = laser.material_color_map((pt for pt in self.parts if pt.id in placed), colors)
+        parts = [pt for pt in self.parts if pt.id in placed] if placed else list(self.parts)
         n = self.numbers_cfg() if self._part_labels() else None
-        values = laser.material_values(colors, self.material_cfg(), n, self._laser_palette())
-        return colors, cmap, values
+        palette = self._laser_palette()
+        op_colors = laser.material_op_colors(parts, colors, self.effective_color_ops(),
+                                             int(n["color"]) if n and n.get("on") else -1,
+                                             self._op_color_prefs(), palette)
+        values = laser.material_values(op_colors, self.material_cfg(), n, palette)
+        return colors, op_colors, values
+
+    def _op_color_prefs(self) -> dict:
+        """{(material, camada): cor} escolhida no painel para vinco/gravação."""
+        out = {}
+        for m, c in self.material_cfg().items():
+            for op, o in ((c or {}).get("ops") or {}).items():
+                if isinstance(o, dict) and int(o.get("color") or 0) > 0:
+                    out[(m, op)] = int(o["color"])
+        return out
+
+    # ---- operação de cada cor do arquivo (corte × vinco × gravação)
+    def effective_color_ops(self) -> dict:
+        return operations.merge_color_ops(self.parts, self.color_ops)
+
+    def confirm_color_ops(self, force: bool = False) -> bool:
+        """Arquivo com mais de uma cor num material: o técnico confere o que é corte e o que é gravação
+        (uma vez por importação). False = cancelou."""
+        parts = [pt for pt in self.parts if pt.quantity > 0]
+        keys = set(operations.file_colors(parts))
+        if not force and (not operations.needs_confirmation(parts) or keys <= self.color_ops_confirmed):
+            return True
+        from ..color_ops_dialog import ColorOpsDialog
+        dlg = ColorOpsDialog(parts, self.color_ops, self)
+        if not dlg.exec():
+            return False
+        self.color_ops.update(dlg.result_ops())
+        self.color_ops_confirmed |= keys
+        self.mark_changed()
+        self._refresh_laser_panel(force=True)
+        return True
+
+    def check_material_safety(self, sheet: int | None = None) -> bool:
+        """Bloqueia a exportação de material que não pode ir para o laser (PVC, vinil, policarbonato…)."""
+        mats = [self.pmap[pl.part_id].material for pl in self.placements
+                if pl.part_id in self.pmap and (sheet is None or pl.sheet_index == sheet)]
+        blocked = material_safety.blocked_materials(mats, self._material_forbidden)
+        if not blocked:
+            return True
+        QMessageBox.critical(self, "Material proibido no laser",
+                             "Não exporto este lote para o laser:\n\n"
+                             + "\n".join(f"• {m}: {why}" for m, why in blocked)
+                             + "\n\nTroque o material da solicitação (ou devolva ao aluno) antes de cortar.")
+        return False
+
+    def _material_forbidden(self, material: str) -> tuple[bool, str]:
+        c = self.material_cfg().get(material) or {}
+        return bool(c.get("forbidden")), str(c.get("forbidden_reason") or "")
 
     def _laser_report_lines(self) -> list[str]:
         if self.material_mode():
             cfg, lines = self.material_cfg(), []
-            for m, aci in self._material_colors().items():
+            _, op_colors, _ = self._material_plan()
+            for (m, op), aci in op_colors.items():
                 c = cfg.get(m) or {}
+                if op != operations.CUT:
+                    c = (c.get("ops") or {}).get(op) or {}
                 v = (f"{float(c['speed']):g} mm/s · {float(c['power']):g}%"
                      if float(c.get("speed") or 0) > 0 and float(c.get("power") or 0) > 0 else "valores do RDWorks")
-                lines.append(f"Laser · {m or 'sem material'} · corte em {laser.color_name(aci).lower()}: {v}")
+                lines.append(f"Laser · {m or 'sem material'} · {operations.LABELS[op].lower()} em "
+                             f"{laser.color_name(aci).lower()}: {v}")
             if self._part_labels():
                 n = self.numbers_cfg()
                 v = (f"{float(n['speed']):g} mm/s · {float(n['power']):g}%"

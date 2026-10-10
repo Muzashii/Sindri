@@ -59,6 +59,8 @@ class MainWindow(UIBuildMixin, FilesMixin, ProjectMixin, NestingMixin, EditingMi
         self.source_hashes: dict = {}
         self.cut_sheets: set[int] = set()        # placas já cortadas (checklist)
         self.done_parts: set[str] = set()        # peças marcadas como feitas (cortadas)
+        self.color_ops: dict = {}                # (material, cor do arquivo) -> corte/vinco/gravação
+        self.color_ops_confirmed: set = set()    # cores que o técnico já conferiu
         self.request_label: Optional[str] = None
         self.request_info: Optional[dict] = None
         self.generation = 0

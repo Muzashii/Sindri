@@ -150,28 +150,81 @@ def default_material_colors(materials: list[str], cfg: dict, numbers_color: int)
     return out
 
 
-def material_color_map(parts: Iterable[Part], colors: dict[str, int]) -> dict[tuple, int]:
-    """(material, cor original) -> cor do material: todo o corte de um material numa cor só."""
-    cmap: dict[tuple, int] = {}
-    for part in parts:
-        target = colors.get(part.material or "")
-        if target is None:
+# camadas de laser além do corte: cor preferida de cada uma (azul = vinco, verde = gravação…)
+OP_COLOR_PREFS = {
+    "vinco": [5, 3, 2, 1, 7],
+    "gravacao_vetorial": [3, 2, 5, 1, 7],
+    "gravacao_raster": [2, 3, 5, 1, 7],
+}
+
+
+def extra_layer_colors(palette: Optional[list] = None) -> list[int]:
+    """Cores ACI que caem, cada uma, numa camada diferente do RDWorks — usadas quando as 5 cores exatas
+    (preto, azul, vermelho, verde, amarelo) acabam."""
+    pal = palette or DEFAULT_PALETTE
+    exact = {a for _, a in COLOR_CHOICES}
+    out, taken = [], {nearest_layer(aci_rgb(a), pal) for a in exact}
+    for i, rgb in enumerate(pal):
+        if i in taken:
             continue
-        for p in part.prims:
-            if p.kind not in ("TEXT", "MTEXT"):
-                cmap[(part.material or "", export_aci(p))] = target
-    return cmap
+        best = min((a for a in range(1, 256) if a not in exact and a != 7),
+                   key=lambda a: sum((x - y) ** 2 for x, y in zip(aci_rgb(a), rgb)))
+        if nearest_layer(aci_rgb(best), pal) == i and best not in out:
+            out.append(best)
+            taken.add(i)
+    return out
 
 
-def material_values(colors: dict[str, int], cfg: dict, numbers: Optional[dict],
+def material_op_colors(parts: Iterable[Part], colors: dict[str, int], color_ops: Optional[dict] = None,
+                       numbers_color: int = -1, prefs: Optional[dict] = None,
+                       palette: Optional[list] = None) -> dict[tuple[str, str], int]:
+    """{(material, camada de laser): cor ACI a gravar} no modo "uma cor por material".
+
+    Só o CORTE (contorno e furos) vai para a cor do material; vinco e gravação ganham, cada um, uma cor
+    própria por material — nunca a cor de corte de nenhum material nem a dos números.
+    ``prefs``: {(material, camada): cor} escolhida pelo técnico (usada se estiver livre)."""
+    from .operations import CUT, layer_ops_in_use
+    parts = [p for p in parts if p.quantity > 0]
+    used_ops = layer_ops_in_use(parts, color_ops)
+    out: dict[tuple[str, str], int] = {}
+    taken = {int(numbers_color)} if numbers_color and numbers_color > 0 else set()
+    for m, ops in used_ops.items():
+        if CUT in ops and m in colors:
+            out[(m, CUT)] = int(colors[m])
+    taken |= {int(c) for c in colors.values()}
+    pool = [a for _, a in COLOR_CHOICES] + extra_layer_colors(palette)
+    for m in colors:                                  # mesma ordem dos materiais
+        for op in used_ops.get(m, []):
+            if op == CUT or (m, op) in out:
+                continue
+            want = (prefs or {}).get((m, op))
+            order = ([int(want)] if want else []) + OP_COLOR_PREFS.get(op, []) + pool
+            free = next((a for a in order if a not in taken), None)
+            if free is None:                          # paleta esgotada: divide a camada (avisado no plano)
+                free = order[0]
+            out[(m, op)] = free
+            taken.add(free)
+    return out
+
+
+def material_values(op_colors: dict, cfg: dict, numbers: Optional[dict],
                     palette: Optional[list] = None) -> dict[int, tuple]:
-    """{camada do RDWorks: (velocidade, potência)} dos materiais (e dos números) que têm valores."""
+    """{camada do RDWorks: (velocidade, potência)} das camadas que têm valores.
+
+    ``op_colors``: {(material, camada de laser): cor} (veja material_op_colors) — ou, no formato antigo,
+    {material: cor do corte}. ``cfg``: {material: {"speed", "power", "ops": {camada: {...}}}}."""
     pal = palette or DEFAULT_PALETTE
     out: dict[int, tuple] = {}
-    for m, aci in colors.items():
+    items = [((k, "corte"), v) if not isinstance(k, tuple) else (k, v) for k, v in op_colors.items()]
+    for (m, op), aci in items:
         c = cfg.get(m) or {}
-        if float(c.get("speed") or 0) > 0 and float(c.get("power") or 0) > 0:
-            out[nearest_layer(aci_rgb(aci), pal)] = (float(c["speed"]), float(c["power"]))
+        if op == "corte":
+            speed, power = float(c.get("speed") or 0), float(c.get("power") or 0)
+        else:
+            o = (c.get("ops") or {}).get(op) or {}
+            speed, power = float(o.get("speed") or 0), float(o.get("power") or 0)
+        if speed > 0 and power > 0:
+            out[nearest_layer(aci_rgb(aci), pal)] = (speed, power)
     if numbers and numbers.get("on") and float(numbers.get("speed") or 0) > 0 \
             and float(numbers.get("power") or 0) > 0:
         out[nearest_layer(aci_rgb(int(numbers["color"])), pal)] = (float(numbers["speed"]),

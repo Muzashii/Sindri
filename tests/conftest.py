@@ -32,6 +32,9 @@ def isolated_preferences(tmp_path, monkeypatch):
     clipboard.setText = lambda value: setattr(clipboard, "value", value)
     clipboard.text = lambda: clipboard.value
     monkeypatch.setattr(QApplication, "clipboard", staticmethod(lambda: clipboard))
+    # o diálogo "cor do arquivo -> operação" é modal: nos testes aceita o padrão
+    from app.ui.color_ops_dialog import ColorOpsDialog
+    monkeypatch.setattr(ColorOpsDialog, "exec", lambda self: 1)
 
 
 @pytest.fixture(scope="session", autouse=True)

@@ -65,7 +65,24 @@ class ProjectMixin:
                      multipliers=self.file_multipliers, label=self.request_label,
                      materials=self.file_materials, request=self.request_info, tags=self.file_tags,
                      checklist={"cut": sorted(self.cut_sheets), "done": sorted(self.done_parts)},
-                     file_units=self.file_units, source_hashes=self.source_hashes, report=self.report)
+                     file_units=self.file_units, source_hashes=self.source_hashes, report=self.report,
+                     extra=self._project_extra())
+
+    def _project_extra(self) -> dict:
+        from ...core.operations import color_ops_to_json
+        return {"color_ops": color_ops_to_json(self.color_ops),
+                "color_ops_confirmed": [[m, int(a)] for m, a in sorted(self.color_ops_confirmed)]}
+
+    def _load_project_extra(self, extra: dict):
+        from ...core.operations import color_ops_from_json
+        extra = extra or {}
+        self.color_ops = color_ops_from_json(extra.get("color_ops"))
+        self.color_ops_confirmed = set()
+        for row in extra.get("color_ops_confirmed") or []:
+            try:
+                self.color_ops_confirmed.add((str(row[0]), int(row[1])))
+            except (TypeError, ValueError, IndexError):
+                pass
 
     @staticmethod
     def autosave_path() -> str:
@@ -158,6 +175,7 @@ class ProjectMixin:
         self.parts_panel.set_request(proj.request)
         self.parts = proj.parts
         self.pmap = {p.id: p for p in self.parts}
+        self._load_project_extra(getattr(proj, "extra", {}))
         self.placements = list(proj.result.placements) if proj.result else []
         self.n_sheets = max([pl.sheet_index + 1 for pl in self.placements], default=0)
         self.unplaced = list(proj.result.unplaced) if proj.result else []

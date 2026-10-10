@@ -248,6 +248,7 @@ class UIBuildMixin:
         self.settings_panel.reimportNeeded.connect(self.reimport)
         self.settings_panel.laserChanged.connect(self.set_laser_value)
         self.settings_panel.materialModeChanged.connect(self.set_material_mode)
+        self.settings_panel.colorOpsRequested.connect(lambda: self.confirm_color_ops(force=True))
         self.settings_panel.materialChanged.connect(self.set_material_value)
         self.settings_panel.numbersChanged.connect(self.set_numbers_value)
 
@@ -462,6 +463,9 @@ class UIBuildMixin:
             QDesktopServices.openUrl(QUrl.fromLocalFile(unquote(href[5:])))
         elif href == "opts:":
             self.export(ask=True)
+        elif href == "colorops:":
+            if self.confirm_color_ops(force=True):
+                self.dismiss_banner()
         elif href == "update:":
             self.install_pending_update()
         elif href == "later:":

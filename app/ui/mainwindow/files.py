@@ -246,6 +246,7 @@ class FilesMixin:
             return
         if rep.warnings:
             self._show_warnings(rep.warnings)
+        self._announce_color_ops()
         if not self.parts:
             self.statusBar().showMessage("Nenhuma peça encontrada nos arquivos.", 8000)
         else:
@@ -267,6 +268,20 @@ class FilesMixin:
             f"Unidades ajustadas por arquivo: {details}. Confira as dimensões. "
             "A unidade manual nos parâmetros se aplica ao lote inteiro.", "warn")
         return True
+
+    def _announce_color_ops(self):
+        """Mais de uma cor num material: avisa como cada cor vai sair (corte × gravação) e oferece conferir."""
+        from ...core import operations
+        from ...core.laser import color_name
+        parts = [pt for pt in self.parts if pt.quantity > 0]
+        keys = set(operations.file_colors(parts))
+        if not operations.needs_confirmation(parts) or keys <= self.color_ops_confirmed:
+            return
+        eff = self.effective_color_ops()
+        desc = ", ".join(f"{color_name(a).lower()} → {operations.LABELS[op].lower()}"
+                         for (m, a), op in sorted(eff.items(), key=lambda kv: (kv[0][0], kv[0][1])))
+        self.show_banner(f"O desenho tem mais de uma cor: {desc}. A gravação sai numa camada própria e "
+                         'não é cortada. <a href="colorops:">Conferir cores e operações…</a>', "warn")
 
     def reimport(self):
         if self.files:
@@ -346,6 +361,7 @@ class FilesMixin:
         self.parts_panel.set_request(None)
         self.placements, self.n_sheets, self.unplaced = [], 0, []
         self.cut_sheets, self.done_parts = set(), set()
+        self.color_ops, self.color_ops_confirmed = {}, set()
         self._refresh_cut_panel()
         self.too_big = set()
         self.undo_stack.clear()

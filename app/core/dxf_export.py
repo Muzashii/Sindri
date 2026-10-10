@@ -24,13 +24,23 @@ PLATE_LAYER = "PLACA"
 LABEL_LAYER = "NUMEROS"      # nº da solicitação gravado em cada peça
 
 
-def placed_prims(part: Part, pl: Placement, dx: float = 0.0, inner_first: bool = True) -> list[Prim]:
+def placed_prims(part: Part, pl: Placement, dx: float = 0.0, inner_first: bool = True,
+                 ops: Optional[list[str]] = None) -> list[Prim]:
+    return [pr for pr, _ in placed_prims_ops(part, pl, dx, inner_first, ops)]
+
+
+def placed_prims_ops(part: Part, pl: Placement, dx: float = 0.0, inner_first: bool = True,
+                     ops: Optional[list[str]] = None) -> list[tuple[Prim, str]]:
+    """Primitivas da peça já posicionadas, com a operação de cada uma. Com ``inner_first`` a ordem é:
+    gravação, vinco, furos e, por último, o contorno (a peça só se solta no fim)."""
+    from .operations import order_key, prim_operations
     tf = Transform(pl.rotation, pl.mirrored, pl.x + dx, pl.y)
-    outer = set(part.outer_prim_idx)
+    if ops is None:
+        ops = prim_operations(part)
     idx = list(range(len(part.prims)))
     if inner_first:
-        idx.sort(key=lambda i: (i in outer, i))
-    return [transform_prim(part.prims[i], tf) for i in idx]
+        idx.sort(key=lambda i: (order_key(ops[i]), i))
+    return [(transform_prim(part.prims[i], tf), ops[i]) for i in idx]
 
 
 def order_placements(parts: dict[str, Part], placements: list[Placement], nearest: bool = True) -> list[Placement]:
@@ -374,11 +384,15 @@ def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Plac
                       only_sheets: Optional[set] = None, file_suffix: str = "_todas_placas",
                       remove_overlap: bool = True, stats: Optional[dict] = None,
                       part_labels: Optional[dict] = None, label_aci: int = 1,
-                      label_height: float = 3.0) -> str:
+                      label_height: float = 3.0, op_colors: Optional[dict] = None,
+                      color_ops: Optional[dict] = None) -> str:
     """Um arquivo só (<nome>_todas_placas.dxf) com TODAS as placas de todos os materiais lado a lado,
     na mesma ordem do relatório (materiais separados por um espaço maior). É o que abre no RDWorks.
     ``color_map``: {(material, cor ACI original): cor ACI a gravar} — separa materiais em camadas.
-    ``only_sheets``: exporta só essas placas (índices), mantendo o nº delas ("PLACA 3")."""
+    ``only_sheets``: exporta só essas placas (índices), mantendo o nº delas ("PLACA 3").
+    ``op_colors``: {(material, camada de laser): cor} — modo "uma cor por material": cada primitiva vai para
+    a cor da SUA operação (corte, vinco, gravação), nunca a gravação na cor de corte.
+    ``color_ops``: {(material, cor do arquivo): operação} escolhida pelo técnico (padrão: veja operations)."""
     pmap = parts if isinstance(parts, dict) else {p.id: p for p in parts}
     os.makedirs(out_dir, exist_ok=True)
     doc = _new_doc(version)
@@ -388,6 +402,9 @@ def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Plac
     idx = SheetIndex(pmap, placements)
     first = True
     solid_cache: dict = {}
+    ops_cache: dict = {}
+    from .laser import export_aci
+    from .operations import is_text, layer_op, prim_operations
     for mat, sis in idx.groups:
         sis = [si for si in sis if only_sheets is None or si in only_sheets]
         if not sis:
@@ -408,12 +425,17 @@ def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Plac
             sheet_prims = []
             for pl in seq:
                 part = pmap[pl.part_id]
-                for pr in placed_prims(part, pl, dx, inner_first):
-                    if color_map:
-                        from .laser import export_aci
+                if part.id not in ops_cache:
+                    ops_cache[part.id] = prim_operations(part, color_ops)
+                for pr, op in placed_prims_ops(part, pl, dx, inner_first, ops_cache[part.id]):
+                    target = None
+                    if op_colors is not None:
+                        if not is_text(pr):
+                            target = op_colors.get((part.material or "", layer_op(op)))
+                    elif color_map:
                         target = color_map.get((part.material or "", export_aci(pr)))
-                        if target:
-                            pr.color, pr.rgb = target, None
+                    if target:
+                        pr.color, pr.rgb = target, None
                     sheet_prims.append(pr)
             if part_labels:
                 # números primeiro: gravar antes de cortar (a peça solta pode se mexer)
