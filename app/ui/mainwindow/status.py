@@ -141,22 +141,31 @@ class StatusMixin:
         from ..accessibility import announce
         announce(self.status_label, "Estado do encaixe: " + txt)
 
+    def _nest_icon(self):
+        """Ícone do botão Encaixar na cor do texto do estilo atual (branco nos botões cheios)."""
+        from ..theme import tokens
+        t = tokens()
+        running = self.worker is not None
+        filled = running or self.btn_nest.objectName() == "primary"
+        self.btn_nest.setIcon(icon("stop" if running else ("play" if not self.placements else "reset"),
+                                   "#ffffff" if filled else t["text"], 14, t["muted"]))
+
     def _update_buttons(self):
         running = self.worker is not None
         has_parts = bool(self.parts)
         self.btn_nest.setEnabled(has_parts)
-        from ..theme import tokens as _tk
-        self.btn_nest.setIcon(icon("stop" if running else "play", "#ffffff", 14, _tk()["muted"]))
         if running:
             self.btn_nest.setText("Parar  (Esc)")
             self.btn_nest.setObjectName("danger")
             self.btn_nest.setToolTip("Para e mantém a melhor solução encontrada (Esc)")
         else:
             self.btn_nest.setText("Encaixar" if not self.placements else "Encaixar de novo")
-            self.btn_nest.setObjectName("primary")
+            # antes do 1º encaixe "Encaixar" é a ação principal; depois, a principal passa a ser Exportar
+            self.btn_nest.setObjectName("primary" if not self.placements else "")
             self.btn_nest.setToolTip("Organiza as peças automaticamente (Espaço). Peças travadas ficam onde estão.")
         self.btn_nest.style().unpolish(self.btn_nest)
         self.btn_nest.style().polish(self.btn_nest)
+        self._nest_icon()
         self.btn_pause.setVisible(running)
         self.btn_pause.setEnabled(running)
         self.btn_stop.setVisible(False)

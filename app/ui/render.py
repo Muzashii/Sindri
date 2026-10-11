@@ -108,9 +108,16 @@ def clear_graphics_cache():
     _graphics_cache.clear()
 
 
-def thumbnail(part: Part, size: int = 56, dark: bool = False) -> QPixmap:
-    pm = QPixmap(size, size)
+def thumbnail(part: Part, size: int = 56, dark: bool = False, height: int | None = None,
+              mdf: bool = False) -> QPixmap:
+    """Miniatura da peça. ``mdf``: preenchida como a chapa de MDF, com o contorno de corte em marrom
+    (as outras cores do desenho, como gravação, continuam com a cor original)."""
+    from . import theme
+    w, h = size, height or size
+    scale = 2                                    # nítida em telas com zoom do Windows
+    pm = QPixmap(w * scale, h * scale)
     pm.fill(Qt.transparent)
+    pm.setDevicePixelRatio(scale)
     g = part_graphics(part)
     r = g.rect
     if r.isEmpty():
@@ -118,16 +125,22 @@ def thumbnail(part: Part, size: int = 56, dark: bool = False) -> QPixmap:
     painter = QPainter(pm)
     painter.setRenderHint(QPainter.Antialiasing)
     pad = 4
-    s = min((size - 2 * pad) / max(r.width(), 1e-6), (size - 2 * pad) / max(r.height(), 1e-6))
-    painter.translate(size / 2, size / 2)
+    s = min((w - 2 * pad) / max(r.width(), 1e-6), (h - 2 * pad) / max(r.height(), 1e-6))
+    painter.translate(w / 2, h / 2)
     painter.scale(s, -s)
     painter.translate(-r.center().x(), -r.center().y())
-    fillc = QColor(g.color)
-    fillc.setAlpha(60)
-    painter.fillPath(g.fill, QBrush(fillc))
+    t = theme.tokens()
+    if mdf:
+        painter.fillPath(g.fill, QBrush(QColor(t.get("mdf", "#d9bc92"))))
+    else:
+        fillc = QColor(g.color)
+        fillc.setAlpha(60)
+        painter.fillPath(g.fill, QBrush(fillc))
+    outer = QColor(g.color)
     for col, path in g.lines:
-        from . import theme
-        pen = QPen(theme.line_color(col, dark), 0)
+        c = (QColor(t.get("mdf_line", "#7c2d12")) if mdf and (col == outer or col.lightness() < 60)
+             else theme.line_color(col, dark))
+        pen = QPen(c, 1.2 if mdf else 0)
         pen.setCosmetic(True)
         painter.setPen(pen)
         painter.drawPath(path)
@@ -136,6 +149,6 @@ def thumbnail(part: Part, size: int = 56, dark: bool = False) -> QPixmap:
         pen.setCosmetic(True)
         painter.setPen(pen)
         painter.resetTransform()
-        painter.drawRect(1, 1, size - 2, size - 2)
+        painter.drawRect(1, 1, w - 2, h - 2)
     painter.end()
     return pm

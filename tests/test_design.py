@@ -167,22 +167,45 @@ def test_buttons_follow_one_pattern(window):
 
 
 @pytest.mark.parametrize("width", [1024, 1440])
-def test_part_rows_keep_buttons_whole(window, width):
-    """Peça com medida larga ("59,4 × 150,4 mm") não empurra Feito/Rotação fixa para fora da linha."""
+def test_part_cards_grid_two_columns_and_whole(window, width):
+    """Peças em grade de 2 colunas; ✓ de feita, nome, ×quantidade e medida inteiros no cartão."""
     from app.ui.parts_panel import PartRow
     window.load_files([str(Path(__file__).parent / "fixtures" / "exemplo_lab.dxf")])
     window.resize(width, 760)
-    QApplication.processEvents()
-    rows = window.parts_panel.findChildren(PartRow)
-    assert rows
+    QTest.qWait(50)
+    lst = window.parts_panel.list
+    rows = window.parts_panel.rows
+    assert len(rows) == 5
+    xs = {lst.visualItemRect(lst.item(i)).x() for i in range(len(rows))}
+    assert len(xs) == 2, (width, xs)
     for row in rows:
-        for w in (row.done_btn, row.lock, row.spin):
-            right = w.mapTo(row, w.rect().topRight()).x()
-            assert right <= row.width(), (width, row.full_name, type(w).__name__, right, row.width())
-        b = row.done_btn
-        assert b.width() >= (70 if b.toolButtonStyle() == Qt.ToolButtonTextBesideIcon else 30)
-        sub = next(lb for lb in row.findChildren(type(row.name)) if lb.objectName() == "PartSub")
+        assert isinstance(row, PartRow)
+        right = row.done_btn.mapTo(row, row.done_btn.rect().topRight()).x()
+        assert right <= row.width(), (width, row.full_name)
+        assert row.qty.text() == f"×{row.part.quantity}"
+        sub = row._sub
         assert sub.width() >= sub.fontMetrics().horizontalAdvance(sub.text()), (width, sub.text(), sub.width())
+    # o cartão "Adicionar DXF" fecha a grade e não vira seleção de peça
+    assert lst.count() == len(rows) + 1 and not lst.item(len(rows)).flags() & Qt.ItemIsSelectable
+
+
+def test_part_detail_edits_selected_part(window):
+    """Quantidade e rotação fixa da peça selecionada mudam pelo bloco de baixo (e o cartão acompanha)."""
+    window.load_files([str(Path(__file__).parent / "fixtures" / "exemplo_lab.dxf")])
+    QApplication.processEvents()
+    panel = window.parts_panel
+    assert panel.detail.part is None and not panel.detail.body.isVisibleTo(panel)
+    panel.list.setCurrentRow(1)
+    part = panel.rows[1].part
+    assert panel.detail.part is part and panel.detail.body.isVisibleTo(panel)
+    q = part.quantity
+    QTest.mouseClick(panel.detail.btn_plus, Qt.LeftButton)
+    assert part.quantity == q + 1 and panel.rows[1].qty.text() == f"×{q + 1}"
+    window.undo()
+    QApplication.processEvents()
+    assert part.quantity == q and panel.rows[1].qty.text() == f"×{q}"
+    panel.detail.lock.setChecked(True)
+    assert part.rotation_locked and not panel.rows[1].lock_mark.isHidden()
 
 
 def test_canvas_refits_on_resize_until_user_zooms(window):

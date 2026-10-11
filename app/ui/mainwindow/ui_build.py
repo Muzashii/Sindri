@@ -59,7 +59,13 @@ class UIBuildMixin:
         self.mode_tabs.setUsesScrollButtons(False)       # as 3 abas sempre inteiras (nunca "· ·")
         self.mode_tabs.setElideMode(Qt.ElideNone)
         self.mode_tabs.currentChanged.connect(self.set_mode)
-        tl.addWidget(self.mode_tabs)
+        self.mode_tabs.setObjectName("ModeTabs")
+        track = QFrame()
+        track.setObjectName("ModeTrack")
+        trl = QHBoxLayout(track)
+        trl.setContentsMargins(3, 3, 3, 3)
+        trl.addWidget(self.mode_tabs)
+        tl.addWidget(track)
         self._mode_sep = self._vsep()
         tl.addWidget(self._mode_sep)
         self.btn_open = QPushButton("Abrir DXF")
@@ -73,6 +79,9 @@ class UIBuildMixin:
         self.btn_intranet.clicked.connect(lambda: self.open_intranet())
         for button in (self.btn_open, self.btn_intranet, self.btn_save):
             button.setObjectName("ToolbarAction")
+            button.setAccessibleName(button.text())
+            button.setText("")
+            button.setFixedSize(36, 36)
         tl.addWidget(self.btn_open)
         tl.addWidget(self.btn_intranet)
         tl.addWidget(self.btn_save)
@@ -104,14 +113,14 @@ class UIBuildMixin:
         self.btn_stop.setToolTip("Para e mantém a melhor solução encontrada (Esc)")
         self.btn_stop.clicked.connect(lambda: self.stop_nest())
         self.btn_export = QPushButton("Exportar para RDWorks")
-        self.btn_export.setObjectName("success")
+        self.btn_export.setObjectName("primary")
         self.btn_export.setToolTip("Gera o arquivo com todas as placas + relatório e abre no RDWorks (Ctrl+E).\n"
                                    "Ctrl+Shift+E: escolher pasta e opções.")
         self.btn_export.clicked.connect(lambda: self.export())
         # seta ao lado: escolher uma placa só
         from PySide6.QtWidgets import QMenu
         self.btn_export_menu = QPushButton("▾")
-        self.btn_export_menu.setObjectName("success")
+        self.btn_export_menu.setObjectName("primary")
         self.btn_export_menu.setFixedWidth(34)
         self.btn_export_menu.setToolTip("Exportar só uma placa (Ctrl+Alt+E: a placa que está na tela)")
         self._export_menu = QMenu(self)
@@ -126,7 +135,7 @@ class UIBuildMixin:
             na.addWidget(w)
         na.addWidget(self._vsep())
         exp = QHBoxLayout()
-        exp.setSpacing(2)
+        exp.setSpacing(1)
         exp.addWidget(self.btn_export)
         exp.addWidget(self.btn_export_menu)
         na.addLayout(exp)
@@ -145,6 +154,7 @@ class UIBuildMixin:
         self.parts_panel.btn_kits.clicked.connect(self.multiply_kits)
         self.parts_panel.btn_reset.clicked.connect(self.reset_quantities)
         self.parts_panel.btn_clear.clicked.connect(lambda: self.clear_all())
+        self.parts_panel.addRequested.connect(lambda: self.open_dxf_dialog(add=True))
 
         # ---------------- área central (cartão com abas, canvas e navegação)
         outer = QWidget()
@@ -417,7 +427,7 @@ class UIBuildMixin:
         self.btn_save.setIcon(icon("save", c, 16, m))
         self.btn_intranet.setIcon(icon("export", c, 16, m))
         self.btn_gear.setIcon(icon("settings", m, 17))
-        self.btn_nest.setIcon(icon("play", "#ffffff", 14, m))
+        self._nest_icon()
         paused = self.worker is not None and self.worker.pause_event.is_set()
         self.btn_pause.setIcon(icon("play" if paused else "pause", c, 14, m))
         self.btn_stop.setIcon(icon("stop", c, 14, m))
@@ -598,11 +608,9 @@ class UIBuildMixin:
         if not force and (compact, tiny) == getattr(self, "_width_mode", None):
             return
         self._width_mode = (compact, tiny)
-        for b, txt in ((self.btn_open, "Abrir DXF"), (self.btn_intranet, "Intranet FIAP"), (self.btn_save, "Salvar encaixe")):
-            b.setText("" if compact else txt)
         self.btn_export.setText("Exportar" if compact else "Exportar para RDWorks")
         self.preset_combo.setMinimumWidth(170 if compact else 230)
-        self.plate_lbl.setVisible(not compact and self.mode_tabs.currentIndex() != 2)
+        self.plate_lbl.setVisible(False)            # o seletor de placa já diz o que é (sem rótulo "Placa")
         self.btn_nest.setMinimumWidth(0 if compact else 130)
         self.mode_tabs.setTabText(1, "Foto" if compact else "Gravação de foto")
         self.logo_lbl.setVisible(not tiny)          # telas pequenas: só o ícone (sobra lugar para as 3 abas)
@@ -642,10 +650,8 @@ class UIBuildMixin:
         # a placa vale para encaixe e foto (o gerador de caixas tem material próprio)
         for widget in (self.btn_open, self.btn_intranet, self.btn_save, self._file_sep):
             widget.setVisible(i == 0)
-        for widget in (self.plate_lbl, self.preset_combo, self.btn_gear, self._mode_sep):
+        for widget in (self.preset_combo, self.btn_gear, self._mode_sep):
             widget.setVisible(i != 2)
-        if getattr(self, "_width_mode", (False, False))[0]:
-            self.plate_lbl.setVisible(False)
         # mensagens da barra de status são de um modo só ("Encaixe concluído… Ctrl+E" não vale na Foto)
         self.statusBar().clearMessage()
         if i == 1:

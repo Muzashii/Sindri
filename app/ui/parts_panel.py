@@ -1,8 +1,8 @@
-"""Painel lateral de peças: cartões com miniatura, medidas, quantidade e trava de rotação."""
+"""Painel lateral de peças: grade de cartões (miniatura, ×quantidade, medida) e bloco da peça selecionada."""
 from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QFrame, QGridLayout, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QStyle, QFrame, QGridLayout, QHBoxLayout, QLabel,
                                QListWidget, QListWidgetItem, QPushButton, QSpinBox, QToolButton, QVBoxLayout,
                                QWidget)
 
@@ -23,98 +23,85 @@ def _fmt_list(v: float) -> str:
 
 
 class PartRow(QFrame):
+    """Cartão de uma peça na grade: miniatura, nome, quantidade (×N), medida e o ✓ de "feita".
+
+    Quantidade e rotação fixa são editadas no bloco da peça selecionada (``PartDetail``)."""
+    THUMB_H = 54
+
     def __init__(self, part: Part, warns: list[str], dark: bool, panel: PartsPanel):
         super().__init__()
         self.warns = list(warns)
         self.setObjectName("PartRow")
         self.part = part
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(8, 6, 8, 6)
-        lay.setSpacing(10)
-
-        th = QLabel()
-        th.setObjectName("Thumb")
-        th.setFixedSize(theme.metric("thumb"), theme.metric("thumb"))
-        th.setAlignment(Qt.AlignCenter)
-        th.setPixmap(thumbnail(part, theme.metric("thumb") - 6, dark))
-        lay.addWidget(th)
-
-        info = QVBoxLayout()
-        info.setSpacing(2)
-        # linha 1: nome (cortado com "…" se não couber; o nome inteiro fica na dica)
-        self.full_name = part.name.split(" (")[0]
-        self.name = QLabel(self.full_name)
-        self.name.setObjectName("PartName")
-        self.name.setMinimumWidth(40)
+        self.panel = panel
+        self.dark = dark
         from PySide6.QtWidgets import QSizePolicy
-        self.name.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        info.addWidget(self.name)
-        # linha 2: material + aviso
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(8, 8, 8, 8)
+        lay.setSpacing(4)
+
+        # linha de cima: material, aviso, rotação fixa e o ✓ de feita
         top = QHBoxLayout()
-        top.setSpacing(6)
+        top.setSpacing(4)
         if part.material:
             chip = QLabel(part.material)
             chip.setObjectName("MatChip")
             chip.setStyleSheet(f"background: {theme.material_color(part.material).name()};")
-            chip.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-            top.addWidget(chip)
+            chip.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+            chip.setMinimumWidth(24)
+            chip.setToolTip(part.material)
+            top.addWidget(chip, 1)
+        else:
+            top.addStretch(1)
         if warns:
-            b = QLabel("⚠ aviso")
+            b = QLabel("⚠")
             b.setObjectName("Badge")
             b.setToolTip("\n".join(warns))
+            b.setAccessibleName("Aviso: " + "; ".join(warns))
             top.addWidget(b)
-        top.addStretch(1)
-        if part.material or warns:
-            info.addLayout(top)
-        w, h = part.size
-        # na lista, medida em mm inteiros (décimos na dica): "59,4 × 150,4 mm" empurrava os botões
-        # para fora da linha ("Feito" virava "…o"); o rótulo também cede espaço em vez de empurrar
-        sub = QLabel(f"{_fmt_list(w)} × {_fmt_list(h)} mm")
-        sub.setObjectName("PartSub")
-        sub.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        sub.setMinimumWidth(40)
-        self._sub = sub
-        info.addWidget(sub)
-        extra = [f"{part.file_quantity}× no arquivo"] + ([f"{len(part.holes)} furo(s)"] if part.holes else [])
-        # Os detalhes de origem permanecem na dica, liberando altura na lista.
-        sub.setToolTip(f"{_fmt(w)} × {_fmt(h)} mm · " + " · ".join(extra))
-        lay.addLayout(info, 1)
-
-        ctl = QVBoxLayout()
-        ctl.setSpacing(4)
-        self.spin = QSpinBox()
-        self.spin.setRange(0, 9999)
-        self.spin.setValue(part.quantity)
-        self.spin.setFixedWidth(54)
-        self.spin.setAlignment(Qt.AlignCenter)
-        self.spin.setToolTip("Quantidade a cortar")
-        self.spin.setAccessibleName(f"Quantidade de {part.name}")
-        self.spin.valueChanged.connect(lambda v: panel.quantityChanged.emit(part.id, v))
-        quick = QHBoxLayout()
-        quick.setSpacing(4)
-        quick.addWidget(self.spin)
-        self.lock = QCheckBox("Rotação fixa")
-        self.lock.setChecked(part.rotation_locked)
-        self.lock.setToolTip("Travar rotação: a peça nunca será girada\n(útil para veio da madeira ou gravações)")
-        self._lock_icon()
-        self.lock.toggled.connect(self._lock_toggled)
-        self.lock.setAccessibleDescription("Quando marcada, a peça não gira no encaixe automático.")
-        self.lock.setMinimumWidth(104)
-        self.panel = panel
-        ctl.addWidget(self.lock)
+        self.lock_mark = QLabel()
+        self.lock_mark.setToolTip("Rotação fixa: a peça não gira no encaixe")
+        self.lock_mark.setVisible(part.rotation_locked)
+        top.addWidget(self.lock_mark)
         self.done_btn = QToolButton()
         self.done_btn.setObjectName("DoneButton")
         self.done_btn.setCheckable(True)
-        self.done_btn.setText(" Feito")
         self.done_btn.setAccessibleName(f"Marcar {part.name} como feita")
         self.done_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        self.done_btn.setFixedWidth(70)
         self.done_btn.setToolTip("Marque quando esta peça já tiver sido cortada")
         self.done_btn.toggled.connect(self._done_toggled)
-        quick.addWidget(self.done_btn)
-        ctl.insertLayout(0, quick)
-        lay.addLayout(ctl)
-        self._done_icon()
+        top.addWidget(self.done_btn)
+        lay.addLayout(top)
+
+        self.thumb = QLabel()
+        self.thumb.setObjectName("Thumb")
+        self.thumb.setAlignment(Qt.AlignCenter)
+        self.thumb.setFixedHeight(self.THUMB_H)
+        self.thumb.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        lay.addWidget(self.thumb)
+
+        mid = QHBoxLayout()
+        mid.setSpacing(4)
+        self.full_name = part.name.split(" (")[0]
+        self.name = QLabel(self.full_name)
+        self.name.setObjectName("PartName")
+        self.name.setMinimumWidth(30)
+        self.name.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.qty = QLabel()
+        self.qty.setObjectName("PartQty")
+        self.qty.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        mid.addWidget(self.name, 1)
+        mid.addWidget(self.qty)
+        lay.addLayout(mid)
+        w, h = part.size
+        sub = QLabel(f"{_fmt_list(w)} × {_fmt_list(h)} mm")
+        sub.setObjectName("PartSub")
+        sub.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        extra = [f"{part.file_quantity}× no arquivo"] + ([f"{len(part.holes)} furo(s)"] if part.holes else [])
+        sub.setToolTip(f"{_fmt(w)} × {_fmt(h)} mm · " + " · ".join(extra))
+        self._sub = sub
+        lay.addWidget(sub)
+        self.set_quantity(part.quantity)
 
         tips = [part.name, f"{_fmt(w)} × {_fmt(h)} mm · área {part.area / 100:.1f} cm²",
                 f"Arquivo: {part.source_file.replace(chr(92), '/').split('/')[-1]}"]
@@ -122,23 +109,34 @@ class PartRow(QFrame):
             tips += [""] + ["⚠ " + x for x in warns]
             self.setProperty("warn", True)
         self.setToolTip("\n".join(tips))
+        self.setAccessibleName(f"{part.name}, {part.quantity} unidade(s), {_fmt(w)} por {_fmt(h)} milímetros")
+        self._done_icon()
+        self._refresh_pixmaps()
 
-    def _lock_icon(self):
-        self.lock.setAccessibleName(f"Rotação fixa de {self.part.name}")
+    def _refresh_pixmaps(self):
+        t = theme.tokens()
+        from .icons import pixmap
+        self.lock_mark.setPixmap(pixmap("lock", t["muted"], 13))
+        width = max(40, self.thumb.width() or 110)
+        self.thumb.setPixmap(thumbnail(self.part, width, self.dark, self.THUMB_H, mdf=True))
+        self._thumb_w = width
 
-    def _lock_toggled(self, v: bool):
-        self._lock_icon()
-        self.panel.rotationLockChanged.emit(self.part.id, v)
+    def set_quantity(self, q: int):
+        self.qty.setText(f"×{q}")
+        self.qty.setAccessibleName(f"{q} unidade(s)")
+
+    def set_rotation_locked(self, on: bool):
+        self.lock_mark.setVisible(on)
 
     def _done_icon(self):
         on = self.done_btn.isChecked()
-        self.done_btn.setIcon(icon("check", "#ffffff" if on else theme.tokens()["muted"], 14))
+        self.done_btn.setIcon(icon("check", "#ffffff" if on else theme.tokens()["muted"], 13))
         prog = getattr(self, "_progress", None)
         if on or not prog or prog[0] == 0:
-            self.done_btn.setText(" Feito")
-            self.done_btn.setToolTip("Marque quando esta peça já tiver sido cortada")
+            self.done_btn.setText("")
+            self.done_btn.setToolTip("Feita: marque quando esta peça já tiver sido cortada")
         else:
-            self.done_btn.setText(f" {prog[0]}/{prog[1]}")
+            self.done_btn.setText(f"{prog[0]}/{prog[1]}")
             self.done_btn.setToolTip(f"{prog[0]} de {prog[1]} cópias já estão em placas cortadas.\n"
                                      "Clique para marcar a peça inteira como feita.")
 
@@ -163,7 +161,7 @@ class PartRow(QFrame):
 
     def set_done(self, v: bool):
         if self.property("done") == v and self.done_btn.isChecked() == v:
-            return                                   # nada mudou: evita repintar a linha
+            return                                   # nada mudou: evita repintar o cartão
         if self.done_btn.isChecked() != v:
             self.done_btn.blockSignals(True)
             self.done_btn.setChecked(v)
@@ -172,18 +170,8 @@ class PartRow(QFrame):
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
-        # linha estreita (janela de ~1024 px): "Feito" vira só o ✓ para a medida da peça continuar legível
-        m = self.layout().contentsMargins()
-        free = (self.width() - m.left() - m.right() - theme.metric("thumb") - 2 * 10
-                - max(104, 54 + 4 + 70))                  # largura do texto com os controles inteiros
-        # mesmo limite para todas as linhas (medida típica de 3 dígitos), para a lista não ficar desigual
-        compact = free < self._sub.fontMetrics().horizontalAdvance("000 × 000 mm")
-        if compact != getattr(self, "_compact_done", None):
-            self._compact_done = compact
-            self.done_btn.setToolButtonStyle(Qt.ToolButtonIconOnly if compact else Qt.ToolButtonTextBesideIcon)
-            self.done_btn.setFixedWidth(34 if compact else 70)
-            self.lock.setMinimumWidth(self.lock.sizeHint().width() if compact else 104)
-            self.layout().setSpacing(6 if compact else 10)
+        if abs(self.thumb.width() - getattr(self, "_thumb_w", 0)) > 4:
+            self._refresh_pixmaps()
         fm = self.name.fontMetrics()
         self.name.setText(fm.elidedText(self.full_name, Qt.ElideRight, max(30, self.name.width())))
 
@@ -191,6 +179,114 @@ class PartRow(QFrame):
         self.setProperty("selected", sel)
         self.style().unpolish(self)
         self.style().polish(self)
+
+
+class PartDetail(QFrame):
+    """Peça selecionada: quantidade (− / +), rotação fixa e avisos."""
+
+    def __init__(self, panel: PartsPanel):
+        super().__init__()
+        self.setObjectName("PartDetail")
+        self.panel = panel
+        self.part: Part | None = None
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(12, 10, 12, 10)
+        lay.setSpacing(8)
+        self.title = QLabel()
+        self.title.setObjectName("PartName")
+        from PySide6.QtWidgets import QSizePolicy
+        self.title.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        lay.addWidget(self.title)
+        self.hint = QLabel("Selecione uma peça para mudar a quantidade ou travar a rotação.")
+        self.hint.setObjectName("Muted")
+        self.hint.setWordWrap(True)
+        lay.addWidget(self.hint)
+        self.body = QWidget()
+        bl = QVBoxLayout(self.body)
+        bl.setContentsMargins(0, 0, 0, 0)
+        bl.setSpacing(8)
+        row = QHBoxLayout()
+        lab = QLabel("Quantidade")
+        row.addWidget(lab, 1)
+        stepper = QFrame()
+        stepper.setObjectName("Stepper")
+        sl = QHBoxLayout(stepper)
+        sl.setContentsMargins(1, 1, 1, 1)
+        sl.setSpacing(0)
+        self.btn_minus = QToolButton()
+        self.btn_minus.setObjectName("StepButton")
+        self.btn_minus.setText("−")
+        self.btn_minus.setAccessibleName("Diminuir quantidade")
+        self.btn_minus.setAutoRepeat(True)
+        self.spin = QSpinBox()
+        self.spin.setRange(0, 9999)
+        self.spin.setButtonSymbols(QSpinBox.NoButtons)
+        self.spin.setAlignment(Qt.AlignCenter)
+        self.spin.setFixedWidth(56)
+        self.spin.setStyleSheet("QSpinBox { border: none; background: transparent; padding: 2px; }")
+        self.spin.setToolTip("Quantidade a cortar")
+        lab.setBuddy(self.spin)
+        self.btn_plus = QToolButton()
+        self.btn_plus.setObjectName("StepButton")
+        self.btn_plus.setText("+")
+        self.btn_plus.setAccessibleName("Aumentar quantidade")
+        self.btn_plus.setAutoRepeat(True)
+        self.btn_minus.clicked.connect(lambda: self.spin.stepDown())
+        self.btn_plus.clicked.connect(lambda: self.spin.stepUp())
+        for w in (self.btn_minus, self.spin, self.btn_plus):
+            sl.addWidget(w)
+        row.addWidget(stepper)
+        bl.addLayout(row)
+        self.lock = QCheckBox("Rotação fixa (veio da madeira)")
+        self.lock.setToolTip("Travar rotação: a peça nunca será girada\n(útil para veio da madeira ou gravações)")
+        self.lock.setAccessibleDescription("Quando marcada, a peça não gira no encaixe automático.")
+        bl.addWidget(self.lock)
+        self.warn = QLabel()
+        self.warn.setObjectName("InlineWarning")
+        self.warn.setWordWrap(True)
+        bl.addWidget(self.warn)
+        lay.addWidget(self.body)
+        self.spin.valueChanged.connect(self._qty)
+        self.lock.toggled.connect(self._locked)
+        self.bind(None)
+
+    def bind(self, row: PartRow | None):
+        self._row = row
+        self.part = row.part if row is not None else None
+        on = self.part is not None
+        self.title.setVisible(on)
+        self.body.setVisible(on)
+        self.hint.setVisible(not on)
+        if not on:
+            return
+        p = self.part
+        fm = self.title.fontMetrics()
+        self.title.setText(fm.elidedText(row.full_name, Qt.ElideRight, max(80, self.width() - 24)))
+        self.title.setToolTip(p.name)
+        for w, v in ((self.spin, p.quantity), (self.lock, p.rotation_locked)):
+            w.blockSignals(True)
+            (w.setValue if w is self.spin else w.setChecked)(v)
+            w.blockSignals(False)
+        self.spin.setAccessibleName(f"Quantidade de {p.name}")
+        self.lock.setAccessibleName(f"Rotação fixa de {p.name}")
+        self.warn.setText("\n".join("⚠ " + x for x in row.warns))
+        self.warn.setVisible(bool(row.warns))
+
+    def _qty(self, v: int):
+        if self._row is None:
+            return
+        self._row.set_quantity(v)
+        self.panel.quantityChanged.emit(self.part.id, v)
+
+    def _locked(self, v: bool):
+        if self._row is None:
+            return
+        self._row.set_rotation_locked(v)
+        self.panel.rotationLockChanged.emit(self.part.id, v)
+
+    def set_editing(self, on: bool):
+        for w in (self.spin, self.btn_minus, self.btn_plus, self.lock):
+            w.setEnabled(on)
 
 
 class PartsPanel(QWidget):
@@ -201,15 +297,21 @@ class PartsPanel(QWidget):
     requestFilter = Signal(str)           # mostrar só as peças de uma solicitação ("" = todas)
     sheetToggled = Signal(int, bool)      # placa marcada como cortada
     sheetOpenRequested = Signal(int)      # abrir só o arquivo desta placa no RDWorks
+    addRequested = Signal()               # cartão "Adicionar DXF"
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(12, 12, 6, 12)
-        lay.setSpacing(8)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(12, 12, 0, 12)
+        frame = QFrame()
+        frame.setObjectName("PanelCard")
+        outer.addWidget(frame)
+        lay = QVBoxLayout(frame)
+        lay.setContentsMargins(12, 14, 12, 12)
+        lay.setSpacing(10)
         head = QHBoxLayout()
         title = QLabel("Peças")
-        title.setObjectName("SectionTitle")
+        title.setObjectName("PanelHeading")
         head.addWidget(title)
         head.addStretch(1)
         self.btn_clear = QToolButton()
@@ -267,12 +369,22 @@ class PartsPanel(QWidget):
         self.summary.setWordWrap(True)
         lay.addWidget(self.summary)
 
+        # grade de 2 colunas de cartões (o último é "Adicionar DXF")
         self.list = QListWidget()
+        self.list.setViewMode(QListWidget.IconMode)
+        self.list.setMovement(QListWidget.Static)
+        self.list.setResizeMode(QListWidget.Adjust)
+        self.list.setWrapping(True)
+        self.list.setSpacing(0)
         self.list.setSelectionMode(QAbstractItemView.SingleSelection)
         self.list.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.list.setAccessibleName("Peças do encaixe")
         self.list.currentRowChanged.connect(self._sel)
+        self.list.viewport().installEventFilter(self)
         lay.addWidget(self.list, 1)
+        self.detail = PartDetail(self)
+        lay.addWidget(self.detail)
 
         self.empty = QLabel("Abra ou arraste um arquivo DXF\npara ver as peças aqui.")
         self.empty.setObjectName("Muted")
@@ -362,9 +474,7 @@ class PartsPanel(QWidget):
 
     def set_editing(self, on: bool):
         """Quantidades e trava de rotação só podem mudar com o encaixe parado."""
-        for r in self.rows:
-            r.spin.setEnabled(on)
-            r.lock.setEnabled(on)
+        self.detail.set_editing(on)
         self.btn_kits.setEnabled(on and bool(self.parts))
         self.btn_reset.setEnabled(on and bool(self.parts))
 
@@ -479,6 +589,7 @@ class PartsPanel(QWidget):
     def _update_empty(self):
         has = bool(self.parts)
         self.list.setVisible(has)
+        self.detail.setVisible(has)
         self.empty.setVisible(not has)
         self.btn_kits.setEnabled(has)
         self.btn_reset.setEnabled(has)
@@ -487,8 +598,33 @@ class PartsPanel(QWidget):
     def _sel(self, row: int):
         for i, r in enumerate(self.rows):
             r.set_selected(i == row)
+        self.detail.bind(self.rows[row] if 0 <= row < len(self.rows) else None)
         if 0 <= row < len(self.parts):
             self.partSelected.emit(self.parts[row].id)
+
+    # ---- grade: 2 colunas que acompanham a largura do painel
+    def eventFilter(self, obj, ev):
+        from PySide6.QtCore import QEvent
+        if obj is self.list.viewport() and ev.type() == QEvent.Resize:
+            self._layout_cards()
+        return False
+
+    def _layout_cards(self):
+        n = self.list.count()
+        if not n:
+            return
+        gap = 8
+        vw = self.list.viewport().width()
+        # 2 colunas: no modo grade o Qt desconta a barra de rolagem mais uma vez ao quebrar as linhas,
+        # então a conta reserva essa folga (senão sobra só 1 coluna)
+        reserve = self.list.style().pixelMetric(QStyle.PM_ScrollBarExtent) + 2
+        w = max(96, (vw - reserve - 2 * gap) // 2)
+        h = max((self.list.itemWidget(self.list.item(i)).sizeHint().height()
+                 for i in range(n) if self.list.itemWidget(self.list.item(i)) is not None), default=120)
+        for i in range(n):
+            self.list.item(i).setSizeHint(QSize(w, h))
+        self.list.setGridSize(QSize(w + gap, h + gap))
+        self.list.doItemsLayout()
 
     def set_seals(self, seals: dict):
         """Selo (OK / atenção / bloqueado) de cada solicitação, mostrado no cartão do lote."""
@@ -512,17 +648,29 @@ class PartsPanel(QWidget):
                              "Aumente a placa, reduza a margem ou confira a unidade do DXF.")
             row = PartRow(p, warns, self.dark, self)
             if p.tag in cols:
-                row.setStyleSheet(f"QFrame#PartRow {{ border-left: 5px solid {cols[p.tag].name()}; }}")
+                row.setStyleSheet(f"QFrame#PartRow {{ border-top: 4px solid {cols[p.tag].name()}; }}")
             it = QListWidgetItem()
-            it.setSizeHint(QSize(10, row.sizeHint().height() + 6))
+            it.setSizeHint(QSize(120, row.sizeHint().height()))
             self.list.addItem(it)
             self.list.setItemWidget(it, row)
             self.rows.append(row)
+        if parts:
+            add = QPushButton("+\nAdicionar DXF")
+            add.setObjectName("AddTile")
+            add.setToolTip("Adicionar mais arquivos DXF (Ctrl+Shift+O); as peças entram junto com as atuais")
+            add.setAccessibleName("Adicionar DXF")
+            add.clicked.connect(self.addRequested.emit)
+            it = QListWidgetItem()
+            it.setFlags(Qt.ItemIsEnabled)
+            self.list.addItem(it)
+            self.list.setItemWidget(it, add)
+        self._layout_cards()
         if 0 <= cur < len(self.rows):
             self.list.blockSignals(True)
             self.list.setCurrentRow(cur)
             self.list.blockSignals(False)
             self.rows[cur].set_selected(True)
+        self.detail.bind(self.rows[cur] if 0 <= cur < len(self.rows) else None)
         done = getattr(self, "_done", set())
         prog = getattr(self, "_progress", {})
         for r in self.rows:
@@ -542,9 +690,11 @@ class PartsPanel(QWidget):
     def set_quantity(self, pid: str, q: int):
         for r in self.rows:
             if r.part.id == pid:
-                r.spin.blockSignals(True)
-                r.spin.setValue(q)
-                r.spin.blockSignals(False)
+                r.set_quantity(q)
+        if self.detail.part is not None and self.detail.part.id == pid:
+            self.detail.spin.blockSignals(True)
+            self.detail.spin.setValue(q)
+            self.detail.spin.blockSignals(False)
 
     def update_summary(self, placed=None, too_big: set[str] | None = None):
         if not self.parts:
@@ -568,5 +718,6 @@ class PartsPanel(QWidget):
                 self.list.blockSignals(False)
                 for j, r in enumerate(self.rows):
                     r.set_selected(i == j)
+                self.detail.bind(self.rows[i])
                 self.list.scrollToItem(self.list.item(i))
                 return

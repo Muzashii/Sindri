@@ -90,6 +90,30 @@ def image_file(name: str, color: str, size: int = 14, stroke: float = 3.0) -> st
     return _files[key]
 
 
+def switch_file(on: bool, knob: str) -> str:
+    """Bolinha da chave liga/desliga (40 × 20) em PNG para o QSS; à direita quando ligada."""
+    key = f"switch_{int(on)}_{knob}"
+    if key not in _files:
+        from PySide6.QtGui import QBrush, QColor
+        d = os.path.join(tempfile.gettempdir(), "dxfnest_icons")
+        os.makedirs(d, exist_ok=True)
+        base = os.path.join(d, key.replace("#", ""))
+        for scale, suffix in ((1, ""), (2, "@2x")):
+            pm = QPixmap(40 * scale, 20 * scale)
+            pm.fill(Qt.transparent)
+            p = QPainter(pm)
+            p.setRenderHint(QPainter.Antialiasing)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QBrush(QColor(knob)))
+            r = 7 if on else 6
+            cx = 30 if on else 10
+            p.drawEllipse(QRectF((cx - r) * scale, (10 - r) * scale, 2 * r * scale, 2 * r * scale))
+            p.end()
+            pm.save(base + suffix + ".png")
+        _files[key] = (base + ".png").replace("\\", "/")
+    return _files[key]
+
+
 def app_icon() -> QIcon:
     """Ícone do Sindri: martelo de ferreiro sobre peças encaixadas, em quadrado azul arredondado."""
     from PySide6.QtGui import QBrush, QColor, QLinearGradient
