@@ -20,7 +20,7 @@ compacta possível nas placas e entrega um único DXF pronto para o **RDWorks**,
 
 <br>
 
-<img src="docs/design/encaixe_claro.png" alt="Sindri — lote com 3 solicitações encaixadas em 2 placas" width="900">
+<img src="docs/design/encaixe_claro.png" alt="Sindri — 35 peças encaixadas em 2 placas, com a lista de peças em cartões e o rodapé de métricas" width="900">
 
 <sub>Um lote com 3 solicitações em MDF 3 mm: cada peça leva a cor e o nº da solicitação de quem pediu.</sub>
 
@@ -307,7 +307,7 @@ segue passos numerados, no estilo do MakerCase, com botões ilustrados; a prévi
 mostra só os passos de que precisa.
 
 <div align="center">
-<img src="docs/design/caixa.png" alt="Sindri — gerador de caixas com tampa baú aberta na prévia 3D" width="900">
+<img src="docs/design/caixa.png" alt="Sindri — gerador de caixas com a prévia 3D" width="900">
 </div>
 
 **Modelos** (passo 1):
