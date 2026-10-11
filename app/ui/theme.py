@@ -270,9 +270,13 @@ QGroupBox::title { subcontrol-origin: margin; left: 10px; top: 2px; padding: 0 2
 QGroupBox::indicator { width: 14px; height: 14px; border-radius: 3px; border: 1px solid %(muted)s; }
 QGroupBox::indicator:checked { background: %(accent)s; border-color: %(accent_text)s; }
 
-QListWidget { background: transparent; border: none; }
-QListWidget::item { border: none; margin: 0; padding: 0; background: transparent; }
-QListWidget::item:selected { background: transparent; }
+QListWidget { background: transparent; border: none; color: %(text)s; }
+QListWidget::item { border: none; padding: 4px 6px; border-radius: 6px; }
+QListWidget::item:hover { background: %(surface2)s; }
+QListWidget::item:selected { background: %(accent_soft)s; color: %(text)s; }
+/* grade de peças: o cartão desenha a seleção sozinho */
+QListWidget#PartGrid::item { margin: 0; padding: 0; background: transparent; }
+QListWidget#PartGrid::item:selected, QListWidget#PartGrid::item:hover { background: transparent; }
 /* cartão de peça (grade de 2 colunas) */
 QFrame#PartRow { background: %(surface)s; border: 1px solid %(border)s; border-radius: 10px; }
 QFrame#PartRow:hover { border-color: %(field_border)s; }

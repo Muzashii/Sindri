@@ -198,6 +198,8 @@ def test_part_detail_edits_selected_part(window):
     panel.list.setCurrentRow(1)
     part = panel.rows[1].part
     assert panel.detail.part is part and panel.detail.body.isVisibleTo(panel)
+    QApplication.processEvents()
+    assert panel.detail.spin.lineEdit().width() > 20 and panel.detail.spin.text() == str(part.quantity)
     q = part.quantity
     QTest.mouseClick(panel.detail.btn_plus, Qt.LeftButton)
     assert part.quantity == q + 1 and panel.rows[1].qty.text() == f"×{q + 1}"
