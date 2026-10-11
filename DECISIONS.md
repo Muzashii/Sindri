@@ -279,3 +279,7 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
     aparece no Encaixe e na Foto (a Caixa tem material próprio). Trocar de aba limpa a mensagem da barra de
     status e mostra a dica do modo. A Foto ganhou estado vazio no padrão do Encaixe ("Escolher imagem…" é a
     ação principal; o botão do painel fica secundário e vira "Trocar imagem…").
+83. **Um padrão por tipo de botão**: ações secundárias dentro de cartões (`ghost`) são texto azul alinhado à
+    esquerda, com fundo ao passar o mouse (antes pareciam texto solto). Os mostradores de painel Peças/Parâmetros
+    (`PanelToggle`) marcam o estado pelo preenchimento, sem a borda azul de foco. Segmentados da Caixa usam o
+    desenho das abas do topo (trilho cinza, opção escolhida clara) e o foco continua com borda própria.

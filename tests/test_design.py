@@ -151,3 +151,16 @@ def test_photo_empty_state_then_preview(window, tmp_path):
     assert pp.open_image(path)
     assert pp.view_stack.currentWidget() is pp.view and pp.btn_open.text() == "Trocar imagem…"
     pp.wait_idle()
+
+
+def test_buttons_follow_one_pattern(window):
+    """Ações do painel Laser parecem link de ação; alternâncias usam o padrão do topo, sem borda azul fixa."""
+    from PySide6.QtWidgets import QPushButton
+    sp = window.settings_panel
+    for b in (sp.btn_color_ops, sp.btn_materials):
+        assert b.objectName() == "ghost"
+    assert window.btn_parts_panel.objectName() == window.btn_params_panel.objectName() == "PanelToggle"
+    segs = [b for b in window.box_panel.findChildren(QPushButton) if b.objectName() == "Seg"]
+    assert segs and all(b.parentWidget().objectName() == "SegTrack" for b in segs)
+    from app.ui.theme import STYLE
+    assert "QToolButton#PanelToggle:checked" in STYLE and "color: %(accent_text)s; text-align: left" in STYLE

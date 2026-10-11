@@ -637,17 +637,23 @@ def _tiles(parent, items, cols: int = 3):
 
 def _seg(parent, items):
     """Botões segmentados (escolha única em linha). ``items``: [(chave, texto)] → (layout, {chave: botão}, grupo)."""
+    # mesmo desenho das abas do topo: trilho cinza, opção escolhida em "pílula" clara
+    track = QFrame()
+    track.setObjectName("SegTrack")
+    inner = QHBoxLayout(track)
+    inner.setContentsMargins(2, 2, 2, 2)
+    inner.setSpacing(2)
     row = QHBoxLayout()
-    row.setSpacing(0)
+    row.setContentsMargins(0, 0, 0, 0)
+    row.addWidget(track, 1)
     group = QButtonGroup(parent)
     out = {}
     for i, (key, text) in enumerate(items):
         b = QPushButton(text)
         b.setObjectName("Seg")
         b.setCheckable(True)
-        b.setProperty("pos", "first" if i == 0 else ("last" if i == len(items) - 1 else "mid"))
         group.addButton(b, i)
-        row.addWidget(b, 1)
+        inner.addWidget(b, 1)
         out[key] = b
     return row, out, group
 

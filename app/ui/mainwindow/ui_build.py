@@ -60,7 +60,8 @@ class UIBuildMixin:
         self.mode_tabs.setElideMode(Qt.ElideNone)
         self.mode_tabs.currentChanged.connect(self.set_mode)
         tl.addWidget(self.mode_tabs)
-        tl.addWidget(self._vsep())
+        self._mode_sep = self._vsep()
+        tl.addWidget(self._mode_sep)
         self.btn_open = QPushButton("Abrir DXF")
         self.btn_open.setToolTip("Abrir um ou vários arquivos DXF (Ctrl+O). Você também pode arrastá-los para a janela.")
         self.btn_open.clicked.connect(lambda: self.open_dxf_dialog())
@@ -169,6 +170,7 @@ class UIBuildMixin:
         self.btn_params_panel = QToolButton()
         for button, label in ((self.btn_parts_panel, "Peças"), (self.btn_params_panel, "Parâmetros")):
             button.setText(label)
+            button.setObjectName("PanelToggle")      # discreto: estado no preenchimento, sem borda azul
             button.setCheckable(True)
             button.setChecked(True)
             button.setToolTip("Mostrar ou recolher o painel de " + label.lower())
@@ -640,7 +642,7 @@ class UIBuildMixin:
         # a placa vale para encaixe e foto (o gerador de caixas tem material próprio)
         for widget in (self.btn_open, self.btn_intranet, self.btn_save, self._file_sep):
             widget.setVisible(i == 0)
-        for widget in (self.plate_lbl, self.preset_combo, self.btn_gear):
+        for widget in (self.plate_lbl, self.preset_combo, self.btn_gear, self._mode_sep):
             widget.setVisible(i != 2)
         if getattr(self, "_width_mode", (False, False))[0]:
             self.plate_lbl.setVisible(False)

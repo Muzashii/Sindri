@@ -193,13 +193,18 @@ QPushButton#primary:disabled { background: %(surface3)s; color: %(muted)s; borde
 QPushButton#success { background: %(success)s; color: white; border: 2px solid %(success)s; }
 QPushButton#success:hover { background: %(success_hover)s; }
 QPushButton#success:disabled { background: %(surface3)s; color: %(muted)s; border-color: %(border)s; }
-QPushButton#ghost { background: transparent; border: 2px solid transparent; font-weight: 500; }
-QPushButton#ghost:hover { background: %(surface3)s; }
+QPushButton#ghost { background: transparent; border: 2px solid transparent; font-weight: 600;
+                    color: %(accent_text)s; text-align: left; padding: 6px 8px; }
+QPushButton#ghost:hover { background: %(accent_soft)s; }
 
 QToolButton { background: transparent; color: %(text)s; border: 2px solid transparent;
               border-radius: %(radius_md)spx; padding: 5px; }
 QToolButton:hover { background: %(surface3)s; }
 QToolButton:checked { background: %(accent_soft)s; border-color: %(accent_text)s; }
+QToolButton#PanelToggle { color: %(muted)s; padding: 4px 10px; font-weight: 600; }
+QToolButton#PanelToggle:checked { background: %(surface3)s; color: %(text)s; border-color: transparent; }
+QToolButton#PanelToggle:hover { color: %(text)s; }
+QToolButton#PanelToggle:focus { border-color: %(focus)s; }
 QToolButton:disabled { color: %(muted)s; }
 
 QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit {
@@ -306,11 +311,12 @@ QToolButton#Tile { background: %(surface2)s; border: 1px solid %(border)s; borde
 QToolButton#Tile:hover { border-color: %(muted)s; }
 QToolButton#Tile:checked { background: %(accent_soft)s; border: 2px solid %(accent)s; color: %(accent_text)s;
                            font-weight: 700; }
-QPushButton#Seg { border-radius: 0; padding: 6px 10px; font-weight: 600; }
-QPushButton#Seg[pos="first"] { border-top-left-radius: 7px; border-bottom-left-radius: 7px; }
-QPushButton#Seg[pos="last"] { border-top-right-radius: 7px; border-bottom-right-radius: 7px; border-left: none; }
-QPushButton#Seg[pos="mid"] { border-left: none; }
-QPushButton#Seg:checked { background: %(accent)s; color: white; border-color: %(accent_text)s; }
+QFrame#SegTrack { background: %(surface3)s; border-radius: 10px; }
+QPushButton#Seg { background: transparent; color: %(muted)s; border: 2px solid transparent; border-radius: 8px;
+                  padding: 5px 10px; font-weight: 600; }
+QPushButton#Seg:hover:!checked { color: %(text)s; }
+QPushButton#Seg:checked { background: %(surface)s; color: %(text)s; border-color: %(border)s; }
+QPushButton#Seg:focus { border-color: %(focus)s; }
 QPushButton#Chip { border-radius: 14px; padding: 4px 6px; font-weight: 600; }
 QPushButton#Chip:checked { background: %(accent_soft)s; color: %(accent_text)s; border: 1px solid %(accent)s; }
 
