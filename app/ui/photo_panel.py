@@ -198,8 +198,11 @@ class PhotoPanel(QWidget):
         g2 = _Section("Linhas e tons", "layers")
         f2 = QFormLayout(g2.body)
         self.mode = QComboBox()
-        self.mode.addItem("Imagem BMP (recomendado)", "imagem")
-        self.mode.addItem("Linhas DXF (experimental)", "linhas")
+        # textos curtos: o campo tem ~130 px e cortava em "Imagem BMP (recom…"; o detalhe fica na dica
+        self.mode.addItem("Imagem BMP", "imagem")
+        self.mode.addItem("Linhas DXF (teste)", "linhas")
+        self.mode.setItemData(0, "Recomendado: o RDWorks faz o scan da imagem", Qt.ToolTipRole)
+        self.mode.setItemData(1, "Experimental: traços vetoriais, bem mais lento", Qt.ToolTipRole)
         self.mode.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.mode.setMinimumContentsLength(10)
         self.mode.setToolTip(

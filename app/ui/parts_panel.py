@@ -17,6 +17,11 @@ def _fmt(v: float) -> str:
     return s.replace(".", ",")
 
 
+def _fmt_list(v: float) -> str:
+    """Medida curta para a lista: inteiro a partir de 10 mm, um decimal abaixo disso."""
+    return str(int(round(v))) if v >= 10 else _fmt(v)
+
+
 class PartRow(QFrame):
     def __init__(self, part: Part, warns: list[str], dark: bool, panel: PartsPanel):
         super().__init__()
@@ -62,12 +67,16 @@ class PartRow(QFrame):
         if part.material or warns:
             info.addLayout(top)
         w, h = part.size
-        sub = QLabel(f"{_fmt(w)} × {_fmt(h)} mm")
+        # na lista, medida em mm inteiros (décimos na dica): "59,4 × 150,4 mm" empurrava os botões
+        # para fora da linha ("Feito" virava "…o"); o rótulo também cede espaço em vez de empurrar
+        sub = QLabel(f"{_fmt_list(w)} × {_fmt_list(h)} mm")
         sub.setObjectName("PartSub")
+        sub.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        sub.setMinimumWidth(40)
         info.addWidget(sub)
         extra = [f"{part.file_quantity}× no arquivo"] + ([f"{len(part.holes)} furo(s)"] if part.holes else [])
         # Os detalhes de origem permanecem na dica, liberando altura na lista.
-        sub.setToolTip(sub.text() + " · " + " · ".join(extra))
+        sub.setToolTip(f"{_fmt(w)} × {_fmt(h)} mm · " + " · ".join(extra))
         lay.addLayout(info, 1)
 
         ctl = QVBoxLayout()

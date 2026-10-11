@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import (QBrush, QColor, QFont, QPainter, QPainterPath, QPen)
 from PySide6.QtWidgets import (QGraphicsItem, QGraphicsPathItem, QGraphicsScene,
                                QGraphicsSimpleTextItem, QGraphicsView, QApplication)
@@ -397,6 +397,8 @@ class NestCanvas(QGraphicsView):
         self.sheet_labels: list = []
         self._panning = False
         self._pan_start = None
+        self._auto_fit = False
+        self._fit_pending = False
         self.editable = True
         self.mode = "empty"
         self._empty_text = None
@@ -628,9 +630,23 @@ class NestCanvas(QGraphicsView):
         if self.mode == "layout":
             scale = max(abs(self.transform().m11()), 1e-3)
             self.fitInView(r.adjusted(-15, -15, 15, 40 / scale), Qt.KeepAspectRatio)
+        self._auto_fit = True                # janela mudou de tamanho: enquadra de novo (até o usuário dar zoom)
         self.zoomChanged.emit(self.transform().m11())
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if getattr(self, "_auto_fit", False) and self.mode in ("layout", "preview") \
+                and not getattr(self, "_fit_pending", False):
+            self._fit_pending = True
+            QTimer.singleShot(0, self._refit)
+
+    def _refit(self):
+        self._fit_pending = False
+        if self._auto_fit:
+            self.fit_all()
+
     def focus_sheet(self, i: int):
+        self._auto_fit = False
         p = self.params
         sp = getattr(self, "specs", {}).get(i)
         r = QRectF(sheet_offset(p, i), 0, sp.width if sp else p.sheet_width, sp.height if sp else p.sheet_height)
@@ -664,6 +680,7 @@ class NestCanvas(QGraphicsView):
         if delta == 0:
             return
         f = 1.0015 ** delta
+        self._auto_fit = False
         cur = self.transform().m11()
         if (cur > 200 and f > 1) or (cur < 0.005 and f < 1):
             return
@@ -674,6 +691,7 @@ class NestCanvas(QGraphicsView):
         if event.button() == Qt.MiddleButton or (event.button() == Qt.LeftButton and
                                                    QApplication.keyboardModifiers() & Qt.AltModifier):
             self._panning = True
+            self._auto_fit = False
             self._pan_start = event.position()
             self.setCursor(Qt.ClosedHandCursor)
             event.accept()

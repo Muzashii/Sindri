@@ -164,3 +164,35 @@ def test_buttons_follow_one_pattern(window):
     assert segs and all(b.parentWidget().objectName() == "SegTrack" for b in segs)
     from app.ui.theme import STYLE
     assert "QToolButton#PanelToggle:checked" in STYLE and "color: %(accent_text)s; text-align: left" in STYLE
+
+
+@pytest.mark.parametrize("width", [1024, 1440])
+def test_part_rows_keep_buttons_whole(window, width):
+    """Peça com medida larga ("59,4 × 150,4 mm") não empurra Feito/Rotação fixa para fora da linha."""
+    from app.ui.parts_panel import PartRow
+    window.load_files([str(Path(__file__).parent / "fixtures" / "exemplo_lab.dxf")])
+    window.resize(width, 760)
+    QApplication.processEvents()
+    rows = window.parts_panel.findChildren(PartRow)
+    assert rows
+    for row in rows:
+        for w in (row.done_btn, row.lock, row.spin):
+            right = w.mapTo(row, w.rect().topRight()).x()
+            assert right <= row.width(), (width, row.full_name, type(w).__name__, right, row.width())
+        assert row.done_btn.width() >= 70
+
+
+def test_canvas_refits_on_resize_until_user_zooms(window):
+    window.load_files([str(Path(__file__).parent / "fixtures" / "simples.dxf")])
+    window.resize(1440, 900)
+    QApplication.processEvents()
+    window.canvas.fit_all()
+    before = window.canvas.transform().m11()
+    window.resize(1024, 700)
+    QTest.qWait(50)
+    assert window.canvas.transform().m11() < before          # enquadrou de novo na janela menor
+    window.canvas._auto_fit = False                          # usuário deu zoom: a vista fica onde ele deixou
+    kept = window.canvas.transform().m11()
+    window.resize(1440, 900)
+    QTest.qWait(50)
+    assert window.canvas.transform().m11() == kept
