@@ -245,3 +245,10 @@ def test_peca_grande_com_dentes_encaixa_rapido_e_sem_sobrepor(tmp_path):
     assert time.time() - t < 20
     assert len(res.placements) == 4
     assert validate_layout({p.id: p for p in rep.parts}, res.placements, params) == []
+
+
+def test_limite_de_tempo_nao_corta_a_primeira_solucao(lab_parts):
+    # Tempo menor que o da 1ª solução: as peças que cabem não podem virar "não coube".
+    res = nest(lab_parts, NestParams(), time_limit=0.01, workers=0, seed=1)
+    assert res.unplaced == []
+    assert len(res.placements) == sum(p.quantity for p in lab_parts)

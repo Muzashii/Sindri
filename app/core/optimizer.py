@@ -252,10 +252,13 @@ class GeneticNester:
                 on_best(self.best)
             return self.best
 
-        self.decoder.cancelled = should_stop
-        # 1) solução rápida no próprio processo, também interrompível
+        # 1) solução rápida no próprio processo. Só o "Parar" do usuário a interrompe: o limite de
+        # tempo e a parada automática valem para a otimização, senão uma 1ª solução cortada no meio
+        # mostraria peças que cabem como "não couberam".
+        self.decoder.cancelled = stop_event.is_set
         first = self.first_individual()
         self._consider(first, self.evaluate_local(first), on_best)
+        self.decoder.cancelled = should_stop
         if on_progress:
             on_progress(self._progress(t0))
 

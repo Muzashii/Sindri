@@ -287,3 +287,6 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
     na dica); quando a linha é estreita, "Feito" vira só o ✓ (mesmo limite para todas as linhas). O canvas volta a enquadrar
     tudo quando a janela muda de tamanho, até o usuário dar zoom ou arrastar a vista (os rótulos das placas
     não ficam mais cortados). Na Foto, "Exportar como" tem textos curtos; recomendado/experimental na dica.
+85. **A 1ª solução não é cortada pelo tempo**: o limite de tempo e a parada automática valem só para a
+    otimização. Antes, com pouco tempo (ou muitas peças/rotações), a 1ª solução parava no meio e peças que
+    cabiam apareciam como "não couberam" (a linha de comando nem exportava). Só o "Parar" do usuário a interrompe.
