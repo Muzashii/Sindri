@@ -284,6 +284,6 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
     (`PanelToggle`) marcam o estado pelo preenchimento, sem a borda azul de foco. Segmentados da Caixa usam o
     desenho das abas do topo (trilho cinza, opção escolhida clara) e o foco continua com borda própria.
 84. **Nada cortado em 1024 px**: na lista de peças a medida aparece em mm inteiros a partir de 10 mm (décimos
-    na dica) e o rótulo cede espaço, para "Feito"/"Rotação fixa" ficarem inteiros. O canvas volta a enquadrar
+    na dica); quando a linha é estreita, "Feito" vira só o ✓ (mesmo limite para todas as linhas). O canvas volta a enquadrar
     tudo quando a janela muda de tamanho, até o usuário dar zoom ou arrastar a vista (os rótulos das placas
     não ficam mais cortados). Na Foto, "Exportar como" tem textos curtos; recomendado/experimental na dica.

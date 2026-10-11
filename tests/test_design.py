@@ -179,7 +179,10 @@ def test_part_rows_keep_buttons_whole(window, width):
         for w in (row.done_btn, row.lock, row.spin):
             right = w.mapTo(row, w.rect().topRight()).x()
             assert right <= row.width(), (width, row.full_name, type(w).__name__, right, row.width())
-        assert row.done_btn.width() >= 70
+        b = row.done_btn
+        assert b.width() >= (70 if b.toolButtonStyle() == Qt.ToolButtonTextBesideIcon else 30)
+        sub = next(lb for lb in row.findChildren(type(row.name)) if lb.objectName() == "PartSub")
+        assert sub.width() >= sub.fontMetrics().horizontalAdvance(sub.text()), (width, sub.text(), sub.width())
 
 
 def test_canvas_refits_on_resize_until_user_zooms(window):

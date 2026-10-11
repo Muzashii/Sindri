@@ -73,6 +73,7 @@ class PartRow(QFrame):
         sub.setObjectName("PartSub")
         sub.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         sub.setMinimumWidth(40)
+        self._sub = sub
         info.addWidget(sub)
         extra = [f"{part.file_quantity}× no arquivo"] + ([f"{len(part.holes)} furo(s)"] if part.holes else [])
         # Os detalhes de origem permanecem na dica, liberando altura na lista.
@@ -171,6 +172,18 @@ class PartRow(QFrame):
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
+        # linha estreita (janela de ~1024 px): "Feito" vira só o ✓ para a medida da peça continuar legível
+        m = self.layout().contentsMargins()
+        free = (self.width() - m.left() - m.right() - theme.metric("thumb") - 2 * 10
+                - max(104, 54 + 4 + 70))                  # largura do texto com os controles inteiros
+        # mesmo limite para todas as linhas (medida típica de 3 dígitos), para a lista não ficar desigual
+        compact = free < self._sub.fontMetrics().horizontalAdvance("000 × 000 mm")
+        if compact != getattr(self, "_compact_done", None):
+            self._compact_done = compact
+            self.done_btn.setToolButtonStyle(Qt.ToolButtonIconOnly if compact else Qt.ToolButtonTextBesideIcon)
+            self.done_btn.setFixedWidth(34 if compact else 70)
+            self.lock.setMinimumWidth(self.lock.sizeHint().width() if compact else 104)
+            self.layout().setSpacing(6 if compact else 10)
         fm = self.name.fontMetrics()
         self.name.setText(fm.elidedText(self.full_name, Qt.ElideRight, max(30, self.name.width())))
 
