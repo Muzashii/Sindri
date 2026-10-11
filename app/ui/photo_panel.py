@@ -327,7 +327,7 @@ class PhotoPanel(QWidget):
         self.info.setObjectName("Muted")
         self.info.setWordWrap(True)
         self.btn_export = QPushButton("Exportar para RDWorks")
-        self.btn_export.setObjectName("success")
+        self.btn_export.setObjectName("primary")          # mesma ação e mesma cor do Exportar do encaixe
         self.btn_export.setToolTip("Gera o DXF da foto, preenche velocidade/potência de cada nível e abre no RDWorks")
         self.btn_export.clicked.connect(self.exportRequested.emit)
         bottom.addWidget(self.info, 1)

@@ -222,3 +222,36 @@ def test_canvas_refits_on_resize_until_user_zooms(window):
     window.resize(1440, 900)
     QTest.qWait(50)
     assert window.canvas.transform().m11() == kept
+
+
+def test_metrics_footer_and_button_roles(window):
+    """Rodapé com 4 células; antes do encaixe "Encaixar" é a ação principal, depois é "Exportar"."""
+    window.load_files([str(Path(__file__).parent / "fixtures" / "simples.dxf")])
+    QApplication.processEvents()
+    caps = [cap.text() for cap, _ in window._metric_caps.values()]
+    assert caps == ["APROVEITAMENTO", "PLACAS", "PEÇAS", "TEMPO ESTIMADO"]
+    assert window.btn_nest.objectName() == "primary" and window.btn_export.objectName() == "primary"
+    assert not window.btn_export.isEnabled()
+    window.start_nest()
+    for _ in range(200):
+        QTest.qWait(50)
+        if window.worker is None:
+            break
+        if window.placements:
+            window.stop_nest()
+    QTest.qWait(100)
+    assert window.placements and window.btn_export.isEnabled()
+    assert window.btn_nest.objectName() == "" and window.btn_nest.text() == "Encaixar de novo"
+    assert window.chip_time.text().startswith("~") and "Placa 1" in window.chip_time.toolTip()
+    assert window._metric_caps["tempo"][0].text() == "TEMPO ESTIMADO"
+    assert window.chip_util.text().endswith("%")
+
+
+def test_switches_keep_their_options(window):
+    """As chaves liga/desliga continuam sendo as mesmas opções (valores e sinais preservados)."""
+    sp = window.settings_panel
+    for sw in (sp.mirror, sp.pip, sp.multi, sp.material_mode, sp.two_tubes):
+        assert sw.objectName() == "Switch"
+    before = sp.params().allow_mirror
+    sp.mirror.setChecked(not sp.mirror.isChecked())
+    assert sp.params().allow_mirror != before

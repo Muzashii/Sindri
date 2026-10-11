@@ -405,9 +405,29 @@ class NestCanvas(QGraphicsView):
         self.show_empty_hint()
 
     # ------------------------------------------------------------------
+    def drawBackground(self, painter, rect):
+        """Fundo cinza com pontinhos a cada 16 px de tela (acompanham o arrastar da vista)."""
+        painter.fillRect(rect, theme.qcolor("canvas"))
+        key = (theme.tokens()["canvas"], theme.tokens()["grid2"])
+        if getattr(self, "_dots_key", None) != key:
+            from PySide6.QtGui import QPixmap
+            pm = QPixmap(16, 16)
+            pm.fill(theme.qcolor("canvas"))
+            from PySide6.QtGui import QPainter as _P
+            p = _P(pm)
+            p.fillRect(7, 7, 2, 2, theme.qcolor("grid2"))
+            p.end()
+            self._dots, self._dots_key = pm, key
+        painter.save()
+        painter.resetTransform()
+        off = QPointF(self.horizontalScrollBar().value() % 16, self.verticalScrollBar().value() % 16)
+        painter.drawTiledPixmap(QRectF(self.viewport().rect()), self._dots, off)
+        painter.restore()
+
     def set_dark(self, dark: bool):
         self.dark = dark
         self.setBackgroundBrush(theme.qcolor("canvas"))
+        self.viewport().update()
         for it in self.scene().items():
             it.update()
         for s in self.sheet_items:

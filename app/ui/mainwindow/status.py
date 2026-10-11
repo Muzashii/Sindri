@@ -86,6 +86,28 @@ class StatusMixin:
         total = sum(specs[si].area for si in used if si in specs)
         return area / total if total else 0.0
 
+    def _time_estimate(self) -> str:
+        """Tempo de máquina de todas as placas (mesma conta do relatório), guardado até o encaixe mudar."""
+        key = tuple((pl.part_id, pl.instance, pl.sheet_index, round(pl.x, 1), round(pl.y, 1), pl.rotation)
+                    for pl in self.placements)
+        cache = getattr(self, "_time_cache", None)
+        if cache and cache[0] == key:
+            return cache[1]
+        try:
+            times = self._sheet_times({"color_ops": self.effective_color_ops()})
+            total = sum(t.seconds for t in times.values())
+            m = total / 60
+            txt = f"~{m:.0f} min" if m >= 1 else f"~{max(1, round(total)):.0f} s"
+            lines = [f"Placa {si + 1}: {t.text}" for si, t in sorted(times.items())]
+            tip = "Tempo estimado de máquina (velocidades do banco de materiais)\n" + "\n".join(lines)
+            if any(t.fallback for t in times.values()):
+                tip += "\nAlgumas camadas usam a velocidade padrão: confira o banco de materiais."
+        except Exception:                       # estimativa nunca pode atrapalhar o encaixe
+            txt, tip = "—", "Não foi possível estimar o tempo agora."
+        self._time_cache = (key, txt)
+        self._time_tip = tip
+        return txt
+
     def _update_status(self):
         total = sum(p.quantity for p in self.parts)
         placed = len(self.placements)
@@ -113,7 +135,16 @@ class StatusMixin:
         cut = sum(pl.sheet_index in self.cut_sheets for pl in self.placements)
         self.chip_parts.setToolTip(f"Solicitadas: {total}\nEncaixadas: {placed}\nEm placas cortadas: {cut}\nSem encaixe: {max(0, total - placed)}")
         ev = getattr(self, "evaluated", 0)
-        self.chip_gen.setText(f"{ev:,}".replace(",", ".") if (self.worker is not None or ev) else "—")
+        tested = f"{ev:,}".replace(",", ".")
+        cap = self._metric_caps["tempo"][0]
+        if self.worker is not None:
+            cap.setText("SOLUÇÕES TESTADAS")
+            self.chip_time.setText(tested)
+            self.chip_time.setToolTip("Quantas organizações o otimizador já experimentou")
+        else:
+            cap.setText("TEMPO ESTIMADO")
+            self.chip_time.setText(self._time_estimate() if placed else "—")
+            self.chip_time.setToolTip(getattr(self, "_time_tip", "") + (f"\nSoluções testadas: {tested}" if ev else ""))
         missing = total - placed
         if self.worker is not None:
             paused = self.worker.pause_event.is_set()

@@ -173,6 +173,7 @@ QFrame#TopBar { background: %(surface)s; border-bottom: 1px solid %(border)s; }
 QFrame#Card { background: %(surface)s; border: 1px solid %(border)s; border-radius: %(radius_lg)spx; }
 QFrame#PanelCard { background: %(surface)s; border: 1px solid %(border)s; border-radius: %(radius_lg)spx; }
 QFrame#VSep { background: %(border)s; }
+QFrame#SectionPlain { background: transparent; border: none; }
 QLabel#Logo { font-size: 12pt; font-weight: 700; color: %(text)s; }
 QLabel#LogoMark { background: %(accent)s; color: white; border-radius: %(radius_md)spx; font-weight: 800;
                   font-size: %(font_section)spt; }
@@ -283,10 +284,9 @@ QLabel#PartQty { font-size: 13pt; font-weight: 800; color: %(text)s; }
 QToolButton#DoneButton { border: 1px solid %(field_border)s; border-radius: 6px; padding: 1px;
                          min-width: 20px; min-height: 20px; background: %(surface)s; }
 QToolButton#DoneButton:checked { background: %(success)s; color: %(on_accent)s; border-color: %(success)s; font-weight: 700; }
-QPushButton#AddTile { border: 1px dashed %(control_border)s; border-radius: 10px; background: transparent;
+QToolButton#AddTile { border: 1px dashed %(control_border)s; border-radius: 10px; background: transparent;
                       color: %(muted)s; font-weight: 600; padding: 8px; }
-QPushButton#AddTile:hover { background: %(surface2)s; color: %(text)s; }
-QPushButton#AddTile:focus { padding: 7px; }
+QToolButton#AddTile:hover { background: %(surface2)s; color: %(text)s; }
 QFrame#PartDetail { background: %(surface2)s; border: none; border-radius: 10px; }
 QToolButton#StepButton { border: none; border-radius: 4px; padding: 0; min-width: 28px; min-height: 26px;
                          font-weight: 700; }
@@ -374,9 +374,12 @@ QPushButton#Chip { border-radius: 14px; padding: 4px 6px; font-weight: 600; }
 QPushButton#Chip:checked { background: %(accent_soft)s; color: %(accent_text)s; border: 1px solid %(accent)s; }
 
 /* seções de parâmetros: título em maiúsculas, discreto, que recolhe a seção */
-QToolButton#SectionToggle { text-align: left; font-weight: 600; padding: 4px 4px; font-size: 9pt;
-    background: transparent; border: 2px solid transparent; color: %(muted)s; letter-spacing: 0.6px; }
-QToolButton#SectionToggle:hover { color: %(text)s; background: transparent; }
+QToolButton#SectionToggle { text-align: left; font-weight: 700; padding: 4px 6px;
+    background: transparent; border: 2px solid transparent; color: %(text)s; }
+QToolButton#SectionToggle:hover { background: %(surface3)s; }
+QToolButton#SectionToggle[plain="true"] { font-weight: 600; padding: 4px 4px; font-size: 9pt; color: %(muted)s;
+    letter-spacing: 0.6px; }
+QToolButton#SectionToggle[plain="true"]:hover { color: %(text)s; background: transparent; }
 QLabel#SelectionSummary { color: %(muted)s; padding: 4px 8px; background: %(surface2)s;
     border-radius: %(radius_sm)spx; }
 QLabel#EmptyTitle { font-size: %(font_hero)spt; font-weight: 700; color: %(text)s; }
@@ -386,5 +389,5 @@ QLabel#InlineWarning { color: %(warn)s; }
 /* O ID mantém a prioridade sobre os estilos dos controles especiais. */
 QPushButton#primary:focus, QPushButton#success:focus, QPushButton#Seg:focus,
 QPushButton#Chip:focus, QToolButton#Tile:focus, QToolButton#DoneButton:focus,
-QToolButton#Danger:focus, QToolButton#SectionToggle:focus, QPushButton#AddTile:focus { border: 2px solid %(focus)s; }
+QToolButton#Danger:focus, QToolButton#SectionToggle:focus, QToolButton#AddTile:focus { border: 2px solid %(focus)s; }
 """

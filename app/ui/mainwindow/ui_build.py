@@ -162,9 +162,14 @@ class UIBuildMixin:
         ol.setContentsMargins(0, 12, 0, 12)
         card = QFrame()
         card.setObjectName("Card")
-        cl = QVBoxLayout(card)
-        cl.setContentsMargins(10, 8, 10, 8)
+        card_l = QVBoxLayout(card)
+        card_l.setContentsMargins(0, 0, 0, 0)
+        card_l.setSpacing(0)
+        inner = QWidget()
+        cl = QVBoxLayout(inner)
+        cl.setContentsMargins(10, 8, 10, 10)
         cl.setSpacing(6)
+        card_l.addWidget(inner, 1)
         head = QHBoxLayout()
         head.setSpacing(4)
         self.tabs = QTabBar()
@@ -252,7 +257,7 @@ class UIBuildMixin:
         self.stack.addWidget(self.empty_state)
         self.stack.addWidget(self.canvas)
         cl.addWidget(self.stack, 1)
-        cl.addWidget(self._build_metrics())
+        card_l.addWidget(self._build_metrics())
         ol.addWidget(card, 1)
 
         # ---------------- parâmetros
@@ -331,49 +336,58 @@ class UIBuildMixin:
         self.canvas.setAccessibleDescription("Use Editar posições para selecionar uma instância e ajustar X, Y, ângulo e placa por teclado.")
 
     def _build_metrics(self) -> QFrame:
+        """Rodapé do encaixe: quatro células (rótulo em maiúsculas + número) e a linha de estado."""
         box = QFrame()
         box.setObjectName("Metrics")
         outer = QVBoxLayout(box)
-        outer.setContentsMargins(12, 8, 12, 8)
-        outer.setSpacing(8)
-        h = QHBoxLayout()
-        outer.addLayout(h)
-        h.setContentsMargins(0, 0, 0, 0)
-        h.setSpacing(18)
-        self._metrics_layout = h
+        outer.setContentsMargins(0, 0, 0, 8)
+        outer.setSpacing(6)
+        grid = QHBoxLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(0)
+        outer.addLayout(grid)
+        self._metrics_layout = grid
         self._metric_caps = {}
 
-        def metric(caption: str, big: bool = False):
-            v = QVBoxLayout()
-            v.setSpacing(0)
-            val = QLabel("—")
-            val.setObjectName("MetricBig" if big else "MetricValue")
-            cap = QLabel(caption)
+        def metric(key: str, caption: str, last: bool = False):
+            cell = QFrame()
+            cell.setObjectName("MetricCell")
+            cell.setProperty("last", last)
+            v = QVBoxLayout(cell)
+            v.setContentsMargins(16, 10, 16, 8)
+            v.setSpacing(2)
+            cap = QLabel(caption.upper())
             cap.setObjectName("MetricCaption")
-            v.addWidget(val)
+            val = QLabel("—")
+            val.setObjectName("MetricValue")
+            val.setAccessibleName(caption)
             v.addWidget(cap)
-            h.addLayout(v)
-            self._metric_caps[caption] = (cap, val)
-            return val
+            v.addWidget(val)
+            grid.addWidget(cell, 1)
+            self._metric_caps[key] = (cap, val)
+            return val, v
 
-        self.chip_util = metric("aproveitamento", big=True)
-        self._metric_caps["aproveitamento"][0].setText("aproveitamento total")
+        self.chip_util, util_box = metric("aproveitamento", "aproveitamento")
+        self.chip_util.setProperty("accent", True)
         self.chip_util.setToolTip("Área das peças ÷ área das placas usadas")
         self.progress = QProgressBar()
         self.progress.setRange(0, 1000)
         self.progress.setTextVisible(False)
-        self.progress.setMinimumWidth(40)
+        self.progress.setFixedHeight(4)
         self.progress.setToolTip("Aproveitamento: área das peças ÷ área das placas usadas")
-        h.addWidget(self.progress, 1)
-        h.addWidget(self._vsep())
-        self.chip_sheets = metric("placas")
-        self.chip_parts = metric("peças encaixadas")
-        self.chip_gen = metric("soluções testadas")
-        h.addWidget(self._vsep())
+        self.progress.hide()                     # o número já diz tudo; a barra fica para leitores de tela
+        self.chip_sheets, _ = metric("placas", "placas")
+        self.chip_parts, _ = metric("peças encaixadas", "peças")
+        # 4ª célula: tentativas enquanto otimiza; depois, o tempo estimado de máquina
+        self.chip_time, _ = metric("tempo", "tempo estimado", last=True)
+        self.chip_gen = self.chip_time
         self.status_label = QLabel("Pronto")
         self.status_label.setObjectName("State")
         self.status_label.setWordWrap(True)
-        outer.addWidget(self.status_label)
+        row = QHBoxLayout()
+        row.setContentsMargins(12, 0, 12, 0)
+        row.addWidget(self.status_label, 1)
+        outer.addLayout(row)
         return box
 
     def _vsep(self) -> QFrame:
@@ -623,13 +637,9 @@ class UIBuildMixin:
                                  "Roda: zoom  ·  botão do meio / Alt+arrastar: mover vista  ·  R girar  ·  "
                                  "L travar  ·  Del remover  ·  F1 atalhos")
         self.status_hint.setVisible(not tiny)
-        self._metrics_layout.setSpacing(10 if compact else 18)
-        for full, short in (("peças encaixadas", "peças"), ("soluções testadas", "soluções"),
-                            ("aproveitamento", "aproveit. total")):
-            cap, val = self._metric_caps[full]
-            cap.setText(short if compact else ("aproveitamento total" if full == "aproveitamento" else full))
-        for wdg in self._metric_caps["soluções testadas"]:
-            wdg.setVisible(not tiny)
+        for key, (cap, val) in self._metric_caps.items():
+            cap.parentWidget().layout().setContentsMargins(10 if compact else 16, 10, 10 if compact else 16, 8)
+        self._metric_caps["aproveitamento"][0].setText("APROVEIT." if tiny else "APROVEITAMENTO")
         self.status_label.setMaximumWidth(16777215)
         self.btn_positions.setText("" if tiny else "Posições…")
         self.preset_combo.setMaximumWidth(170 if tiny else 230)

@@ -655,7 +655,11 @@ class PartsPanel(QWidget):
             self.list.setItemWidget(it, row)
             self.rows.append(row)
         if parts:
-            add = QPushButton("+\nAdicionar DXF")
+            add = QToolButton()
+            add.setText("Adicionar DXF")
+            add.setIcon(icon("plus", theme.tokens()["muted"], 20))
+            add.setIconSize(QSize(20, 20))
+            add.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
             add.setObjectName("AddTile")
             add.setToolTip("Adicionar mais arquivos DXF (Ctrl+Shift+O); as peças entram junto com as atuais")
             add.setAccessibleName("Adicionar DXF")
