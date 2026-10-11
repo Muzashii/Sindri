@@ -84,3 +84,20 @@ def test_secondary_text_and_control_contrast():
             assert _contrast(palette["muted"], palette[background]) >= 4.5
         assert _contrast(palette["control_border"], palette["surface2"]) >= 3
         assert _contrast(palette["danger"], palette["danger_soft"]) >= 4.5
+
+
+def test_numeric_fields_have_margin_and_brazilian_decimal(window):
+    """Campos numéricos: texto com respiro, vírgula decimal e ponto digitado aceito como vírgula."""
+    from PySide6.QtWidgets import QDoubleSpinBox
+    spins = window.findChildren(QDoubleSpinBox)
+    assert spins
+    for s in spins:
+        assert s.lineEdit().textMargins().left() >= 6, s.objectName()
+    m = window.settings_panel.margin
+    m.setValue(5)
+    assert "5,0" in m.text()
+    m.lineEdit().selectAll()
+    m.setFocus()
+    QTest.keyClicks(m.lineEdit(), "7.5")
+    QTest.keyClick(m.lineEdit(), Qt.Key_Return)
+    assert m.value() == 7.5

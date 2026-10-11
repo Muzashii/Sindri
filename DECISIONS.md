@@ -268,3 +268,7 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
 79. **Foto**: o modo imagem (BMP; o RDWorks faz o scan) é o recomendado e o intervalo padrão passou a 0,1 mm
     (CO₂ em madeira: 0,08–0,1 mm como ponto de partida). O modo linhas ficou como experimental: vira vetor no
     RDWorks (acelera e freia em cada traço), é bem mais lento e marca o início/fim de cada traço.
+80. **Campos numéricos** (`app/ui/style.py`): estilo base `SindriStyle` (Fusion + ajuste em `polish`) porque o
+    `padding` do stylesheet não chega ao editor interno do QSpinBox (o texto ficava colado na borda). Cada
+    campo numérico recebe a margem dos outros campos, locale pt-BR (vírgula decimal, como no resto da tela)
+    e o ponto digitado vira vírgula (teclado US/numérico), em vez de ser lido como separador de milhar.
