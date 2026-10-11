@@ -275,3 +275,7 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
 81. **Tema escuro legível**: links de avisos usam `accent_text` pela paleta (`QPalette.Link`), não o #0000ff do
     Qt. Linhas do desenho com luminância < 0,15 (preto, azul puro da gravação) ganham luminosidade mantendo o
     matiz, só na tela (`theme.line_color`); o DXF exportado continua com as cores originais.
+82. **Barra superior e status por modo**: abrir DXF, intranet e salvar projeto aparecem só no Encaixe; a placa
+    aparece no Encaixe e na Foto (a Caixa tem material próprio). Trocar de aba limpa a mensagem da barra de
+    status e mostra a dica do modo. A Foto ganhou estado vazio no padrão do Encaixe ("Escolher imagem…" é a
+    ação principal; o botão do painel fica secundário e vira "Trocar imagem…").

@@ -122,3 +122,32 @@ def test_dark_theme_links_and_engraving_lines_are_readable():
         assert theme.line_color(QColor(0, 0, 255), False) == QColor(0, 0, 255)
     finally:
         theme.apply_theme(app, False)
+
+
+def test_toolbar_and_status_follow_mode(window, tmp_path):
+    """Cada aba mostra só o que vale para ela e não herda mensagens das outras."""
+    window.statusBar().showMessage("Encaixe concluído. Ctrl+E exporta.", 12000)
+    window.set_mode(1)
+    QApplication.processEvents()
+    assert "Encaixe concluído" not in window.statusBar().currentMessage()
+    assert not window.btn_open.isVisible() and not window.btn_save.isVisible()
+    assert window.preset_combo.isVisible()
+    window.set_mode(2)
+    assert not window.preset_combo.isVisible()
+    window.set_mode(0)
+    assert window.btn_open.isVisible() and window.preset_combo.isVisible()
+
+
+def test_photo_empty_state_then_preview(window, tmp_path):
+    from PySide6.QtGui import QColor, QImage
+    pp = window.photo_panel
+    window.set_mode(1)
+    assert pp.view_stack.currentWidget() is not pp.view
+    assert pp.btn_empty_open.objectName() == "primary" and pp.btn_open.objectName() != "primary"
+    img = QImage(40, 30, QImage.Format_RGB32)
+    img.fill(QColor(120, 120, 120))
+    path = str(tmp_path / "foto.png")
+    img.save(path)
+    assert pp.open_image(path)
+    assert pp.view_stack.currentWidget() is pp.view and pp.btn_open.text() == "Trocar imagem…"
+    pp.wait_idle()

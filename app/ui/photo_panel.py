@@ -169,8 +169,8 @@ class PhotoPanel(QWidget):
         g0 = _Section("Imagem", "open")
         f0 = QVBoxLayout(g0.body)
         f0.setContentsMargins(0, 0, 0, 0)
+        # ação principal fica no estado vazio da prévia; aqui é secundária (vira "Trocar imagem…")
         self.btn_open = QPushButton("Abrir imagem…")
-        self.btn_open.setObjectName("primary")
         self.btn_open.setToolTip("Foto ou desenho (PNG, JPG, BMP…). Você também pode arrastar para cá.")
         self.btn_open.clicked.connect(self.open_dialog)
         self.file_lbl = QLabel("Nenhuma imagem aberta.")
@@ -314,7 +314,11 @@ class PhotoPanel(QWidget):
         v.addWidget(self.msg_box)
         self.view = PhotoView()
         self.view.setAccessibleName("Prévia da foto na placa; use X e Y para posicionar")
-        v.addWidget(self.view, 1)
+        from PySide6.QtWidgets import QStackedWidget
+        self.view_stack = QStackedWidget()
+        self.view_stack.addWidget(self._build_empty())
+        self.view_stack.addWidget(self.view)
+        v.addWidget(self.view_stack, 1)
         bottom = QHBoxLayout()
         self.info = QLabel("")
         self.info.setObjectName("Muted")
@@ -398,6 +402,41 @@ class PhotoPanel(QWidget):
                 for k, pw in enumerate(p.level_powers()[:n])}
 
     # ------------------------------------------------------------------ imagem
+    def _build_empty(self) -> QWidget:
+        """Estado vazio igual ao do encaixe: ícone, instrução e um botão só."""
+        w = QWidget()
+        w.setObjectName("PhotoEmpty")
+        lay = QVBoxLayout(w)
+        lay.addStretch(1)
+        self.empty_icon = QLabel()
+        self.empty_icon.setAlignment(Qt.AlignCenter)
+        lay.addWidget(self.empty_icon)
+        t1 = QLabel("Arraste uma foto para cá")
+        t1.setObjectName("EmptyTitle")
+        t1.setAlignment(Qt.AlignCenter)
+        t2 = QLabel("PNG, JPG ou BMP. Depois ajuste tamanho, posição e tons; a prévia mostra o que vai ser gravado.")
+        t2.setObjectName("Muted")
+        t2.setAlignment(Qt.AlignCenter)
+        t2.setWordWrap(True)
+        lay.addWidget(t1)
+        lay.addWidget(t2)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        self.btn_empty_open = QPushButton("Escolher imagem…")
+        self.btn_empty_open.setObjectName("primary")
+        self.btn_empty_open.clicked.connect(self.open_dialog)
+        row.addWidget(self.btn_empty_open)
+        row.addStretch(1)
+        lay.addSpacing(8)
+        lay.addLayout(row)
+        lay.addStretch(2)
+        self._refresh_empty_icon()
+        return w
+
+    def _refresh_empty_icon(self):
+        from .icons import pixmap
+        self.empty_icon.setPixmap(pixmap("image", theme.tokens()["accent"], 64, 1.5))
+
     def open_dialog(self):
         start = os.path.dirname(self.image_path) if self.image_path else os.path.expanduser("~")
         path, _ = QFileDialog.getOpenFileName(self, "Abrir imagem", start, IMAGE_FILTER)
@@ -414,6 +453,10 @@ class PhotoPanel(QWidget):
         self.gray, self.image_path = gray, path
         h, w = gray.shape
         self.file_lbl.setText(f"{os.path.basename(path)} · {w} × {h} px")
+        self.btn_open.setText("Trocar imagem…")
+        if self.view_stack.currentWidget() is not self.view:
+            self.view_stack.setCurrentWidget(self.view)
+            QTimer.singleShot(0, self.view.fit)       # a prévia acabou de ganhar tamanho
         self._update_size()
         if first:
             self.center()
@@ -680,4 +723,5 @@ class PhotoPanel(QWidget):
         self._update_info()
 
     def refresh_theme(self):
+        self._refresh_empty_icon()
         self._refresh_plate()

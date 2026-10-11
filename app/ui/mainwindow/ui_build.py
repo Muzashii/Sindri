@@ -75,7 +75,8 @@ class UIBuildMixin:
         tl.addWidget(self.btn_open)
         tl.addWidget(self.btn_intranet)
         tl.addWidget(self.btn_save)
-        tl.addWidget(self._vsep())
+        self._file_sep = self._vsep()
+        tl.addWidget(self._file_sep)
         lbl = QLabel("Placa")
         self.plate_lbl = lbl
         lbl.setObjectName("Muted")
@@ -599,7 +600,7 @@ class UIBuildMixin:
             b.setText("" if compact else txt)
         self.btn_export.setText("Exportar" if compact else "Exportar para RDWorks")
         self.preset_combo.setMinimumWidth(170 if compact else 230)
-        self.plate_lbl.setVisible(not compact)
+        self.plate_lbl.setVisible(not compact and self.mode_tabs.currentIndex() != 2)
         self.btn_nest.setMinimumWidth(0 if compact else 130)
         self.mode_tabs.setTabText(1, "Foto" if compact else "Gravação de foto")
         self.logo_lbl.setVisible(not tiny)          # telas pequenas: só o ícone (sobra lugar para as 3 abas)
@@ -635,8 +636,21 @@ class UIBuildMixin:
             return
         self.mode_stack.setCurrentIndex(i)
         self.nest_actions.setVisible(i == 0)
+        # a barra superior mostra só o que vale para o modo: arquivos/projeto são do encaixe,
+        # a placa vale para encaixe e foto (o gerador de caixas tem material próprio)
+        for widget in (self.btn_open, self.btn_intranet, self.btn_save, self._file_sep):
+            widget.setVisible(i == 0)
+        for widget in (self.plate_lbl, self.preset_combo, self.btn_gear):
+            widget.setVisible(i != 2)
+        if getattr(self, "_width_mode", (False, False))[0]:
+            self.plate_lbl.setVisible(False)
+        # mensagens da barra de status são de um modo só ("Encaixe concluído… Ctrl+E" não vale na Foto)
+        self.statusBar().clearMessage()
         if i == 1:
+            self.statusBar().showMessage("Foto: abra uma imagem, ajuste e exporte. O projeto não guarda a foto.", 8000)
             self.photo_panel.plate_changed()
+        elif i == 2:
+            self.statusBar().showMessage("Caixa: siga os passos e envie as peças para o encaixe.", 8000)
 
     def set_dark(self, dark: bool):
         self.dark = dark
