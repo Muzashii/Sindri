@@ -272,3 +272,6 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
     `padding` do stylesheet não chega ao editor interno do QSpinBox (o texto ficava colado na borda). Cada
     campo numérico recebe a margem dos outros campos, locale pt-BR (vírgula decimal, como no resto da tela)
     e o ponto digitado vira vírgula (teclado US/numérico), em vez de ser lido como separador de milhar.
+81. **Tema escuro legível**: links de avisos usam `accent_text` pela paleta (`QPalette.Link`), não o #0000ff do
+    Qt. Linhas do desenho com luminância < 0,15 (preto, azul puro da gravação) ganham luminosidade mantendo o
+    matiz, só na tela (`theme.line_color`); o DXF exportado continua com as cores originais.

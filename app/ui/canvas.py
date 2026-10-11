@@ -301,10 +301,7 @@ class PartItem(QGraphicsItem):
         if warn is not None:                 # trechos finos demais (fabricabilidade): laranja
             painter.fillPath(warn, QBrush(QColor(249, 115, 22, 190)))
         for col, path in g.lines:
-            c = col
-            if dark and c.lightness() < 60:
-                c = QColor(230, 230, 230)
-            pen = QPen(c, 0)
+            pen = QPen(theme.line_color(col, dark), 0)
             painter.setPen(pen)
             painter.drawPath(path)
         if self.isSelected():
@@ -451,10 +448,7 @@ class NestCanvas(QGraphicsView):
                 groups.setdefault(prim_rgb(pr), QPainterPath()).addPath(path)
         for col, path in groups.items():
             item = QGraphicsPathItem(path)
-            c = QColor(*col)
-            if self.dark and c.lightness() < 60:
-                c = QColor(230, 230, 230)
-            pen = QPen(c, 0)
+            pen = QPen(theme.line_color(QColor(*col), self.dark), 0)
             item.setPen(pen)
             self.scene().addItem(item)
         if not problem.isEmpty():

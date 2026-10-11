@@ -101,3 +101,24 @@ def test_numeric_fields_have_margin_and_brazilian_decimal(window):
     QTest.keyClicks(m.lineEdit(), "7.5")
     QTest.keyClick(m.lineEdit(), Qt.Key_Return)
     assert m.value() == 7.5
+
+
+def test_dark_theme_links_and_engraving_lines_are_readable():
+    """Tema escuro: links do aviso e linhas azuis/pretas do desenho legíveis (só na tela)."""
+    from PySide6.QtGui import QColor, QPalette
+    from app.ui import theme
+    app = QApplication.instance()
+    theme.apply_theme(app, True)
+    try:
+        assert app.palette().color(QPalette.Link).name() == theme.DARK["accent_text"]
+        bg = QColor(theme.DARK["sheet"])
+
+        def lum(c):
+            return sum(k * (v / 255) ** 2.2 for k, v in zip((0.2126, 0.7152, 0.0722), (c.red(), c.green(), c.blue())))
+        for rgb in ((0, 0, 255), (0, 0, 0)):
+            c = theme.line_color(QColor(*rgb), True)
+            assert (lum(c) + .05) / (lum(bg) + .05) >= 3, rgb
+        assert theme.line_color(QColor(255, 0, 0), True) == QColor(255, 0, 0)
+        assert theme.line_color(QColor(0, 0, 255), False) == QColor(0, 0, 255)
+    finally:
+        theme.apply_theme(app, False)

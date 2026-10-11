@@ -126,9 +126,8 @@ def thumbnail(part: Part, size: int = 56, dark: bool = False) -> QPixmap:
     fillc.setAlpha(60)
     painter.fillPath(g.fill, QBrush(fillc))
     for col, path in g.lines:
-        if dark and col.lightness() < 60:
-            col = QColor(220, 220, 220)
-        pen = QPen(col, 0)
+        from . import theme
+        pen = QPen(theme.line_color(col, dark), 0)
         pen.setCosmetic(True)
         painter.setPen(pen)
         painter.drawPath(path)

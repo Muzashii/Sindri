@@ -90,6 +90,19 @@ def qcolor(name: str) -> QColor:
     return QColor(v)
 
 
+def line_color(c: QColor, dark: bool) -> QColor:
+    """Cor de uma linha do desenho na tela. No escuro, cores muito escuras (preto, azul puro da gravação)
+    sumiam no fundo: ganham luminosidade mantendo o matiz. Só a visualização muda; o DXF exportado não."""
+    if not dark:
+        return c
+    lum = sum(k * (v / 255) ** 2.2 for k, v in zip((0.2126, 0.7152, 0.0722), (c.red(), c.green(), c.blue())))
+    if lum >= 0.15:
+        return c
+    if c.hslSaturation() < 40:                       # preto/cinza escuro
+        return QColor(230, 230, 230)
+    return QColor.fromHsl(c.hslHue(), c.hslSaturation(), max(c.lightness(), 175))
+
+
 def apply_theme(app: QApplication, dark: bool) -> None:
     global _current, _dark
     _dark = dark
@@ -115,6 +128,9 @@ def apply_theme(app: QApplication, dark: bool) -> None:
     p.setColor(QPalette.ToolTipText, QColor(t["text"]))
     p.setColor(QPalette.PlaceholderText, QColor(t["muted"]))
     p.setColor(QPalette.Mid, QColor(t["border"]))
+    # links em textos (avisos, dicas): azul legível nos dois temas, não o #0000ff padrão do Qt
+    p.setColor(QPalette.Link, QColor(t["accent_text"]))
+    p.setColor(QPalette.LinkVisited, QColor(t["accent_text"]))
     for role in (QPalette.Text, QPalette.ButtonText, QPalette.WindowText):
         p.setColor(QPalette.Disabled, role, QColor(t["muted"]))
     app.setPalette(p)
