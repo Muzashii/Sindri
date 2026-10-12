@@ -372,7 +372,8 @@ para não quebrar projetos `.sindri` salvos.
 
 ### Opção A: subagentes do Claude Code (`.claude/agents/`)
 
-Crie um arquivo por agente usando a seção dele como corpo. Modelo:
+Os 11 arquivos já estão no repositório em `.claude/agents/`, e o `CLAUDE.md` da raiz faz a sessão principal
+agir como Coordenador. Se mudar este documento, gere os arquivos de novo a partir das seções dele. Modelo:
 
 ```markdown
 ---
