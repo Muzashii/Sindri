@@ -31,7 +31,7 @@ compacta possível nas placas e entrega um único DXF pronto para o **RDWorks**,
 ## Interface redesenhada
 
 Painéis de peças e parâmetros podem ser recolhidos pelos botões acima do desenho;
-`Ctrl+Shift+P` alterna as peças e `Ctrl+P` alterna os parâmetros. Cabeçalhos com seta
+`Ctrl+Shift+L` alterna as peças e `Ctrl+P` alterna os parâmetros. Cabeçalhos com seta
 recolhem as seções de configuração sem perder valores. O resumo da seleção aparece
 acima do canvas, e os rótulos ficam menores conforme o zoom.
 

@@ -431,7 +431,7 @@ def test_abrir_placa_no_rdworks_usa_o_arquivo_da_placa(tmp_path, monkeypatch):
     assert [os.path.basename(x) for x in launched] == ["lote_placa01_MDF3mm.dxf"]   # 1ª não cortada
     assert "Confira no RDWorks" in w.banner_text.text() and "Saída" in w.banner_text.text()
     w.on_sheet_cut(0, True)
-    w.parts_panel.sheet_open_buttons[1].click()                     # ▶ da placa 2: abre o arquivo já pronto
+    w.canvas.sheetOpenClicked.emit(1)                               # ▶ da placa 2: abre o arquivo já pronto
     assert os.path.basename(launched[-1]) == "lote_placa02_MDF3mm.dxf"
     n_files = len(os.listdir(tmp_path))
     w.placements[1].x += 30                                          # a placa mudou: exporta de novo antes

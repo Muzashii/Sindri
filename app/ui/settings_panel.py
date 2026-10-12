@@ -254,16 +254,10 @@ class SettingsPanel(QWidget):
             f2.addRow(sw)
         lay.addWidget(g2)
 
-        self.adv_btn = QPushButton("▸  Opções avançadas")
-        self.adv_btn.setObjectName("ghost")
-        self.adv_btn.setCheckable(True)
-        self.adv_btn.setStyleSheet("text-align: left;")
-        lay.addWidget(self.adv_btn)
         g3 = _Section("Avançado", "settings", plain=True)
         self.adv_box = g3
-        g3.setVisible(False)
-        self.adv_btn.toggled.connect(lambda v: (g3.setVisible(v), self.adv_btn.setText(
-            ("▾" if v else "▸") + "  Opções avançadas")))
+        g3.toggle.setChecked(False)                  # começa recolhida; o próprio título abre e fecha
+        self.adv_btn = g3.toggle
         f3 = QFormLayout(g3.body)
         self.curve = _dspin(0.01, 2, 0.05, 2, " mm",
                             "Precisão usada no cálculo (não afeta o arquivo exportado, que mantém arcos e círculos).\n"
@@ -294,10 +288,6 @@ class SettingsPanel(QWidget):
         lay.addWidget(g3)
         lay.addStretch(1)
 
-        hint = QLabel("Dica: passe o mouse sobre cada opção para ver a explicação.")
-        hint.setObjectName("Muted")
-        hint.setWordWrap(True)
-        lay.addWidget(hint)
 
         from PySide6.QtWidgets import QComboBox as _C, QFormLayout as _F
         for cb in (self.units, self.rot):

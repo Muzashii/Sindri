@@ -60,12 +60,17 @@ class StatusMixin:
         n = max(1, self.n_sheets)
         cur = min(self.canvas.current_sheet(), n - 1) + 1 if self.canvas.mode == "layout" else 0
         if self.canvas.mode == "layout":
-            self.sheet_label.setText(f"  Placa {cur} de {n}  ")
+            tiny = getattr(self, "_width_mode", (False, False))[1]
+            self.sheet_label.setText(f" {cur}/{n} " if tiny else f"  Placa {cur} de {n}  ")
+            self.sheet_label.setToolTip(f"Placa {cur} de {n} (PgUp / PgDn)")
         else:
             self.sheet_label.setText("")
         on = self.canvas.mode == "layout" and n > 1
         self.btn_prev.setEnabled(on and cur > 1)
         self.btn_next.setEnabled(on and cur < n)
+        # navegação de placas só quando há mais de uma placa na tela
+        for w in (self.btn_prev, self.sheet_label, self.btn_next):
+            w.setVisible(on)
 
     def goto_sheet(self, i: int):
         if self.canvas.mode != "layout":
@@ -73,7 +78,6 @@ class StatusMixin:
         n = max(1, self.n_sheets)
         i = max(0, min(n - 1, i))
         self.canvas.focus_sheet(i)
-        self.sheet_label.setText(f"  Placa {i + 1} de {n}  ")
         self._update_sheet_label()
 
     def _utilization(self) -> float:
@@ -211,9 +215,12 @@ class StatusMixin:
         from ..theme import tokens
         self.btn_pause.setIcon(icon("play" if paused else "pause", tokens()["text"], 14, tokens()["muted"]))
         editing = self.canvas.mode == "layout" and not running and bool(self.placements)
-        for b in (self.btn_rot, self.btn_lock, self.btn_del):
+        for b in (self.btn_rot, self.btn_lock, self.btn_del, self.btn_positions):
             b.setEnabled(editing)
         self.stack.setCurrentIndex(1 if self.parts else 0)
+        # sem arquivo, só o convite do centro: abas, enquadrar e métricas aparecem com as peças
+        for w in (self.tabs, self.btn_fit, self.metrics_box):
+            w.setVisible(has_parts)
         self.parts_panel.set_editing(not running)
         self.settings_panel.setEnabled(not running)
         self._update_sheet_label()

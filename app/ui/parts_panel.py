@@ -104,7 +104,8 @@ class PartRow(QFrame):
         self.set_quantity(part.quantity)
 
         tips = [part.name, f"{_fmt(w)} × {_fmt(h)} mm · área {part.area / 100:.1f} cm²",
-                f"Arquivo: {part.source_file.replace(chr(92), '/').split('/')[-1]}"]
+                f"Arquivo: {part.source_file.replace(chr(92), '/').split('/')[-1]}",
+                "Clique para mudar a quantidade ou travar a rotação"]
         if warns:
             tips += [""] + ["⚠ " + x for x in warns]
             self.setProperty("warn", True)
@@ -260,6 +261,8 @@ class PartDetail(QFrame):
         self.title.setVisible(on)
         self.body.setVisible(on)
         self.hint.setVisible(not on)
+        # sem peça selecionada o bloco some (a dica de "clique no cartão" fica na dica de cada cartão)
+        self.setVisible(on and bool(getattr(self.panel, "parts", None)))
         if not on:
             return
         p = self.part
@@ -313,16 +316,34 @@ class PartsPanel(QWidget):
         lay.setContentsMargins(12, 14, 12, 12)
         lay.setSpacing(10)
         head = QHBoxLayout()
+        head.setSpacing(6)
         title = QLabel("Peças")
         title.setObjectName("PanelHeading")
         head.addWidget(title)
         head.addStretch(1)
-        self.btn_clear = QToolButton()
-        self.btn_clear.setObjectName("Danger")
-        self.btn_clear.setText(" Limpar")
-        self.btn_clear.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        self.btn_clear.setToolTip("Remover todas as peças e o encaixe (Ctrl+Shift+Del)")
-        head.addWidget(self.btn_clear)
+        self.summary = QLabel("")
+        self.summary.setObjectName("Muted")
+        head.addWidget(self.summary)
+        from PySide6.QtGui import QAction
+        from PySide6.QtWidgets import QMenu
+        self.btn_menu = QToolButton()
+        self.btn_menu.setToolTip("Mais ações das peças")
+        self.btn_menu.setAccessibleName("Mais ações das peças")
+        self.btn_menu.setPopupMode(QToolButton.InstantPopup)
+        self.btn_menu.setStyleSheet("QToolButton::menu-indicator { image: none; width: 0; }")
+        menu = QMenu(self.btn_menu)
+        self.btn_kits = QAction("Kits… (multiplicar quantidades)", self)
+        self.btn_kits.setToolTip("Multiplica todas as quantidades (ex.: quero 3 kits completos)")
+        self.btn_reset = QAction("Voltar às quantidades do arquivo", self)
+        self.btn_reset.setToolTip("Volta as quantidades para as do arquivo DXF")
+        self.btn_clear = QAction("Limpar tudo\tCtrl+Shift+Del", self)
+        self.btn_clear.setToolTip("Remover todas as peças e o encaixe")
+        for a_ in (self.btn_kits, self.btn_reset):
+            menu.addAction(a_)
+        menu.addSeparator()
+        menu.addAction(self.btn_clear)
+        self.btn_menu.setMenu(menu)
+        head.addWidget(self.btn_menu)
         lay.addLayout(head)
         self.req_card = QFrame()
         self.req_card.setObjectName("RequestCard")
@@ -351,26 +372,7 @@ class PartsPanel(QWidget):
         rc.addLayout(self.req_mats)
         self.req_card.hide()
         lay.addWidget(self.req_card)
-        # placas cortadas (aparece depois do encaixe)
-        self.sheets_box = QFrame()
-        self.sheets_box.setObjectName("SheetsBox")
-        sb = QVBoxLayout(self.sheets_box)
-        sb.setContentsMargins(10, 8, 10, 8)
-        sb.setSpacing(4)
-        self.sheets_title = QLabel("Placas cortadas")
-        self.sheets_title.setObjectName("SheetsTitle")
-        sb.addWidget(self.sheets_title)
-        self.sheets_grid = QGridLayout()
-        self.sheets_grid.setHorizontalSpacing(10)
-        self.sheets_grid.setVerticalSpacing(2)
-        sb.addLayout(self.sheets_grid)
-        self.sheets_box.hide()
-        lay.addWidget(self.sheets_box)
-        self.sheet_checks: dict[int, QCheckBox] = {}
-        self.summary = QLabel("Nenhum arquivo aberto")
-        self.summary.setObjectName("Muted")
-        self.summary.setWordWrap(True)
-        lay.addWidget(self.summary)
+        self.sheets: list[dict] = []
 
         # grade de 2 colunas de cartões (o último é "Adicionar DXF")
         self.list = QListWidget()
@@ -390,69 +392,22 @@ class PartsPanel(QWidget):
         self.detail = PartDetail(self)
         lay.addWidget(self.detail)
 
-        self.empty = QLabel("Abra ou arraste um arquivo DXF\npara ver as peças aqui.")
+        self.empty = QLabel("Nenhuma peça ainda.")            # o convite para abrir fica no centro da tela
         self.empty.setObjectName("Muted")
         self.empty.setAlignment(Qt.AlignCenter)
         lay.addWidget(self.empty, 1)
 
-        row = QHBoxLayout()
-        row.setSpacing(6)
-        self.btn_kits = QPushButton("Kits…")
-        self.btn_kits.setToolTip("Multiplica todas as quantidades (ex.: quero 3 kits completos)")
-        self.btn_reset = QPushButton("Qtd. do arquivo")
-        self.btn_reset.setToolTip("Volta as quantidades para as do arquivo DXF")
-        row.addWidget(self.btn_kits)
-        row.addWidget(self.btn_reset)
-        lay.addLayout(row)
         self.parts: list[Part] = []
         self.rows: list[PartRow] = []
         self.dark = False
         self._update_empty()
 
     def set_sheets(self, sheets: list[dict], cut: set):
-        """Caixinhas 'Placa 1 · MDF 3mm' para marcar as placas já cortadas."""
-        while self.sheets_grid.count():
-            w = self.sheets_grid.takeAt(0).widget()
-            if w:
-                w.hide()
-                w.setParent(None)
-                w.deleteLater()
-        self.sheet_checks = {}
-        self.sheet_open_buttons = {}
-        self.sheets_box.setVisible(bool(sheets))
-        if not sheets:
-            return
-        done = sum(1 for s in sheets if s["si"] in cut)
-        self.sheets_title.setText(f"Placas cortadas  ·  {done} de {len(sheets)}")
-        cols = 2 if len(sheets) > 1 else 1
-        for i, s in enumerate(sheets):
-            mat = s.get("material") or ""
-            txt = f"Placa {s['n']}" + (f" · {mat}" if mat else "")
-            cb = QCheckBox()
-            cb.setText(cb.fontMetrics().elidedText(txt, Qt.ElideRight, 128 if cols == 2 else 260))
-            cb.setToolTip(f"Placa {s['n']}" + (f" · {mat}" if mat else "") + f" · {s['count']} peças\n"
-                          "Marque quando terminar de cortar: as peças que só estão em placas cortadas "
-                          "ficam como feitas.")
-            cb.setChecked(s["si"] in cut)
-            if s["si"] in cut:
-                cb.setObjectName("CutDone")
-            cb.toggled.connect(lambda on, si=s["si"]: self.sheetToggled.emit(si, on))
-            self.sheet_checks[s["si"]] = cb
-            cell = QWidget()
-            h = QHBoxLayout(cell)
-            h.setContentsMargins(0, 0, 0, 0)
-            h.setSpacing(2)
-            h.addWidget(cb, 1)
-            op = QToolButton()
-            op.setText("▶")
-            op.setAutoRaise(True)
-            op.setToolTip(f"Abrir no RDWorks só a placa {s['n']} (arquivo de corte desta placa, origem no canto "
-                          "da chapa).\nFluxo: abrir → cortar → marcar como cortada → próxima.")
-            op.setAccessibleName(f"Abrir placa {s['n']} no RDWorks")
-            op.clicked.connect(lambda _=False, si=s["si"]: self.sheetOpenRequested.emit(si))
-            self.sheet_open_buttons[s["si"]] = op
-            h.addWidget(op)
-            self.sheets_grid.addWidget(cell, i // cols, i % cols)
+        """Placas do encaixe e quais já foram cortadas. A marcação e o "abrir no RDWorks" ficam na etiqueta
+        de cada placa no desenho; aqui só entra o resumo ("1 de 2 placas cortadas")."""
+        self.sheets = list(sheets)
+        self._cut = {s["si"] for s in sheets if s["si"] in cut}
+        self.update_summary()
 
     def set_filter(self, tag: str):
         """Mostra na lista só as peças da solicitação escolhida e avisa a janela (desenho)."""
@@ -586,6 +541,7 @@ class PartsPanel(QWidget):
 
     def refresh_icons(self):
         t = theme.tokens()
+        self.btn_menu.setIcon(icon("more", t["text"], 17, t["muted"]))
         self.btn_kits.setIcon(icon("copy", t["text"], 15))
         self.btn_reset.setIcon(icon("reset", t["text"], 15))
         self.btn_clear.setIcon(icon("trash", t["danger"], 15, t["muted"]))
@@ -593,7 +549,7 @@ class PartsPanel(QWidget):
     def _update_empty(self):
         has = bool(self.parts)
         self.list.setVisible(has)
-        self.detail.setVisible(has)
+        self.detail.setVisible(has and self.detail.part is not None)
         self.empty.setVisible(not has)
         self.btn_kits.setEnabled(has)
         self.btn_reset.setEnabled(has)
@@ -705,18 +661,28 @@ class PartsPanel(QWidget):
             self.detail.spin.blockSignals(False)
 
     def update_summary(self, placed=None, too_big: set[str] | None = None):
+        """Resumo curto no cabeçalho ("35 peças · ⚠ 1"); o detalhe fica na dica."""
+        if too_big is not None:
+            self._too_big = set(too_big)
         if not self.parts:
-            self.summary.setText("Nenhum arquivo aberto")
+            self.summary.setText("")
+            self.summary.setToolTip("")
             return
         total = sum(p.quantity for p in self.parts)
-        txt = f"{len(self.parts)} tipo(s) · {total} peça(s) no total"
-        nwarn = sum(1 for p in self.parts if p.warnings) + len(too_big or ())
-        if nwarn:
-            txt += f" · ⚠ {nwarn} com aviso"
+        nwarn = sum(1 for p in self.parts if p.warnings) + len(getattr(self, "_too_big", ()))
         nd = getattr(self, "_done_count", 0)
+        short = f"{total} peças" + (f" · ⚠ {nwarn}" if nwarn else "") + (f" · ✓ {nd}" if nd else "")
+        lines = [f"{len(self.parts)} tipo(s) · {total} peça(s) no total"]
+        if nwarn:
+            lines.append(f"⚠ {nwarn} tipo(s) com aviso (passe o mouse no ⚠ do cartão)")
         if nd:
-            txt += f" · ✓ {nd} de {len(self.parts)} feita(s)"
-        self.summary.setText(txt)
+            lines.append(f"✓ {nd} de {len(self.parts)} tipo(s) feito(s)")
+        if self.sheets:
+            lines.append(f"{len(getattr(self, '_cut', ()))} de {len(self.sheets)} placa(s) cortada(s) "
+                         "(marque na etiqueta de cada placa)")
+        self.summary.setText(short)
+        self.summary.setToolTip("\n".join(lines))
+        self.summary.setAccessibleName("Resumo das peças: " + "; ".join(lines))
 
     def select_part(self, pid: str):
         for i, p in enumerate(self.parts):

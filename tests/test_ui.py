@@ -128,8 +128,9 @@ def test_fluxo_completo(app, tmp_path, monkeypatch):
     # checklist na aba Peças: placas cortadas e peças feitas
     first = min(pl.sheet_index for pl in w.placements)
     w.on_sheet_cut(first, True)
-    assert first in w.cut_sheets and w.parts_panel.sheet_checks[first].isChecked()
+    assert first in w.cut_sheets and "1 de " in w.parts_panel.summary.toolTip()
     assert any(it.done for it in w.canvas.sheet_items if it.index == first)
+    assert any(lb.done for lb in w.canvas.sheet_labels if lb.index == first)   # "✓ cortada" na etiqueta
     only_first = {p.id for p in w.parts
                   if {pl.sheet_index for pl in w.placements if pl.part_id == p.id} == {first}}
     assert only_first and only_first <= w.done_parts          # peças só dessa placa ficam feitas

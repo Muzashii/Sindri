@@ -304,3 +304,18 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
 89. **Rodapé de métricas**: quatro células (aproveitamento, placas, peças, tempo estimado) com números em fonte
     monoespaçada. A 4ª célula mostra as soluções testadas enquanto otimiza e o tempo de máquina depois (mesma
     conta do relatório, guardada até o encaixe mudar; detalhe por placa na dica).
+90. **Encaixe enxuto: cada ação aparece uma vez na tela** (as que saíram da tela continuam no menu, com atalho):
+    - cabeçalho do desenho numa linha só: painel de peças · Original/Encaixe · ‹ Placa 1 de 2 › · enquadrar ·
+      painel de parâmetros (os dois mostradores de painel viraram ícones);
+    - girar, travar, remover e "Posição…" ficam numa barra que só aparece com peça selecionada (Editar ›, R, L,
+      Del, Ctrl+Shift+M); o texto da barra não repete os atalhos (estão na dica de cada botão);
+    - "Placas cortadas" saiu do painel de peças: "cortada" e "▶ RDWorks" ficam na etiqueta de cada placa
+      (teclado: C e Ctrl+Alt+R para a placa da tela); o painel mostra só o resumo ("1 de 2 placas cortadas");
+    - Kits, quantidades do arquivo e Limpar foram para o menu ⋯ do painel; o resumo de peças foi para o
+      cabeçalho; o bloco de quantidade só aparece com peça selecionada;
+    - a engrenagem de placas virou o item "Gerenciar placas…" no fim do seletor (também em Encaixe ›);
+    - "Opções avançadas" tinha dois botões de abrir (link + título da seção): ficou só o título, fechado;
+      saiu a dica fixa "passe o mouse…" do fim dos parâmetros;
+    - sem arquivo aberto, abas, setas de placa, enquadrar e o rodapé de métricas ficam escondidos (o convite
+      do centro é a única ação); as setas de placa só aparecem com mais de uma placa;
+    - painel de peças: atalho Ctrl+Shift+L (Ctrl+Shift+P é "Abrir projeto"; estavam em conflito).

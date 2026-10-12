@@ -93,13 +93,14 @@ class UIBuildMixin:
         tl.addWidget(lbl)
         self.preset_combo = QComboBox()
         self.preset_combo.setMinimumWidth(230)
-        self.preset_combo.setToolTip("Tamanho da placa de material. Edite a lista na engrenagem.")
+        self.preset_combo.setToolTip("Tamanho da placa de material. Para criar ou apagar placas salvas, use "
+                                     "“Gerenciar placas…” no fim da lista.")
         self.preset_combo.activated.connect(self._preset_chosen)
         tl.addWidget(self.preset_combo)
         self.btn_gear = QToolButton()
         self.btn_gear.setToolTip("Gerenciar placas salvas")
         self.btn_gear.clicked.connect(self.edit_presets)
-        tl.addWidget(self.btn_gear)
+        self.btn_gear.hide()                         # agora é o item "Gerenciar placas…" do seletor
         tl.addStretch(1)
         self.btn_nest = QPushButton("Encaixar")
         self.btn_nest.setObjectName("primary")
@@ -151,9 +152,9 @@ class UIBuildMixin:
         self.parts_panel.quantityChanged.connect(self.on_quantity_changed)
         self.parts_panel.rotationLockChanged.connect(self.on_rotation_lock_changed)
         self.parts_panel.partSelected.connect(self.on_part_selected)
-        self.parts_panel.btn_kits.clicked.connect(self.multiply_kits)
-        self.parts_panel.btn_reset.clicked.connect(self.reset_quantities)
-        self.parts_panel.btn_clear.clicked.connect(lambda: self.clear_all())
+        self.parts_panel.btn_kits.triggered.connect(self.multiply_kits)
+        self.parts_panel.btn_reset.triggered.connect(self.reset_quantities)
+        self.parts_panel.btn_clear.triggered.connect(lambda: self.clear_all())
         self.parts_panel.addRequested.connect(lambda: self.open_dxf_dialog(add=True))
 
         # ---------------- área central (cartão com abas, canvas e navegação)
@@ -179,30 +180,23 @@ class UIBuildMixin:
         self.tabs.setTabToolTip(0, "Como as peças estão no DXF (contornos abertos em vermelho)")
         self.tabs.setTabToolTip(1, "Resultado do encaixe nas placas")
         self.tabs.currentChanged.connect(self._tab_changed)
-        head.addWidget(self.tabs)
-        head.addStretch(1)
+        self.tabs.setUsesScrollButtons(False)              # as 2 abas sempre inteiras (nunca com setas)
+        self.tabs.setElideMode(Qt.ElideNone)
+        # uma linha só: [painel peças] [Original | Encaixe] … [‹ Placa 1 de 2 ›] [enquadrar] [painel parâmetros]
         self.btn_parts_panel = QToolButton()
         self.btn_params_panel = QToolButton()
         for button, label in ((self.btn_parts_panel, "Peças"), (self.btn_params_panel, "Parâmetros")):
-            button.setText(label)
             button.setObjectName("PanelToggle")      # discreto: estado no preenchimento, sem borda azul
             button.setCheckable(True)
             button.setChecked(True)
-            button.setToolTip("Mostrar ou recolher o painel de " + label.lower())
+            button.setToolTip("Mostrar ou recolher o painel de " + label.lower()
+                              + (" (Ctrl+Shift+L)" if label == "Peças" else " (Ctrl+P)"))
             button.setAccessibleName("Painel de " + label.lower())
-            head.addWidget(button)
+        head.addWidget(self.btn_parts_panel)
+        head.addWidget(self.tabs)
+        head.addStretch(1)
         self.btn_parts_panel.toggled.connect(lambda on: self.a_parts.setChecked(on))
         self.btn_params_panel.toggled.connect(lambda on: self.a_params.setChecked(on))
-        cl.addLayout(head)
-        head = QHBoxLayout()
-        head.setSpacing(4)
-        self.btn_rot = self._tool("Girar peça selecionada (R)", self.rotate_selected)
-        self.btn_lock = self._tool("Travar/destravar posição da peça selecionada (L)", self.toggle_lock_selected)
-        self.btn_del = self._tool("Remover peça selecionada (Del)", self.delete_selected)
-        for b in (self.btn_rot, self.btn_lock, self.btn_del):
-            head.addWidget(b)
-        head.addWidget(self._vsep())
-        head.addStretch(1)
         self.btn_prev = self._tool("Placa anterior (PgUp)", lambda: self.goto_sheet(self.canvas.current_sheet() - 1))
         self.sheet_label = QLabel("")
         self.sheet_label.setObjectName("Muted")
@@ -212,19 +206,30 @@ class UIBuildMixin:
         head.addWidget(self.sheet_label)
         head.addWidget(self.btn_next)
         head.addWidget(self.btn_fit)
-        edit_position = QPushButton("Posições…")
-        self.btn_positions = edit_position
-        from PySide6.QtWidgets import QSizePolicy
-        edit_position.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        edit_position.setToolTip("Selecionar uma cópia e ajustar posição/placa por teclado (Ctrl+Shift+M)")
-        edit_position.clicked.connect(self.edit_positions)
-        head.addWidget(edit_position)
+        head.addWidget(self.btn_params_panel)
         cl.addLayout(head)
+        # barra da seleção: só aparece com peça selecionada (detalhes + girar, travar, remover)
+        self.selection_bar = QFrame()
+        self.selection_bar.setObjectName("SelectionBar")
+        sbl = QHBoxLayout(self.selection_bar)
+        sbl.setContentsMargins(10, 2, 4, 2)
+        sbl.setSpacing(2)
+        self.btn_rot = self._tool("Girar peça selecionada (R)", self.rotate_selected)
+        self.btn_lock = self._tool("Travar/destravar posição da peça selecionada (L)", self.toggle_lock_selected)
+        self.btn_del = self._tool("Remover peça selecionada (Del)", self.delete_selected)
+        # "Posição…": X, Y, ângulo e placa pelo teclado (também em Editar › Editar posições, Ctrl+Shift+M,
+        # que funciona sem seleção)
+        self.btn_positions = self._tool("Ajustar posição pelo teclado: X, Y, ângulo e placa (Ctrl+Shift+M)",
+                                        self.edit_positions)
         self.selection_summary = QLabel("Selecione uma peça para conferir seus detalhes")
         self.selection_summary.setObjectName("SelectionSummary")
         self.selection_summary.setWordWrap(True)
         self.selection_summary.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        cl.addWidget(self.selection_summary)
+        sbl.addWidget(self.selection_summary, 1)
+        for b in (self.btn_rot, self.btn_lock, self.btn_del, self.btn_positions):
+            sbl.addWidget(b)
+        self.selection_bar.hide()
+        cl.addWidget(self.selection_bar)
 
         self.banner = QFrame()
         self.banner.setObjectName("Banner")
@@ -257,7 +262,8 @@ class UIBuildMixin:
         self.stack.addWidget(self.empty_state)
         self.stack.addWidget(self.canvas)
         cl.addWidget(self.stack, 1)
-        card_l.addWidget(self._build_metrics())
+        self.metrics_box = self._build_metrics()
+        card_l.addWidget(self.metrics_box)
         ol.addWidget(card, 1)
 
         # ---------------- parâmetros
@@ -281,6 +287,7 @@ class UIBuildMixin:
         self.parts_panel.doneChanged.connect(self.on_part_done)
         self.parts_panel.sheetToggled.connect(self.on_sheet_cut)
         self.parts_panel.sheetOpenRequested.connect(self.open_sheet_in_rdworks)
+        self.canvas.sheetOpenClicked.connect(self.open_sheet_in_rdworks)
         self.parts_panel.requestFilter.connect(self.on_request_filter)
         split.addWidget(self.parts_panel)
         split.addWidget(outer)
@@ -453,7 +460,9 @@ class UIBuildMixin:
         self.btn_prev.setIcon(icon("left", c, 17, m))
         self.btn_next.setIcon(icon("right", c, 17, m))
         self.btn_fit.setIcon(icon("fit", c, 17, m))
-        self.btn_positions.setIcon(icon("settings", c, 16, m))
+        self.btn_positions.setIcon(icon("move", c, 17, m))
+        self.btn_parts_panel.setIcon(icon("panel_left", c, 17, m))
+        self.btn_params_panel.setIcon(icon("panel_right", c, 17, m))
         self.banner_close.setIcon(icon("close", m, 14))
         self.empty_icon.setPixmap(pixmap("layers", t["accent"], 64, 1.5))
         self.parts_panel.refresh_icons()
@@ -565,8 +574,10 @@ class UIBuildMixin:
         act(m_nest, "Iniciar/pausar encaixe", self.start_or_pause, "Space")
         act(m_nest, "Parar", self.stop_nest, "Esc")
         act(m_nest, "Destravar todas as peças", self.unlock_all)
+        act(m_nest, "Gerenciar placas salvas…", self.edit_presets)
         m_nest.addSeparator()
         act(m_nest, "Marcar placa da tela como cortada (e ir para a próxima)", self.toggle_current_cut, "C")
+        act(m_nest, "Abrir no RDWorks só a placa da tela", self.open_current_sheet_in_rdworks, "Ctrl+Alt+R")
         m_nest.addSeparator()
         act(m_nest, "Banco de materiais…", lambda: self.open_materials_dialog(), "Ctrl+M")
         act(m_nest, "Retalhos…", lambda: self.open_remnants_dialog(), "Ctrl+Shift+R")
@@ -592,7 +603,7 @@ class UIBuildMixin:
         self.a_params.toggled.connect(self.toggle_params)
         self.settings_panel.setVisible(self.a_params.isChecked())
         self.btn_params_panel.setChecked(self.a_params.isChecked())
-        self.a_parts = act(m_view, "Painel de peças", lambda: None, "Ctrl+Shift+P")
+        self.a_parts = act(m_view, "Painel de peças", lambda: None, "Ctrl+Shift+L")
         self.a_parts.setCheckable(True)
         self.a_parts.setChecked(settings().value("ui/parts_visible", "true") == "true")
         self.a_parts.toggled.connect(self.toggle_parts)
@@ -627,21 +638,21 @@ class UIBuildMixin:
         self.plate_lbl.setVisible(False)            # o seletor de placa já diz o que é (sem rótulo "Placa")
         self.btn_nest.setMinimumWidth(0 if compact else 130)
         self.mode_tabs.setTabText(1, "Foto" if compact else "Gravação de foto")
+        self.tabs.setTabText(0, "Original" if tiny else "Arquivo original")
+        if hasattr(self, "sheet_label"):
+            self._update_sheet_label()
         self.logo_lbl.setVisible(not tiny)          # telas pequenas: só o ícone (sobra lugar para as 3 abas)
         self.parts_panel.setMinimumWidth(metric("panel_parts_min"))
         self.settings_panel.setMinimumWidth(280)
         self.settings_panel.set_compact(tiny)
         self.photo_panel.set_compact(tiny)
         self.box_panel.set_compact(tiny)
-        self.status_hint.setText("F1 atalhos" if compact else
-                                 "Roda: zoom  ·  botão do meio / Alt+arrastar: mover vista  ·  R girar  ·  "
-                                 "L travar  ·  Del remover  ·  F1 atalhos")
+        self.status_hint.setText("F1 atalhos")       # dicas do desenho ficam na ajuda (F1), não na barra
         self.status_hint.setVisible(not tiny)
         for key, (cap, val) in self._metric_caps.items():
             cap.parentWidget().layout().setContentsMargins(10 if compact else 16, 10, 10 if compact else 16, 8)
         self._metric_caps["aproveitamento"][0].setText("APROVEIT." if tiny else "APROVEITAMENTO")
         self.status_label.setMaximumWidth(16777215)
-        self.btn_positions.setText("" if tiny else "Posições…")
         self.preset_combo.setMaximumWidth(170 if tiny else 230)
         self.preset_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.preset_combo.setMinimumContentsLength(8)
@@ -660,7 +671,7 @@ class UIBuildMixin:
         # a placa vale para encaixe e foto (o gerador de caixas tem material próprio)
         for widget in (self.btn_open, self.btn_intranet, self.btn_save, self._file_sep):
             widget.setVisible(i == 0)
-        for widget in (self.preset_combo, self.btn_gear, self._mode_sep):
+        for widget in (self.preset_combo, self._mode_sep):
             widget.setVisible(i != 2)
         # mensagens da barra de status são de um modo só ("Encaixe concluído… Ctrl+E" não vale na Foto)
         self.statusBar().clearMessage()
@@ -702,7 +713,8 @@ class UIBuildMixin:
 
     def show_shortcuts(self):
         QMessageBox.information(self, "Atalhos de teclado", (
-            "Ctrl+Shift+P\tMostrar/recolher painel de peças\n"
+            "Ctrl+Shift+L\tMostrar/recolher painel de peças\n"
+            "Ctrl+Shift+P\tAbrir projeto\n"
             "Ctrl+O\tAbrir DXF\n"
             "Ctrl+Shift+O\tAdicionar DXF\n"
             "Ctrl+I\tIntranet FIAP\n"
@@ -719,6 +731,7 @@ class UIBuildMixin:
             "Ctrl+P\tMostrar/ocultar parâmetros\n"
             "Ctrl+T\tTema claro/escuro\n"
             "Ctrl+1 / 2 / 3\tEncaixe / Gravação de foto / Gerador de caixas\n"
+            "Ctrl+Alt+R\tAbrir no RDWorks só a placa da tela\n"
             "Ctrl+Shift+M\tEditar posições por instância (teclado)\n"
             "Ctrl+A\tSelecionar todas as peças\n"
             "R\tGirar peça selecionada\n"

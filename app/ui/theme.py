@@ -225,7 +225,7 @@ QToolButton { background: transparent; color: %(text)s; border: 2px solid transp
               border-radius: %(radius_md)spx; padding: 5px; }
 QToolButton:hover { background: %(surface3)s; }
 QToolButton:checked { background: %(accent_soft)s; border-color: %(accent_text)s; }
-QToolButton#PanelToggle { color: %(muted)s; padding: 4px 10px; font-weight: 600; }
+QToolButton#PanelToggle { color: %(muted)s; padding: 5px; font-weight: 600; }
 QToolButton#PanelToggle:checked { background: %(surface3)s; color: %(text)s; border-color: transparent; }
 QToolButton#PanelToggle:hover { color: %(text)s; }
 QToolButton#PanelToggle:focus { border-color: %(focus)s; }
@@ -274,6 +274,9 @@ QListWidget { background: transparent; border: none; color: %(text)s; }
 QListWidget::item { border: none; padding: 4px 6px; border-radius: 6px; }
 QListWidget::item:hover { background: %(surface2)s; }
 QListWidget::item:selected { background: %(accent_soft)s; color: %(text)s; }
+QListWidget::indicator { width: 16px; height: 16px; border-radius: 4px; border: 1px solid %(control_border)s;
+                         background: %(surface)s; }
+QListWidget::indicator:checked { background: %(accent)s; border-color: %(accent)s; image: url(%(check_img)s); }
 /* grade de peças: o cartão desenha a seleção sozinho */
 QListWidget#PartGrid::item { margin: 0; padding: 0; background: transparent; }
 QListWidget#PartGrid::item:selected, QListWidget#PartGrid::item:hover { background: transparent; }
@@ -384,8 +387,8 @@ QToolButton#SectionToggle:hover { background: %(surface3)s; }
 QToolButton#SectionToggle[plain="true"] { font-weight: 600; padding: 4px 4px; font-size: 9pt; color: %(muted)s;
     letter-spacing: 0.6px; }
 QToolButton#SectionToggle[plain="true"]:hover { color: %(text)s; background: transparent; }
-QLabel#SelectionSummary { color: %(muted)s; padding: 4px 8px; background: %(surface2)s;
-    border-radius: %(radius_sm)spx; }
+QFrame#SelectionBar { background: %(accent_soft)s; border-radius: 8px; }
+QLabel#SelectionSummary { color: %(text)s; background: transparent; }
 QLabel#EmptyTitle { font-size: %(font_hero)spt; font-weight: 700; color: %(text)s; }
 QCheckBox#CutDone { color: %(success_text)s; font-weight: 700; }
 QLabel#InlineWarning { color: %(warn)s; }

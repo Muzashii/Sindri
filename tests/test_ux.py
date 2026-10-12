@@ -101,7 +101,7 @@ def test_recovery_notice_survives_update(window):
 def test_custom_plate_unhides_params(window):
     window.a_params.setChecked(False)
     assert window.settings_panel.isHidden()
-    window._preset_chosen(window.preset_combo.count() - 1)
+    window._preset_chosen(len(window.presets))            # "Personalizada…"
     assert not window.settings_panel.isHidden() and window.a_params.isChecked()
 
 

@@ -173,7 +173,7 @@ class NestingMixin:
         self._auto_stopped = False
         if self.placements and missing <= 0:
             msg += " Ctrl+E exporta."
-        self.statusBar().showMessage(msg + " Ao cortar, marque as placas e as peças feitas na lista de Peças.",
+        self.statusBar().showMessage(msg + " Ao cortar, marque “cortada” na etiqueta de cada placa (ou C).",
                                      12000)
 
     def toggle_pause(self):

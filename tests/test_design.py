@@ -6,7 +6,7 @@ import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QMessageBox, QScrollArea
+from PySide6.QtWidgets import QApplication, QMessageBox, QScrollArea, QToolButton
 
 
 @pytest.fixture
@@ -257,3 +257,113 @@ def test_switches_keep_their_options(window):
     before = sp.params().allow_mirror
     sp.mirror.setChecked(not sp.mirror.isChecked())
     assert sp.params().allow_mirror != before
+
+
+def test_clean_layout_keeps_every_action(window, monkeypatch):
+    """Tela enxuta: cada ação aparece uma vez na tela e continua acessível (menu, atalho ou etiqueta)."""
+    window.load_files([str(Path(__file__).parent / "fixtures" / "simples.dxf")])
+    QApplication.processEvents()
+    # barra da seleção (girar, travar, remover, posição) só com peça selecionada
+    assert not window.selection_bar.isVisibleTo(window)
+    for b in (window.btn_rot, window.btn_lock, window.btn_del, window.btn_positions):
+        assert b.parentWidget() is window.selection_bar
+    # cada ação do desenho continua no menu, com atalho, mesmo sem a barra
+    from PySide6.QtGui import QAction
+    menu = {a.text(): a.shortcut().toString() for a in window.findChildren(QAction) if a.text()}
+    for text, key in (("Girar peça selecionada", "R"), ("Travar/destravar posição", "L"),
+                      ("Remover peça selecionada", "Del"), ("Editar posições por instância…", "Ctrl+Shift+M"),
+                      ("Enquadrar tudo", "F"), ("Marcar placa da tela como cortada (e ir para a próxima)", "C"),
+                      ("Abrir no RDWorks só a placa da tela", "Ctrl+Alt+R"), ("Gerenciar placas salvas…", ""),
+                      ("Adicionar DXF…", "Ctrl+Shift+O"), ("Limpar tudo", "Ctrl+Shift+Del")):
+        assert menu.get(text) == key, (text, menu.get(text))
+    # no cabeçalho do desenho, um botão por ação (sem menu ⋯ repetindo o que está ao lado)
+    head = [b for b in window.findChildren(QToolButton) if b.isVisibleTo(window) and b.menu() is not None
+            and b.window() is window and b.parentWidget() is window.btn_fit.parentWidget()]
+    assert not head
+    # painel de peças: Kits, quantidades do arquivo e Limpar no menu ⋯ do painel
+    pm = [a.text() for a in window.parts_panel.btn_menu.menu().actions() if a.text()]
+    assert any("Kits" in t for t in pm) and any("arquivo" in t for t in pm) and any("Limpar" in t for t in pm)
+    # sem peça selecionada, o bloco de quantidade não aparece
+    assert not window.parts_panel.detail.isVisibleTo(window.parts_panel)
+    # engrenagem virou "Gerenciar placas…" no seletor
+    called = []
+    monkeypatch.setattr(window, "edit_presets", lambda: called.append(1))
+    window._preset_chosen(window.preset_combo.count() - 1)
+    assert called and isinstance(window.preset_combo.currentData(), (dict, type(None)))
+    # atalhos sem conflito
+    keys = [a.shortcut().toString() for a in window.findChildren(QAction) if not a.shortcut().isEmpty()]
+    assert len(keys) == len(set(keys)), sorted(k for k in keys if keys.count(k) > 1)
+
+
+def test_sheet_label_has_cut_and_rdworks_chips(window):
+    """A etiqueta de cada placa marca "cortada" e abre só aquela placa no RDWorks."""
+    from PySide6.QtCore import QPointF
+    window.load_files([str(Path(__file__).parent / "fixtures" / "simples.dxf")])
+    window.start_nest()
+    for _ in range(200):
+        QTest.qWait(50)
+        if window.worker is None:
+            break
+        if window.placements:
+            window.stop_nest()
+    QTest.qWait(100)
+    lb = window.canvas.sheet_labels[0]
+    width, compact = lb._layout()
+    open_r, cut_r = lb._chips(width, compact)
+    opened, cut = [], []
+    window.canvas.sheetOpenClicked.disconnect()           # não exporta nem abre o RDWorks de verdade aqui
+    window.canvas.sheetOpenClicked.connect(lambda si: opened.append(si))
+    window.canvas.sheetCutClicked.connect(lambda si: cut.append(si))
+
+    class _Ev:
+        def __init__(self, p):
+            self._p = p
+
+        def pos(self):
+            return self._p
+
+        def accept(self):
+            pass
+    lb.mousePressEvent(_Ev(open_r.center()))
+    lb.mousePressEvent(_Ev(cut_r.center()))
+    assert opened == [lb.index] and cut == [lb.index]
+
+
+def test_selection_bar_actions_and_advanced_single_toggle(window):
+    """Com peça selecionada a barra mostra o resumo e as 4 ações; "Avançado" abre com um toggle só."""
+    window.load_files([str(Path(__file__).parent / "fixtures" / "simples.dxf")])
+    window.start_nest()
+    for _ in range(200):
+        QTest.qWait(50)
+        if window.worker is None:
+            break
+        if window.placements:
+            window.stop_nest()
+    QTest.qWait(100)
+    window.canvas.part_items[0].setSelected(True)
+    QApplication.processEvents()
+    assert window.selection_bar.isVisibleTo(window) and window.btn_positions.isEnabled()
+    window.canvas.scene().clearSelection()
+    QApplication.processEvents()
+    assert not window.selection_bar.isVisibleTo(window)
+    sp = window.settings_panel
+    assert sp.adv_btn is sp.adv_box.toggle and not sp.adv_box.body.isVisibleTo(sp)
+    sp.adv_btn.setChecked(True)
+    assert sp.adv_box.body.isVisibleTo(sp) and sp.stop_ni.isVisibleTo(sp)
+
+
+def test_current_sheet_rdworks_shortcut(window, monkeypatch):
+    """Ctrl+Alt+R abre no RDWorks a placa do centro da tela (o mesmo "▶ RDWorks" da etiqueta)."""
+    window.load_files([str(Path(__file__).parent / "fixtures" / "simples.dxf")])
+    window.start_nest()
+    for _ in range(200):
+        QTest.qWait(50)
+        if window.worker is None:
+            break
+        if window.placements:
+            window.stop_nest()
+    QTest.qWait(100)
+    got = []
+    monkeypatch.setattr(window, "open_sheet_in_rdworks", lambda si: got.append(si))
+    window.open_current_sheet_in_rdworks()
+    assert got == [window.canvas.current_sheet()]
