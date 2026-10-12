@@ -18,6 +18,7 @@ from ezdxf import recover
 from ezdxf.math import Matrix44
 from ezdxf import units as ezunits
 
+from .import_issues import CHECK, ERROR, FIXED, ImportIssue
 from .models import Prim
 
 try:
@@ -48,6 +49,7 @@ class RawFile:
     suggested_units: Optional[int] = None   # unidade sugerida quando o tamanho parece absurdo
     size_mm: float = 0.0                    # maior dimensão do desenho (mm, após conversão)
     layers: dict = field(default_factory=dict)   # camada -> {"color": aci, "count": n, "texts": n}
+    issues: list = field(default_factory=list)   # ImportIssue (avisos com local e gravidade)
 
 
 # unidades oferecidas na interface (código $INSUNITS -> nome)
@@ -83,6 +85,11 @@ def read_dxf(path: str, units_override: Optional[int] = None, ignore_text: bool 
         raise DXFImportError(f"\"{name}\" não pôde ser lido: {e}") from e
 
     warnings: list[str] = []
+    issues: list[ImportIssue] = []
+
+    def issue(kind, severity, message, count=1):
+        issues.append(ImportIssue(os.path.abspath(path), kind, severity, message, count))
+
     declared = int(doc.header.get("$INSUNITS", 0) or 0)
     insunits = declared
     if units_override is not None and units_override >= 0:
@@ -93,6 +100,7 @@ def read_dxf(path: str, units_override: Optional[int] = None, ignore_text: bool 
         factor = 1.0
         note = f"{name}: unidade não definida no arquivo — assumindo milímetros."
         warnings.append(note)
+        issue("units_assumed", FIXED, "Sem unidade no arquivo: considerado em milímetros.")
     else:
         try:
             factor = ezunits.conversion_factor(insunits, ezunits.MM)
@@ -101,6 +109,7 @@ def read_dxf(path: str, units_override: Optional[int] = None, ignore_text: bool 
             factor = 1.0
             note = f"{name}: unidade {insunits} desconhecida — assumindo milímetros."
             warnings.append(note)
+            issue("units_unknown", CHECK, f"Unidade {insunits} desconhecida: considerado em milímetros.")
 
     prims: list[Prim] = []
     skipped: dict[str, int] = {}
@@ -114,6 +123,7 @@ def read_dxf(path: str, units_override: Optional[int] = None, ignore_text: bool 
             skipped[key] = skipped.get(key, 0) + 1
     for t, n in skipped.items():
         warnings.append(f"{name}: {n} entidade(s) {t} ignorada(s).")
+        issue("ignored", FIXED, f"{n} entidade(s) {t} ignorada(s) (o laser não usa).", n)
     layers: dict = {}
     for p in prims:
         info = layers.setdefault(p.layer, {"color": p.color, "count": 0, "texts": 0})
@@ -126,8 +136,10 @@ def read_dxf(path: str, units_override: Optional[int] = None, ignore_text: bool 
              not (ignore_text and p.kind in ("TEXT", "MTEXT"))]
     if ignore_text and n_txt:
         warnings.append(f"{name}: {n_txt} texto(s) ignorado(s) (opção “Ignorar textos”).")
+        issue("text_ignored", FIXED, f"{n_txt} texto(s) ignorado(s) (opção “Ignorar textos”).", n_txt)
     if not prims:
         warnings.append(f"{name}: nenhuma geometria suportada encontrada.")
+        issue("empty", ERROR, "Nenhuma linha que o laser consiga cortar.")
     size = _drawing_size(prims)
     suggested = None
     if prims and (units_override is None or units_override < 0):
@@ -137,7 +149,10 @@ def read_dxf(path: str, units_override: Optional[int] = None, ignore_text: bool 
                 f"{name}: o arquivo diz estar em {UNIT_NAMES.get(declared, 'unidade indefinida')}, "
                 f"mas assim o desenho teria {size / 1000:.1f} m de largura. Provavelmente está em "
                 f"{UNIT_NAMES[suggested]}. Ajuste em Parâmetros > Unidade do DXF.")
-    return RawFile(path, prims, factor, note, warnings, declared, suggested, size, layers)
+            issue("units_suspicious", CHECK,
+                  f"Na unidade declarada o desenho teria {size / 1000:.1f} m; provavelmente está em "
+                  f"{UNIT_NAMES[suggested]}.")
+    return RawFile(path, prims, factor, note, warnings, declared, suggested, size, layers, issues)
 
 
 def _drawing_size(prims: list[Prim]) -> float:

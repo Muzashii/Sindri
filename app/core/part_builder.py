@@ -26,6 +26,7 @@ from shapely import affinity
 from .dxf_import import RawFile, read_dxf
 from .geometry import (Transform, flatten_prim, prim_endpoints, prim_is_closed, ring_to_polygon,
                        transform_prim, prim_rgb)
+from .import_issues import CHECK, ERROR, FIXED, ImportIssue, bbox_of, find_gaps, repair_prims
 from .models import ImportReport, Part, Prim
 
 
@@ -55,7 +56,8 @@ def prim_signature(p: Prim) -> tuple:
     return (k, min(fw, bw))
 
 
-def remove_duplicates(prims: list[Prim]) -> tuple[list[Prim], int]:
+def remove_duplicates(prims: list[Prim], removed_out: Optional[list] = None) -> tuple[list[Prim], int]:
+    """Remove entidades repetidas. ``removed_out`` (opcional) recebe as que saíram."""
     seen = set()
     out = []
     removed = 0
@@ -67,6 +69,8 @@ def remove_duplicates(prims: list[Prim]) -> tuple[list[Prim], int]:
             continue
         if sig in seen:
             removed += 1
+            if removed_out is not None:
+                removed_out.append(p)
             continue
         seen.add(sig)
         out.append(p)
@@ -211,7 +215,8 @@ def build_contours(prims: list[Prim], join_tol: float, curve_tol: float) -> list
     return contours
 
 
-def drop_duplicate_contours(contours: list[Contour], tol: float) -> tuple[list[Contour], int]:
+def drop_duplicate_contours(contours: list[Contour], tol: float,
+                            removed_out: Optional[list] = None) -> tuple[list[Contour], int]:
     """Contornos fechados praticamente iguais (o mesmo desenho repetido, às vezes começando em outro
     ponto ou no sentido contrário, ou feito com outras entidades): fica só o primeiro."""
     kept: list[Contour] = []
@@ -239,6 +244,8 @@ def drop_duplicate_contours(contours: list[Contour], tol: float) -> tuple[list[C
                 break
         if dup:
             removed += 1
+            if removed_out is not None:
+                removed_out.append(c)
             continue
         index.setdefault(key, []).append(poly)
         kept.append(c)
@@ -282,18 +289,32 @@ class _RawPart:
 
 
 def build_parts_from_prims(prims: list[Prim], source_file: str, join_tol: float,
-                           curve_tol: float) -> tuple[list[_RawPart], list[tuple[Prim, bool]], list[str]]:
+                           curve_tol: float, issues: Optional[list] = None
+                           ) -> tuple[list[_RawPart], list[tuple[Prim, bool]], list[str]]:
+    """Monta as peças de um arquivo. ``issues`` (opcional) recebe os avisos com local
+    (:class:`ImportIssue`), além dos textos devolvidos."""
     warnings: list[str] = []
     name = os.path.basename(source_file)
-    prims, removed = remove_duplicates(prims)
+    fpath = os.path.abspath(source_file) if source_file else ""
+    found: list[ImportIssue] = []
+    removed_prims: list[Prim] = []
+    prims, removed = remove_duplicates(prims, removed_prims)
     if removed:
         warnings.append(f"{name}: {removed} entidade(s) duplicada(s)/sobreposta(s) removida(s).")
+        found.append(ImportIssue(fpath, "duplicate_entities", FIXED,
+                                 f"{removed} linha(s) repetida(s) por cima de outra: removida(s).", removed,
+                                 [bbox_of(flatten_prim(p, curve_tol), 0.5) for p in removed_prims
+                                  if p.kind not in ("TEXT", "MTEXT")][:200]))
 
     contours = build_contours(prims, join_tol, curve_tol)
-    contours, dup = drop_duplicate_contours(contours, max(join_tol, curve_tol))
+    removed_contours: list[Contour] = []
+    contours, dup = drop_duplicate_contours(contours, max(join_tol, curve_tol), removed_contours)
     if dup:
         warnings.append(f"{name}: {dup} contorno(s) desenhado(s) em dobro ignorado(s) "
                         "(a peça não é contada duas vezes nem cortada duas vezes).")
+        found.append(ImportIssue(fpath, "duplicate_contours", FIXED,
+                                 f"{dup} contorno(s) desenhado(s) em dobro: cortado(s) uma vez só.", dup,
+                                 [bbox_of(c.pts, 0.5) for c in removed_contours][:200]))
     closed = [i for i, c in enumerate(contours) if c.closed]
     opened = [i for i, c in enumerate(contours) if not c.closed]
 
@@ -373,6 +394,10 @@ def build_parts_from_prims(prims: list[Prim], source_file: str, join_tol: float,
     raw_parts: list[_RawPart] = []
     preview: list[tuple[Prim, bool]] = []
     problem_prims: set[int] = set()
+    invalid_boxes: list[list[float]] = []
+    open_boxes: list[list[float]] = []
+    mark_boxes: list[list[float]] = []
+    open_chains: list = []          # (pontos, prim da 1ª ponta, prim da última) dos contornos abertos soltos
 
     for r, g in groups.items():
         rc = contours[r]
@@ -414,6 +439,7 @@ def build_parts_from_prims(prims: list[Prim], source_file: str, join_tol: float,
             msgs.append("Contorno inválido: usado envoltório conservador; confira o desenho no CAD.")
             warnings.append(f"{name}: {msgs[0]}")
             problem_prims.update(idxs)
+            invalid_boxes.append(bbox_of(rc.pts, 1.0))
         raw_parts.append(_RawPart([prims[i] for i in idxs], outer, holes, outer_idx, False, msgs,
                                   source_file))
 
@@ -441,6 +467,8 @@ def build_parts_from_prims(prims: list[Prim], source_file: str, join_tol: float,
                     idxs.extend(pi for pi, _ in contours[ref].members)
                     problem_prims.update(pi for pi, _ in contours[ref].members)
                     pts_all.append(contours[ref].pts)
+                    mem = contours[ref].members
+                    open_chains.append((contours[ref].pts, prims[mem[0][0]], prims[mem[-1][0]]))
                 else:
                     idxs.append(ref)
                     pts_all.append(np.array(prims[ref].data["bbox"]))
@@ -452,8 +480,10 @@ def build_parts_from_prims(prims: list[Prim], source_file: str, join_tol: float,
             if has_open:
                 msgs.append("Contorno aberto: a linha não fecha. Ela será encaixada usando o "
                             "contorno envolvente; confira no CAD se falta um trecho.")
+                open_boxes.append(bbox_of(allpts, 1.0))
             else:
                 msgs.append("Marca/texto solto fora de qualquer peça: tratado como peça própria.")
+                mark_boxes.append(bbox_of(allpts, 1.0))
             raw_parts.append(_RawPart([prims[i] for i in idxs], Polygon(hull.exterior.coords), [],
                                       [], has_open, msgs, source_file))
 
@@ -462,6 +492,20 @@ def build_parts_from_prims(prims: list[Prim], source_file: str, join_tol: float,
     n_open = sum(1 for rp in raw_parts if rp.is_open)
     if n_open:
         warnings.append(f"{name}: {n_open} grupo(s) com contorno aberto (destacado em vermelho).")
+        gaps, loose = find_gaps(open_chains)
+        found.append(ImportIssue(fpath, "open", CHECK,
+                                 f"{n_open} grupo(s) com contorno aberto: a linha não fecha.", n_open,
+                                 open_boxes, gaps, loose))
+    if invalid_boxes:
+        found.append(ImportIssue(fpath, "invalid_contour", CHECK,
+                                 f"{len(invalid_boxes)} contorno(s) que cruzam a si mesmos: encaixado(s) "
+                                 "pelo envoltório.", len(invalid_boxes), invalid_boxes))
+    if mark_boxes:
+        found.append(ImportIssue(fpath, "loose_mark", CHECK,
+                                 f"{len(mark_boxes)} texto(s)/marca(s) fora das peças: vão como peça própria.",
+                                 len(mark_boxes), mark_boxes))
+    if issues is not None:
+        issues.extend(found)
     return raw_parts, preview, warnings
 
 
@@ -587,13 +631,21 @@ def import_files(paths: list[str], join_tol: float = 0.05, curve_tol: float = 0.
                  multipliers: Optional[dict] = None,
                  file_materials: Optional[dict] = None,
                  file_tags: Optional[dict] = None,
-                 file_units: Optional[dict] = None) -> ImportReport:
-    """Importa vários DXF e devolve as peças agrupadas."""
+                 file_units: Optional[dict] = None,
+                 file_repairs: Optional[dict] = None) -> ImportReport:
+    """Importa vários DXF e devolve as peças agrupadas.
+
+    ``file_repairs``: {arquivo: [trecho, ...]} aberturas fechadas pelo operador (ver
+    :func:`import_issues.gap_to_repair`), somadas ao desenho antes de montar as peças.
+    """
     warnings: list[str] = []
+    issues: list[ImportIssue] = []
+    frames: dict[str, list[float]] = {}
+    factors: dict[str, float] = {}       # arquivo -> mm por unidade do desenho (para guardar reparos)
+    sheets_pv: list[tuple[str, list[tuple[Prim, bool]], tuple[float, float, float, float]]] = []
     all_raw: list[_RawPart] = []
     preview: list[tuple[Prim, bool]] = []
     unit_notes = {}
-    x_offset = 0.0
     files_ok = []
     raws = raw_files if raw_files is not None else []
     if raw_files is None:
@@ -604,6 +656,7 @@ def import_files(paths: list[str], join_tol: float = 0.05, curve_tol: float = 0.
                 raws.append(read_dxf(path, unit, ignore_text, excluded_layers))
             except DXFImportError as e:
                 warnings.append(str(e))
+                issues.append(ImportIssue(os.path.abspath(path), "read_error", ERROR, str(e)))
     suspicious = []
     layers: dict = {}
     for rf in raws:
@@ -615,8 +668,17 @@ def import_files(paths: list[str], join_tol: float = 0.05, curve_tol: float = 0.
             suspicious.append((rf.path, rf.declared_units, rf.suggested_units))
         files_ok.append(rf.path)
         unit_notes[rf.path] = rf.unit_note
+        factors[os.path.abspath(rf.path)] = rf.unit_factor
         warnings.extend(rf.warnings)
-        parts, pv, w = build_parts_from_prims(rf.prims, rf.path, join_tol, curve_tol)
+        issues.extend(getattr(rf, "issues", []) or [])
+        prims = list(rf.prims)
+        fixes = repair_prims((file_repairs or {}).get(os.path.abspath(rf.path)), rf.unit_factor)
+        if fixes:
+            prims += fixes
+            issues.append(ImportIssue(os.path.abspath(rf.path), "repaired", FIXED,
+                                      f"{len(fixes)} abertura(s) fechada(s) na conferência.", len(fixes),
+                                      [bbox_of(flatten_prim(f, 1.0), 1.0) for f in fixes]))
+        parts, pv, w = build_parts_from_prims(prims, rf.path, join_tol, curve_tol, issues)
         warnings.extend(w)
         if file_materials:
             mat = file_materials.get(os.path.abspath(rf.path), "")
@@ -630,15 +692,18 @@ def import_files(paths: list[str], join_tol: float = 0.05, curve_tol: float = 0.
         if multipliers:
             mult = max(1, int(multipliers.get(os.path.abspath(rf.path), 1)))
         all_raw.extend(parts * mult)
-        # pré-visualização: arquivos lado a lado
         if pv:
             pts = np.vstack([flatten_prim(p, 1.0) for p, _ in pv])
             minx, miny = pts.min(axis=0)
-            maxx = pts[:, 0].max()
-            tf = Transform(0, False, x_offset - minx, -miny)
-            for p, prob in pv:
-                preview.append((transform_prim(p, tf), prob))
-            x_offset += (maxx - minx) + 20.0
+            maxx, maxy = pts.max(axis=0)
+            sheets_pv.append((os.path.abspath(rf.path), pv, (float(minx), float(miny), float(maxx), float(maxy))))
+    # pré-visualização: cada arquivo num quadro, em grade (linhas de cima para baixo)
+    offsets = _preview_grid([b for _, _, b in sheets_pv])
+    for (path, pv, (x0, y0, x1, y1)), (dx, dy) in zip(sheets_pv, offsets):
+        tf = Transform(0, False, dx, dy)
+        for p, prob in pv:
+            preview.append((transform_prim(p, tf), prob))
+        frames[path] = [dx, dy, x0 + dx, y0 + dy, x1 + dx, y1 + dy]
 
     # ordem estável: maiores primeiro, depois posição
     all_raw.sort(key=lambda r: (r.material, r.tag, -round(r.outer.area, 3), round(r.outer.centroid.x, 3),
@@ -652,4 +717,30 @@ def import_files(paths: list[str], join_tol: float = 0.05, curve_tol: float = 0.
             name = f"{rp.tag} · {name}"
         parts.append(make_part(rp, f"P{i + 1:03d}", name, qty))
     return ImportReport(parts=parts, preview=preview, warnings=warnings, files=files_ok,
-                        unit_notes=unit_notes, extra={"suspicious_units": suspicious, "layers": layers})
+                        unit_notes=unit_notes, extra={"suspicious_units": suspicious, "layers": layers,
+                                                      "frames": frames, "unit_factors": factors},
+                        issues=issues)
+
+
+def _preview_grid(boxes: list[tuple[float, float, float, float]]) -> list[tuple[float, float]]:
+    """Deslocamento de cada desenho para mostrá-los em grade, na ordem dada (um lote de vários alunos
+    vira uma "folha de contato" em vez de uma fila sem fim). Deixa espaço acima de cada desenho para o
+    nome do arquivo."""
+    if not boxes:
+        return []
+    sizes = [(max(x1 - x0, 1.0), max(y1 - y0, 1.0)) for x0, y0, x1, y1 in boxes]
+    total = sum(w * h for w, h in sizes)
+    row_w = max(max(w for w, _ in sizes), 1.6 * math.sqrt(total))
+    gap = max(20.0, 0.05 * row_w)
+    out = []
+    x = 0.0
+    y_top = 0.0
+    row_h = 0.0
+    for (x0, y0, x1, y1), (w, h) in zip(boxes, sizes):
+        if x > 0 and x + w > row_w:
+            y_top -= row_h + 2.2 * gap        # espaço para o rótulo do próximo arquivo
+            x, row_h = 0.0, 0.0
+        out.append((x - x0, y_top - h - y0))
+        x += w + gap
+        row_h = max(row_h, h)
+    return out

@@ -256,3 +256,4 @@ class ImportReport:
     files: list[str]
     unit_notes: dict[str, str] = field(default_factory=dict)
     extra: dict[str, Any] = field(default_factory=dict)
+    issues: list = field(default_factory=list)   # ImportIssue: avisos com arquivo, local e gravidade

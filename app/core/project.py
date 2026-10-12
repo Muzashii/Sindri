@@ -9,6 +9,7 @@ from shapely import wkb
 from typing import Optional
 
 from .fileutil import replace_file
+from .import_issues import ImportIssue
 from .models import ImportReport, NestParams, NestResult, Part, Prim
 from .part_builder import import_files
 
@@ -37,6 +38,7 @@ class Project:
     units: dict = field(default_factory=dict)
     source_hashes: dict = field(default_factory=dict)
     extra: dict = field(default_factory=dict)       # estado do laser/retalhos (veja save_project)
+    repairs: dict = field(default_factory=dict)     # arquivo -> aberturas fechadas na conferência
 
 
 def source_hash(path):
@@ -88,7 +90,7 @@ def save_project(path: str, files: list[str], params: NestParams, parts: list[Pa
                  request: Optional[dict] = None, tags: Optional[dict] = None,
                  checklist: Optional[dict] = None, file_units: Optional[dict] = None,
                  source_hashes: Optional[dict] = None, report: Optional[ImportReport] = None,
-                 extra: Optional[dict] = None) -> None:
+                 extra: Optional[dict] = None, file_repairs: Optional[dict] = None) -> None:
     """``extra``: dados que só precisam voltar como estavam (JSON puro): operação de cada cor do
     arquivo, retalhos usados por placa etc."""
     params.validate()
@@ -113,11 +115,13 @@ def save_project(path: str, files: list[str], params: NestParams, parts: list[Pa
         "geometry": [_part_json(p) for p in parts],
         "import_report": {"preview": [[p.to_json(), issue] for p, issue in report.preview],
                           "warnings": report.warnings, "unit_notes": report.unit_notes,
-                          "extra": report.extra} if report else None,
+                          "extra": report.extra,
+                          "issues": [i.to_json() for i in getattr(report, "issues", [])]} if report else None,
         # por arquivo, na mesma ordem de "files" (não depende do nome: num lote, vários alunos
         # mandam arquivos com o mesmo nome)
         "file_info": [{"mult": int(_get(multipliers, f, 1)), "material": _get(materials, f, ""),
                        "tag": _get(tags, f, ""), "units": _get(file_units, f, None),
+                       "repairs": list(_get(file_repairs, f, []) or []),
                        "sha256": _get(source_hashes, f, source_hash(f))} for f in files],
     }
     tmp = path + ".tmp"
@@ -161,7 +165,7 @@ def _load_project(path: str) -> Project:
                                "Coloque-o na mesma pasta do projeto.")
         files.append(found or fabs)
     params = NestParams.from_json(data.get("params", {}))
-    multipliers, materials, tags, units, hashes = {}, {}, {}, {}, {}
+    multipliers, materials, tags, units, hashes, repairs = {}, {}, {}, {}, {}, {}
     info = data.get("file_info")
     if isinstance(info, list) and len(info) == len(files):
         for f, fi in zip(files, info):
@@ -174,6 +178,8 @@ def _load_project(path: str) -> Project:
                 tags[k] = fi["tag"]
             if fi.get("units") is not None:
                 units[k] = int(fi["units"])
+            if isinstance(fi.get("repairs"), list) and fi["repairs"]:
+                repairs[k] = [r for r in fi["repairs"] if isinstance(r, dict)]
             hashes[k] = fi.get("sha256")
             if portable and (not os.path.isfile(f) or (hashes[k] and source_hash(f) != hashes[k])):
                 warnings.append(f"{os.path.basename(f)}: origem ausente ou alterada; usando o desenho incorporado ao projeto.")
@@ -205,9 +211,22 @@ def _load_project(path: str) -> Project:
             report.warnings = list(saved_report.get("warnings", []))
             report.unit_notes = {paths.get(k, k): v for k, v in saved_report.get("unit_notes", {}).items()}
             report.extra = dict(saved_report.get("extra", {}))
+            frames = report.extra.get("frames")
+            if isinstance(frames, dict):
+                report.extra["frames"] = {os.path.abspath(paths.get(k, k)): v for k, v in frames.items()}
+            issues = []
+            for d in saved_report.get("issues", []) or []:
+                try:
+                    it = ImportIssue.from_json(d)
+                except (KeyError, TypeError, ValueError):
+                    continue
+                it.file = os.path.abspath(paths.get(it.file, it.file))
+                issues.append(it)
+            report.issues = issues
     else:
         report = import_files(files, params.join_tolerance, params.curve_tolerance, **params.import_kwargs(),
-                              multipliers=multipliers, file_materials=materials, file_tags=tags, file_units=units)
+                              multipliers=multipliers, file_materials=materials, file_tags=tags, file_units=units,
+                              file_repairs=repairs)
     saved = data.get("parts", {})
     for p in report.parts:
         s = saved.get(p.id)
@@ -247,4 +266,4 @@ def _load_project(path: str) -> Project:
     return Project(files, params, report.parts, result, report, sorted(set(warnings)), multipliers,
                    data.get("label"), materials, data.get("request"), tags,
                    (data.get("checklist") or {}) if result else {}, units, hashes,
-                   data.get("extra") if isinstance(data.get("extra"), dict) else {})
+                   data.get("extra") if isinstance(data.get("extra"), dict) else {}, repairs)
