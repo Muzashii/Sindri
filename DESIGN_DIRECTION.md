@@ -11,8 +11,10 @@ identificação no canvas, acesso contextual e redução de rolagem nos formulá
 Implementar tokens, depois componentes e por último a organização das telas.
 
 ## Fundação
-Paletas clara/escura em app/ui/theme.py. Neutros 50–950 e tokens semânticos.
-Segoe UI, com corpo 9 pt, auxiliares 9 pt, títulos 10/13/15 pt.
+Visual "Fluent" (Windows 11), escolhido em 11/10/2026 entre três direções (decisões 86–89).
+Paletas clara/escura em app/ui/theme.py: fundo cinza, cartões brancos com borda de 1 px, acento #0f6cbd.
+Segoe UI Variable (ou Segoe UI), com corpo 10 pt, auxiliares 9 pt, títulos 11/13/15 pt; números do
+rodapé em fonte monoespaçada.
 Escala de espaçamento 4/8/12/16/24/32; raios 4/8/12; controles nativos Qt.
 Sem animação decorativa: feedback imediato preserva desempenho e reduz movimento.
 Ícones vetoriais existentes, sem dependências de rede nem novos recursos externos.

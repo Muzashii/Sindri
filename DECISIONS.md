@@ -287,3 +287,35 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
     na dica); quando a linha é estreita, "Feito" vira só o ✓ (mesmo limite para todas as linhas). O canvas volta a enquadrar
     tudo quando a janela muda de tamanho, até o usuário dar zoom ou arrastar a vista (os rótulos das placas
     não ficam mais cortados). Na Foto, "Exportar como" tem textos curtos; recomendado/experimental na dica.
+86. **Visual "Fluent" (combinação escolhida pelo laboratório, 11/10/2026)**: paleta do Windows 11 (fundo #f3f3f3,
+    cartões brancos com borda de 1 px, acento #0f6cbd; escuro com #202020/#2b2b2b e acento claro #60cdff),
+    campos com traço inferior mais escuro (contraste do controle ≥ 3:1), texto base 10 pt e Segoe UI Variable
+    quando existir. Os três painéis do Encaixe são cartões sobre o fundo cinza; parâmetros num cartão só, com
+    títulos de seção em maiúsculas (continuam recolhíveis) e chaves liga/desliga nas opções booleanas.
+87. **Papéis dos botões**: antes do 1º encaixe "Encaixar" é o botão principal (azul); depois, "Exportar" passa a
+    ser o principal e "Encaixar de novo" fica secundário. O Exportar da Foto usa o mesmo azul. Abrir DXF,
+    intranet e salvar ficam só como ícones (nome na dica e no nome acessível).
+88. **Peças em cartões**: grade de 2 colunas (QListWidget em modo ícone, mesma lista e mesmos índices de antes,
+    então filtros por solicitação e seleção pelo desenho continuam iguais) com miniatura "em MDF" (contorno de
+    corte marrom; outras cores mantêm a cor do desenho), ×quantidade, medida, ✓ de feita, material, aviso e
+    rotação fixa. Quantidade (− / +) e rotação fixa ficam no bloco da peça selecionada. O último cartão é
+    "Adicionar DXF" (= Ctrl+Shift+O). No modo grade o Qt desconta a barra de rolagem duas vezes ao quebrar
+    linhas; a largura do cartão reserva essa folga.
+89. **Rodapé de métricas**: quatro células (aproveitamento, placas, peças, tempo estimado) com números em fonte
+    monoespaçada. A 4ª célula mostra as soluções testadas enquanto otimiza e o tempo de máquina depois (mesma
+    conta do relatório, guardada até o encaixe mudar; detalhe por placa na dica).
+90. **Encaixe enxuto: cada ação aparece uma vez na tela** (as que saíram da tela continuam no menu, com atalho):
+    - cabeçalho do desenho numa linha só: painel de peças · Original/Encaixe · ‹ Placa 1 de 2 › · enquadrar ·
+      painel de parâmetros (os dois mostradores de painel viraram ícones);
+    - girar, travar, remover e "Posição…" ficam numa barra que só aparece com peça selecionada (Editar ›, R, L,
+      Del, Ctrl+Shift+M); o texto da barra não repete os atalhos (estão na dica de cada botão);
+    - "Placas cortadas" saiu do painel de peças: "cortada" e "▶ RDWorks" ficam na etiqueta de cada placa
+      (teclado: C e Ctrl+Alt+R para a placa da tela); o painel mostra só o resumo ("1 de 2 placas cortadas");
+    - Kits, quantidades do arquivo e Limpar foram para o menu ⋯ do painel; o resumo de peças foi para o
+      cabeçalho; o bloco de quantidade só aparece com peça selecionada;
+    - a engrenagem de placas virou o item "Gerenciar placas…" no fim do seletor (também em Encaixe ›);
+    - "Opções avançadas" tinha dois botões de abrir (link + título da seção): ficou só o título, fechado;
+      saiu a dica fixa "passe o mouse…" do fim dos parâmetros;
+    - sem arquivo aberto, abas, setas de placa, enquadrar e o rodapé de métricas ficam escondidos (o convite
+      do centro é a única ação); as setas de placa só aparecem com mais de uma placa;
+    - painel de peças: atalho Ctrl+Shift+L (Ctrl+Shift+P é "Abrir projeto"; estavam em conflito).

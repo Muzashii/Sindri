@@ -373,14 +373,16 @@ class EditingMixin:
             item = sel[0]
             self.parts_panel.select_part(item.part.id)
             width, height = item.part.size
+            dim = f"{width:g} × {height:g}".replace(".", ",")      # só as medidas (o nome pode ter ponto)
             text = (f"{item.part.name} · cópia {item.placement.instance + 1} · "
-                    f"{width:g} × {height:g} mm · {item.part.material or 'sem material'}")
+                    f"{dim} mm · {item.part.material or 'sem material'}")
             if item.colliding:
                 text += " · Atenção: colisão, borda ou material incompatível"
         elif sel:
-            text = f"{len(sel)} cópias selecionadas · R girar · L travar · Del remover"
+            text = f"{len(sel)} cópias selecionadas"        # atalhos ficam na dica de cada botão ao lado
         else:
             text = "Selecione uma peça para conferir seus detalhes"
         self.selection_summary.setText(text)
+        self.selection_bar.setVisible(bool(sel))     # sem seleção, a barra some (menos coisa na tela)
         from ..accessibility import announce
         announce(self.selection_summary, text)

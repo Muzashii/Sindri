@@ -162,8 +162,10 @@ class SheetLabel(QGraphicsItem):
         self.w2 = QFontMetrics(self.f2).horizontalAdvance(sub)
         self.w0 = (QFontMetrics(self.f2).horizontalAdvance(material) + 18) if material else 0
         self.wd = QFontMetrics(self.f2).horizontalAdvance("✓ cortada") + 18
-        self.full = self.w0 + self.w1 + self.w2 + 34 + self.wd + 6
-        self.setToolTip("Clique em “cortada” para marcar/desmarcar esta placa (atalho: C)")
+        self.wo = QFontMetrics(self.f2).horizontalAdvance("▶ RDWorks") + 18
+        self.full = self.w0 + self.w1 + self.w2 + 34 + self.wd + 6 + self.wo + 4
+        self.setToolTip("“cortada”: marcar/desmarcar esta placa como cortada (atalho: C)\n"
+                        "“▶ RDWorks”: abrir só esta placa no RDWorks (exporta de novo se ela mudou)")
         self.set_done(done)
 
     def set_done(self, done: bool):
@@ -181,11 +183,23 @@ class SheetLabel(QGraphicsItem):
     def boundingRect(self) -> QRectF:
         return QRectF(0, -32, self.width, 26)
 
-    def paint(self, painter: QPainter, option, widget=None):
-        painter.setRenderHint(QPainter.Antialiasing)
+    def _chips(self, width: float, compact: bool) -> tuple[QRectF, QRectF]:
+        """Retângulos dos botões "▶ RDWorks" (à direita) e "cortada" (à esquerda dele)."""
+        wo = 22 if compact else self.wo
+        wd = 22 if compact else self.wd
+        open_r = QRectF(width - wo - 4, -29, wo, 18)
+        cut_r = QRectF(open_r.left() - wd - 4, -29, wd, 18)
+        return open_r, cut_r
+
+    def _layout(self):
         avail = self._avail()
         compact = avail < self.full
-        width = min(self.full, max(60.0, avail - 4)) if compact else self.full
+        width = min(self.full, max(80.0, avail - 4)) if compact else self.full
+        return width, compact
+
+    def paint(self, painter: QPainter, option, widget=None):
+        painter.setRenderHint(QPainter.Antialiasing)
+        width, compact = self._layout()
         r = QRectF(0, -32, width, 24)
         painter.setPen(QPen(theme.qcolor("success_text") if self.done else theme.qcolor("border"), 1))
         painter.setBrush(theme.qcolor("surface"))
@@ -209,8 +223,12 @@ class SheetLabel(QGraphicsItem):
             painter.setFont(self.f2)
             painter.drawText(QRectF(x + self.w1 + 10, -32, self.w2 + 4, 24), Qt.AlignVCenter | Qt.AlignLeft,
                              self.sub)
-        chip = QRectF(width - (22 if compact else self.wd) - 4, -29, 22 if compact else self.wd, 18)
+        open_r, chip = self._chips(width, compact)
         painter.setFont(self.f2)
+        painter.setPen(QPen(theme.qcolor("accent_text"), 1))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRoundedRect(open_r, 9, 9)
+        painter.drawText(open_r, Qt.AlignCenter, "▶" if compact else "▶ RDWorks")
         if self.done:
             painter.setPen(Qt.NoPen)
             painter.setBrush(theme.qcolor("success_text"))
@@ -226,7 +244,11 @@ class SheetLabel(QGraphicsItem):
 
     def mousePressEvent(self, event):
         vs = self.scene().views() if self.scene() else []
-        if vs and hasattr(vs[0], "sheetCutClicked"):
+        width, compact = self._layout()
+        open_r, _ = self._chips(width, compact)
+        if vs and open_r.adjusted(-2, -3, 2, 3).contains(event.pos()) and hasattr(vs[0], "sheetOpenClicked"):
+            vs[0].sheetOpenClicked.emit(self.index)
+        elif vs and hasattr(vs[0], "sheetCutClicked"):
             vs[0].sheetCutClicked.emit(self.index)
         event.accept()
 
@@ -378,6 +400,7 @@ class NestCanvas(QGraphicsView):
     contextMenuForItems = Signal(object, object)   # lista de PartItem, QPoint global
     zoomChanged = Signal(float)
     sheetCutClicked = Signal(int)                  # clique no "cortada" da etiqueta da placa
+    sheetOpenClicked = Signal(int)                 # clique no "▶ RDWorks" da etiqueta da placa
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -405,9 +428,29 @@ class NestCanvas(QGraphicsView):
         self.show_empty_hint()
 
     # ------------------------------------------------------------------
+    def drawBackground(self, painter, rect):
+        """Fundo cinza com pontinhos a cada 16 px de tela (acompanham o arrastar da vista)."""
+        painter.fillRect(rect, theme.qcolor("canvas"))
+        key = (theme.tokens()["canvas"], theme.tokens()["grid2"])
+        if getattr(self, "_dots_key", None) != key:
+            from PySide6.QtGui import QPixmap
+            pm = QPixmap(16, 16)
+            pm.fill(theme.qcolor("canvas"))
+            from PySide6.QtGui import QPainter as _P
+            p = _P(pm)
+            p.fillRect(7, 7, 2, 2, theme.qcolor("grid2"))
+            p.end()
+            self._dots, self._dots_key = pm, key
+        painter.save()
+        painter.resetTransform()
+        off = QPointF(self.horizontalScrollBar().value() % 16, self.verticalScrollBar().value() % 16)
+        painter.drawTiledPixmap(QRectF(self.viewport().rect()), self._dots, off)
+        painter.restore()
+
     def set_dark(self, dark: bool):
         self.dark = dark
         self.setBackgroundBrush(theme.qcolor("canvas"))
+        self.viewport().update()
         for it in self.scene().items():
             it.update()
         for s in self.sheet_items:

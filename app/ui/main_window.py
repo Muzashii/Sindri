@@ -96,6 +96,8 @@ class MainWindow(UIBuildMixin, FilesMixin, ProjectMixin, NestingMixin, EditingMi
         self._drag_timer.setSingleShot(True)
         self._drag_timer.setInterval(30)
         self._drag_timer.timeout.connect(self._check_drag_collisions)
+        # foco inicial na ação da tela vazia (não nas abas de modo, que ficavam com borda de foco)
+        QTimer.singleShot(0, lambda: self.btn_empty_open.setFocus() if self.btn_empty_open.isVisible() else None)
 
     def resizeEvent(self, e):
         super().resizeEvent(e)

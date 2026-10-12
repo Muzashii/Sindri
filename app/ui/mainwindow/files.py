@@ -27,6 +27,11 @@ class FilesMixin:
             size = f"{p['w']:g}×{p['h']:g}"
             self.preset_combo.addItem(p["name"] if size in p["name"] else f"{p['name']}  ({size})", p)
         self.preset_combo.addItem("Personalizada…", None)
+        # a antiga engrenagem ao lado do seletor virou o último item da lista
+        self.preset_combo.insertSeparator(self.preset_combo.count())
+        self.preset_combo.addItem("Gerenciar placas…", "manage")
+        self.preset_combo.setItemData(self.preset_combo.count() - 1, "Criar, renomear ou apagar placas salvas",
+                                      Qt.ToolTipRole)
         self.preset_combo.blockSignals(False)
         self._sync_preset_combo()
 
@@ -38,10 +43,10 @@ class FilesMixin:
                 idx = i
                 if self.preset_combo.currentIndex() == i:
                     break
-        last = self.preset_combo.count() - 1
+        last = len(self.presets)                     # "Personalizada…" (depois vêm o separador e "Gerenciar")
         self.preset_combo.blockSignals(True)
         if idx >= 0:
-            if self.preset_combo.currentIndex() < 0 or self.preset_combo.currentData() is None or \
+            if self.preset_combo.currentIndex() < 0 or not isinstance(self.preset_combo.currentData(), dict) or \
                     abs(self.preset_combo.currentData()["w"] - p.sheet_width) > 1e-6 or \
                     abs(self.preset_combo.currentData()["h"] - p.sheet_height) > 1e-6:
                 self.preset_combo.setCurrentIndex(idx)
@@ -52,6 +57,10 @@ class FilesMixin:
 
     def _preset_chosen(self, i: int):
         data = self.preset_combo.itemData(i)
+        if data == "manage":
+            self._sync_preset_combo()                # volta a mostrar a placa atual
+            self.edit_presets()
+            return
         if data is None:
             self.a_params.setChecked(True)
             self.settings_panel.show()

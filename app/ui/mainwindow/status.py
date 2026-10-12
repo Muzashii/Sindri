@@ -60,12 +60,17 @@ class StatusMixin:
         n = max(1, self.n_sheets)
         cur = min(self.canvas.current_sheet(), n - 1) + 1 if self.canvas.mode == "layout" else 0
         if self.canvas.mode == "layout":
-            self.sheet_label.setText(f"  Placa {cur} de {n}  ")
+            tiny = getattr(self, "_width_mode", (False, False))[1]
+            self.sheet_label.setText(f" {cur}/{n} " if tiny else f"  Placa {cur} de {n}  ")
+            self.sheet_label.setToolTip(f"Placa {cur} de {n} (PgUp / PgDn)")
         else:
             self.sheet_label.setText("")
         on = self.canvas.mode == "layout" and n > 1
         self.btn_prev.setEnabled(on and cur > 1)
         self.btn_next.setEnabled(on and cur < n)
+        # navegação de placas só quando há mais de uma placa na tela
+        for w in (self.btn_prev, self.sheet_label, self.btn_next):
+            w.setVisible(on)
 
     def goto_sheet(self, i: int):
         if self.canvas.mode != "layout":
@@ -73,7 +78,6 @@ class StatusMixin:
         n = max(1, self.n_sheets)
         i = max(0, min(n - 1, i))
         self.canvas.focus_sheet(i)
-        self.sheet_label.setText(f"  Placa {i + 1} de {n}  ")
         self._update_sheet_label()
 
     def _utilization(self) -> float:
@@ -85,6 +89,28 @@ class StatusMixin:
                    for pl in self.placements)
         total = sum(specs[si].area for si in used if si in specs)
         return area / total if total else 0.0
+
+    def _time_estimate(self) -> str:
+        """Tempo de máquina de todas as placas (mesma conta do relatório), guardado até o encaixe mudar."""
+        key = tuple((pl.part_id, pl.instance, pl.sheet_index, round(pl.x, 1), round(pl.y, 1), pl.rotation)
+                    for pl in self.placements)
+        cache = getattr(self, "_time_cache", None)
+        if cache and cache[0] == key:
+            return cache[1]
+        try:
+            times = self._sheet_times({"color_ops": self.effective_color_ops()})
+            total = sum(t.seconds for t in times.values())
+            m = total / 60
+            txt = f"~{m:.0f} min" if m >= 1 else f"~{max(1, round(total)):.0f} s"
+            lines = [f"Placa {si + 1}: {t.text}" for si, t in sorted(times.items())]
+            tip = "Tempo estimado de máquina (velocidades do banco de materiais)\n" + "\n".join(lines)
+            if any(t.fallback for t in times.values()):
+                tip += "\nAlgumas camadas usam a velocidade padrão: confira o banco de materiais."
+        except Exception:                       # estimativa nunca pode atrapalhar o encaixe
+            txt, tip = "—", "Não foi possível estimar o tempo agora."
+        self._time_cache = (key, txt)
+        self._time_tip = tip
+        return txt
 
     def _update_status(self):
         total = sum(p.quantity for p in self.parts)
@@ -113,7 +139,16 @@ class StatusMixin:
         cut = sum(pl.sheet_index in self.cut_sheets for pl in self.placements)
         self.chip_parts.setToolTip(f"Solicitadas: {total}\nEncaixadas: {placed}\nEm placas cortadas: {cut}\nSem encaixe: {max(0, total - placed)}")
         ev = getattr(self, "evaluated", 0)
-        self.chip_gen.setText(f"{ev:,}".replace(",", ".") if (self.worker is not None or ev) else "—")
+        tested = f"{ev:,}".replace(",", ".")
+        cap = self._metric_caps["tempo"][0]
+        if self.worker is not None:
+            cap.setText("SOLUÇÕES TESTADAS")
+            self.chip_time.setText(tested)
+            self.chip_time.setToolTip("Quantas organizações o otimizador já experimentou")
+        else:
+            cap.setText("TEMPO ESTIMADO")
+            self.chip_time.setText(self._time_estimate() if placed else "—")
+            self.chip_time.setToolTip(getattr(self, "_time_tip", "") + (f"\nSoluções testadas: {tested}" if ev else ""))
         missing = total - placed
         if self.worker is not None:
             paused = self.worker.pause_event.is_set()
@@ -141,22 +176,31 @@ class StatusMixin:
         from ..accessibility import announce
         announce(self.status_label, "Estado do encaixe: " + txt)
 
+    def _nest_icon(self):
+        """Ícone do botão Encaixar na cor do texto do estilo atual (branco nos botões cheios)."""
+        from ..theme import tokens
+        t = tokens()
+        running = self.worker is not None
+        filled = running or self.btn_nest.objectName() == "primary"
+        self.btn_nest.setIcon(icon("stop" if running else ("play" if not self.placements else "reset"),
+                                   "#ffffff" if filled else t["text"], 14, t["muted"]))
+
     def _update_buttons(self):
         running = self.worker is not None
         has_parts = bool(self.parts)
         self.btn_nest.setEnabled(has_parts)
-        from ..theme import tokens as _tk
-        self.btn_nest.setIcon(icon("stop" if running else "play", "#ffffff", 14, _tk()["muted"]))
         if running:
             self.btn_nest.setText("Parar  (Esc)")
             self.btn_nest.setObjectName("danger")
             self.btn_nest.setToolTip("Para e mantém a melhor solução encontrada (Esc)")
         else:
             self.btn_nest.setText("Encaixar" if not self.placements else "Encaixar de novo")
-            self.btn_nest.setObjectName("primary")
+            # antes do 1º encaixe "Encaixar" é a ação principal; depois, a principal passa a ser Exportar
+            self.btn_nest.setObjectName("primary" if not self.placements else "")
             self.btn_nest.setToolTip("Organiza as peças automaticamente (Espaço). Peças travadas ficam onde estão.")
         self.btn_nest.style().unpolish(self.btn_nest)
         self.btn_nest.style().polish(self.btn_nest)
+        self._nest_icon()
         self.btn_pause.setVisible(running)
         self.btn_pause.setEnabled(running)
         self.btn_stop.setVisible(False)
@@ -171,9 +215,12 @@ class StatusMixin:
         from ..theme import tokens
         self.btn_pause.setIcon(icon("play" if paused else "pause", tokens()["text"], 14, tokens()["muted"]))
         editing = self.canvas.mode == "layout" and not running and bool(self.placements)
-        for b in (self.btn_rot, self.btn_lock, self.btn_del):
+        for b in (self.btn_rot, self.btn_lock, self.btn_del, self.btn_positions):
             b.setEnabled(editing)
         self.stack.setCurrentIndex(1 if self.parts else 0)
+        # sem arquivo, só o convite do centro: abas, enquadrar e métricas aparecem com as peças
+        for w in (self.tabs, self.btn_fit, self.metrics_box):
+            w.setVisible(has_parts)
         self.parts_panel.set_editing(not running)
         self.settings_panel.setEnabled(not running)
         self._update_sheet_label()

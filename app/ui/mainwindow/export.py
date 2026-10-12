@@ -441,6 +441,11 @@ class ExportMixin:
         groups = [] if values is not None else plan["groups"]
         return self._open_in_rdworks([path], groups, values)
 
+    def open_current_sheet_in_rdworks(self):
+        """Ctrl+Alt+R: o "▶ RDWorks" da etiqueta da placa que está no centro da tela."""
+        if self.placements and self.canvas.mode == "layout":
+            self.open_sheet_in_rdworks(self.canvas.current_sheet())
+
     def open_sheet_in_rdworks(self, si: int):
         """Botão "Abrir no RDWorks" do checklist: abre só o arquivo daquela placa. Se o arquivo não
         existe ou a placa mudou desde a exportação, exporta a placa de novo antes."""

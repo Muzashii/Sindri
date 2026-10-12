@@ -38,6 +38,10 @@ PATHS = {
     "zap": '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
     "box": '<path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.3 7 12 12 20.7 7"/><line x1="12" y1="22" x2="12" y2="12"/>',
     "image": '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>',
+    "panel_left": '<rect x="3" y="4" width="18" height="16" rx="2"/><line x1="9" y1="4" x2="9" y2="20"/>',
+    "panel_right": '<rect x="3" y="4" width="18" height="16" rx="2"/><line x1="15" y1="4" x2="15" y2="20"/>',
+    "move": '<polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/>',
+    "more": '<circle cx="5" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="19" cy="12" r="1" fill="currentColor"/>',
     "grid": '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>',
 }
 
@@ -87,6 +91,30 @@ def image_file(name: str, color: str, size: int = 14, stroke: float = 3.0) -> st
         p.end()
         pm.save(path)
         _files[key] = path.replace("\\", "/")
+    return _files[key]
+
+
+def switch_file(on: bool, knob: str) -> str:
+    """Bolinha da chave liga/desliga (40 × 20) em PNG para o QSS; à direita quando ligada."""
+    key = f"switch_{int(on)}_{knob}"
+    if key not in _files:
+        from PySide6.QtGui import QBrush, QColor
+        d = os.path.join(tempfile.gettempdir(), "dxfnest_icons")
+        os.makedirs(d, exist_ok=True)
+        base = os.path.join(d, key.replace("#", ""))
+        for scale, suffix in ((1, ""), (2, "@2x")):
+            pm = QPixmap(40 * scale, 20 * scale)
+            pm.fill(Qt.transparent)
+            p = QPainter(pm)
+            p.setRenderHint(QPainter.Antialiasing)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QBrush(QColor(knob)))
+            r = 7 if on else 6
+            cx = 30 if on else 10
+            p.drawEllipse(QRectF((cx - r) * scale, (10 - r) * scale, 2 * r * scale, 2 * r * scale))
+            p.end()
+            pm.save(base + suffix + ".png")
+        _files[key] = (base + ".png").replace("\\", "/")
     return _files[key]
 
 

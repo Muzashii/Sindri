@@ -27,13 +27,14 @@ class _Section(QFrame):
     """Cartão com cabeçalho (ícone + título) e corpo para um QFormLayout."""
     instances: list = []
 
-    def __init__(self, title: str, icon_name: str):
+    def __init__(self, title: str, icon_name: str, plain: bool = False):
         super().__init__()
-        self.setObjectName("Card")
+        # plain: seção dentro de um painel único (título em maiúsculas, sem cartão nem ícone)
+        self.setObjectName("SectionPlain" if plain else "Card")
         self.icon_name = icon_name
         v = QVBoxLayout(self)
-        v.setContentsMargins(14, 12, 14, 12)
-        v.setSpacing(10)
+        v.setContentsMargins(0, 4, 0, 6) if plain else v.setContentsMargins(14, 12, 14, 12)
+        v.setSpacing(8 if plain else 10)
         head = QHBoxLayout()
         head.setSpacing(8)
         self.icon = QLabel()
@@ -42,7 +43,11 @@ class _Section(QFrame):
         self.icon.setObjectName("SectionIcon")
         from .components import SectionToggle
         self.body = QWidget(self)
-        t = SectionToggle(title, self.body, expanded=title != "Ajustes da imagem")
+        t = SectionToggle(title.upper() if plain else title, self.body, expanded=title != "Ajustes da imagem")
+        if plain:
+            t.setAccessibleName(title)
+            t.setProperty("plain", True)
+            self.icon.hide()
         self.toggle = t
         head.addWidget(self.icon)
         head.addWidget(t, 1)
@@ -109,7 +114,12 @@ class SettingsPanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        outer = QVBoxLayout(self)
+        wrap = QVBoxLayout(self)
+        wrap.setContentsMargins(0, 12, 12, 12)
+        frame = QFrame()
+        frame.setObjectName("PanelCard")
+        wrap.addWidget(frame)
+        outer = QVBoxLayout(frame)
         outer.setContentsMargins(0, 0, 0, 0)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -122,13 +132,13 @@ class SettingsPanel(QWidget):
         body.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         scroll.setWidget(body)
         lay = QVBoxLayout(body)
-        lay.setContentsMargins(6, 12, 12, 12)
-        lay.setSpacing(4)
+        lay.setContentsMargins(14, 14, 12, 12)
+        lay.setSpacing(10)
         title = QLabel("Parâmetros")
-        title.setObjectName("SectionTitle")
+        title.setObjectName("PanelHeading")
         lay.addWidget(title)
 
-        g0 = _Section("Arquivo DXF", "open")
+        g0 = _Section("Arquivo DXF", "open", plain=True)
         f0 = QFormLayout(g0.body)
         self.units = QComboBox()
         for code, name in UNITS:
@@ -155,7 +165,7 @@ class SettingsPanel(QWidget):
         f0.addRow(self.layers)
         lay.addWidget(g0)
 
-        g1 = _Section("Placa", "grid")
+        g1 = _Section("Placa", "grid", plain=True)
         f1 = QFormLayout(g1.body)
         self.w = _dspin(10, 5000, 10, 1, " mm", "Largura útil da placa de material (eixo X da máquina)")
         self.h = _dspin(10, 5000, 10, 1, " mm", "Altura da placa de material (eixo Y da máquina)")
@@ -171,7 +181,7 @@ class SettingsPanel(QWidget):
         f1.addRow(self.sheet_note)
         lay.addWidget(g1)
 
-        gl = _Section("Laser (RDWorks)", "zap")
+        gl = _Section("Laser · camadas", "zap", plain=True)
         self.laser_box = gl
         gv = QVBoxLayout(gl.body)
         gv.setContentsMargins(0, 0, 0, 0)
@@ -198,6 +208,8 @@ class SettingsPanel(QWidget):
                                   "Ligado: grava os mesmos valores nos dois tubos.")
         self.two_tubes.toggled.connect(lambda on: self.twoTubesChanged.emit(bool(on)))
         gv.addWidget(self.two_tubes)
+        for sw in (self.material_mode, self.two_tubes):
+            sw.setObjectName("Switch")
         self.btn_materials = QPushButton("Banco de materiais…")
         self.btn_materials.setObjectName("ghost")
         self.btn_materials.setToolTip("Chapa, espaçamento, kerf, data do teste e parâmetros de cada material —\n"
@@ -211,7 +223,7 @@ class SettingsPanel(QWidget):
         gl.setVisible(False)
         lay.addWidget(gl)
 
-        g2 = _Section("Encaixe", "layers")
+        g2 = _Section("Encaixe", "layers", plain=True)
         f2 = QFormLayout(g2.body)
         self.spacing = _dspin(0, 50, 0.5, 2, " mm",
                               "Distância mínima entre peças. Inclua a largura do corte do laser (kerf).\n"
@@ -237,21 +249,15 @@ class SettingsPanel(QWidget):
             "Equilibrado: ignora dentes/rasgos estreitos da borda (até ~20 mm de abertura) — muito mais rápido.\n"
             "Preciso: usa cada dente do contorno; pode ficar muito lento em peças com encaixes tipo finger joint.")
         f2.addRow("Detalhe", self.detail)
-        f2.addRow(self.mirror)
-        f2.addRow(self.pip)
-        f2.addRow(self.multi)
+        for sw in (self.mirror, self.pip, self.multi):
+            sw.setObjectName("Switch")
+            f2.addRow(sw)
         lay.addWidget(g2)
 
-        self.adv_btn = QPushButton("▸  Opções avançadas")
-        self.adv_btn.setObjectName("ghost")
-        self.adv_btn.setCheckable(True)
-        self.adv_btn.setStyleSheet("text-align: left;")
-        lay.addWidget(self.adv_btn)
-        g3 = _Section("Avançado", "settings")
+        g3 = _Section("Avançado", "settings", plain=True)
         self.adv_box = g3
-        g3.setVisible(False)
-        self.adv_btn.toggled.connect(lambda v: (g3.setVisible(v), self.adv_btn.setText(
-            ("▾" if v else "▸") + "  Opções avançadas")))
+        g3.toggle.setChecked(False)                  # começa recolhida; o próprio título abre e fecha
+        self.adv_btn = g3.toggle
         f3 = QFormLayout(g3.body)
         self.curve = _dspin(0.01, 2, 0.05, 2, " mm",
                             "Precisão usada no cálculo (não afeta o arquivo exportado, que mantém arcos e círculos).\n"
@@ -282,10 +288,6 @@ class SettingsPanel(QWidget):
         lay.addWidget(g3)
         lay.addStretch(1)
 
-        hint = QLabel("Dica: passe o mouse sobre cada opção para ver a explicação.")
-        hint.setObjectName("Muted")
-        hint.setWordWrap(True)
-        lay.addWidget(hint)
 
         from PySide6.QtWidgets import QComboBox as _C, QFormLayout as _F
         for cb in (self.units, self.rot):

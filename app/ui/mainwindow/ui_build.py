@@ -59,7 +59,13 @@ class UIBuildMixin:
         self.mode_tabs.setUsesScrollButtons(False)       # as 3 abas sempre inteiras (nunca "· ·")
         self.mode_tabs.setElideMode(Qt.ElideNone)
         self.mode_tabs.currentChanged.connect(self.set_mode)
-        tl.addWidget(self.mode_tabs)
+        self.mode_tabs.setObjectName("ModeTabs")
+        track = QFrame()
+        track.setObjectName("ModeTrack")
+        trl = QHBoxLayout(track)
+        trl.setContentsMargins(3, 3, 3, 3)
+        trl.addWidget(self.mode_tabs)
+        tl.addWidget(track)
         self._mode_sep = self._vsep()
         tl.addWidget(self._mode_sep)
         self.btn_open = QPushButton("Abrir DXF")
@@ -73,6 +79,9 @@ class UIBuildMixin:
         self.btn_intranet.clicked.connect(lambda: self.open_intranet())
         for button in (self.btn_open, self.btn_intranet, self.btn_save):
             button.setObjectName("ToolbarAction")
+            button.setAccessibleName(button.text())
+            button.setText("")
+            button.setFixedSize(36, 36)
         tl.addWidget(self.btn_open)
         tl.addWidget(self.btn_intranet)
         tl.addWidget(self.btn_save)
@@ -84,13 +93,14 @@ class UIBuildMixin:
         tl.addWidget(lbl)
         self.preset_combo = QComboBox()
         self.preset_combo.setMinimumWidth(230)
-        self.preset_combo.setToolTip("Tamanho da placa de material. Edite a lista na engrenagem.")
+        self.preset_combo.setToolTip("Tamanho da placa de material. Para criar ou apagar placas salvas, use "
+                                     "“Gerenciar placas…” no fim da lista.")
         self.preset_combo.activated.connect(self._preset_chosen)
         tl.addWidget(self.preset_combo)
         self.btn_gear = QToolButton()
         self.btn_gear.setToolTip("Gerenciar placas salvas")
         self.btn_gear.clicked.connect(self.edit_presets)
-        tl.addWidget(self.btn_gear)
+        self.btn_gear.hide()                         # agora é o item "Gerenciar placas…" do seletor
         tl.addStretch(1)
         self.btn_nest = QPushButton("Encaixar")
         self.btn_nest.setObjectName("primary")
@@ -104,14 +114,14 @@ class UIBuildMixin:
         self.btn_stop.setToolTip("Para e mantém a melhor solução encontrada (Esc)")
         self.btn_stop.clicked.connect(lambda: self.stop_nest())
         self.btn_export = QPushButton("Exportar para RDWorks")
-        self.btn_export.setObjectName("success")
+        self.btn_export.setObjectName("primary")
         self.btn_export.setToolTip("Gera o arquivo com todas as placas + relatório e abre no RDWorks (Ctrl+E).\n"
                                    "Ctrl+Shift+E: escolher pasta e opções.")
         self.btn_export.clicked.connect(lambda: self.export())
         # seta ao lado: escolher uma placa só
         from PySide6.QtWidgets import QMenu
         self.btn_export_menu = QPushButton("▾")
-        self.btn_export_menu.setObjectName("success")
+        self.btn_export_menu.setObjectName("primary")
         self.btn_export_menu.setFixedWidth(34)
         self.btn_export_menu.setToolTip("Exportar só uma placa (Ctrl+Alt+E: a placa que está na tela)")
         self._export_menu = QMenu(self)
@@ -126,7 +136,7 @@ class UIBuildMixin:
             na.addWidget(w)
         na.addWidget(self._vsep())
         exp = QHBoxLayout()
-        exp.setSpacing(2)
+        exp.setSpacing(1)
         exp.addWidget(self.btn_export)
         exp.addWidget(self.btn_export_menu)
         na.addLayout(exp)
@@ -142,9 +152,10 @@ class UIBuildMixin:
         self.parts_panel.quantityChanged.connect(self.on_quantity_changed)
         self.parts_panel.rotationLockChanged.connect(self.on_rotation_lock_changed)
         self.parts_panel.partSelected.connect(self.on_part_selected)
-        self.parts_panel.btn_kits.clicked.connect(self.multiply_kits)
-        self.parts_panel.btn_reset.clicked.connect(self.reset_quantities)
-        self.parts_panel.btn_clear.clicked.connect(lambda: self.clear_all())
+        self.parts_panel.btn_kits.triggered.connect(self.multiply_kits)
+        self.parts_panel.btn_reset.triggered.connect(self.reset_quantities)
+        self.parts_panel.btn_clear.triggered.connect(lambda: self.clear_all())
+        self.parts_panel.addRequested.connect(lambda: self.open_dxf_dialog(add=True))
 
         # ---------------- área central (cartão com abas, canvas e navegação)
         outer = QWidget()
@@ -152,9 +163,14 @@ class UIBuildMixin:
         ol.setContentsMargins(0, 12, 0, 12)
         card = QFrame()
         card.setObjectName("Card")
-        cl = QVBoxLayout(card)
-        cl.setContentsMargins(10, 8, 10, 8)
+        card_l = QVBoxLayout(card)
+        card_l.setContentsMargins(0, 0, 0, 0)
+        card_l.setSpacing(0)
+        inner = QWidget()
+        cl = QVBoxLayout(inner)
+        cl.setContentsMargins(10, 8, 10, 10)
         cl.setSpacing(6)
+        card_l.addWidget(inner, 1)
         head = QHBoxLayout()
         head.setSpacing(4)
         self.tabs = QTabBar()
@@ -164,30 +180,23 @@ class UIBuildMixin:
         self.tabs.setTabToolTip(0, "Como as peças estão no DXF (contornos abertos em vermelho)")
         self.tabs.setTabToolTip(1, "Resultado do encaixe nas placas")
         self.tabs.currentChanged.connect(self._tab_changed)
-        head.addWidget(self.tabs)
-        head.addStretch(1)
+        self.tabs.setUsesScrollButtons(False)              # as 2 abas sempre inteiras (nunca com setas)
+        self.tabs.setElideMode(Qt.ElideNone)
+        # uma linha só: [painel peças] [Original | Encaixe] … [‹ Placa 1 de 2 ›] [enquadrar] [painel parâmetros]
         self.btn_parts_panel = QToolButton()
         self.btn_params_panel = QToolButton()
         for button, label in ((self.btn_parts_panel, "Peças"), (self.btn_params_panel, "Parâmetros")):
-            button.setText(label)
             button.setObjectName("PanelToggle")      # discreto: estado no preenchimento, sem borda azul
             button.setCheckable(True)
             button.setChecked(True)
-            button.setToolTip("Mostrar ou recolher o painel de " + label.lower())
+            button.setToolTip("Mostrar ou recolher o painel de " + label.lower()
+                              + (" (Ctrl+Shift+L)" if label == "Peças" else " (Ctrl+P)"))
             button.setAccessibleName("Painel de " + label.lower())
-            head.addWidget(button)
+        head.addWidget(self.btn_parts_panel)
+        head.addWidget(self.tabs)
+        head.addStretch(1)
         self.btn_parts_panel.toggled.connect(lambda on: self.a_parts.setChecked(on))
         self.btn_params_panel.toggled.connect(lambda on: self.a_params.setChecked(on))
-        cl.addLayout(head)
-        head = QHBoxLayout()
-        head.setSpacing(4)
-        self.btn_rot = self._tool("Girar peça selecionada (R)", self.rotate_selected)
-        self.btn_lock = self._tool("Travar/destravar posição da peça selecionada (L)", self.toggle_lock_selected)
-        self.btn_del = self._tool("Remover peça selecionada (Del)", self.delete_selected)
-        for b in (self.btn_rot, self.btn_lock, self.btn_del):
-            head.addWidget(b)
-        head.addWidget(self._vsep())
-        head.addStretch(1)
         self.btn_prev = self._tool("Placa anterior (PgUp)", lambda: self.goto_sheet(self.canvas.current_sheet() - 1))
         self.sheet_label = QLabel("")
         self.sheet_label.setObjectName("Muted")
@@ -197,19 +206,30 @@ class UIBuildMixin:
         head.addWidget(self.sheet_label)
         head.addWidget(self.btn_next)
         head.addWidget(self.btn_fit)
-        edit_position = QPushButton("Posições…")
-        self.btn_positions = edit_position
-        from PySide6.QtWidgets import QSizePolicy
-        edit_position.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        edit_position.setToolTip("Selecionar uma cópia e ajustar posição/placa por teclado (Ctrl+Shift+M)")
-        edit_position.clicked.connect(self.edit_positions)
-        head.addWidget(edit_position)
+        head.addWidget(self.btn_params_panel)
         cl.addLayout(head)
+        # barra da seleção: só aparece com peça selecionada (detalhes + girar, travar, remover)
+        self.selection_bar = QFrame()
+        self.selection_bar.setObjectName("SelectionBar")
+        sbl = QHBoxLayout(self.selection_bar)
+        sbl.setContentsMargins(10, 2, 4, 2)
+        sbl.setSpacing(2)
+        self.btn_rot = self._tool("Girar peça selecionada (R)", self.rotate_selected)
+        self.btn_lock = self._tool("Travar/destravar posição da peça selecionada (L)", self.toggle_lock_selected)
+        self.btn_del = self._tool("Remover peça selecionada (Del)", self.delete_selected)
+        # "Posição…": X, Y, ângulo e placa pelo teclado (também em Editar › Editar posições, Ctrl+Shift+M,
+        # que funciona sem seleção)
+        self.btn_positions = self._tool("Ajustar posição pelo teclado: X, Y, ângulo e placa (Ctrl+Shift+M)",
+                                        self.edit_positions)
         self.selection_summary = QLabel("Selecione uma peça para conferir seus detalhes")
         self.selection_summary.setObjectName("SelectionSummary")
         self.selection_summary.setWordWrap(True)
         self.selection_summary.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        cl.addWidget(self.selection_summary)
+        sbl.addWidget(self.selection_summary, 1)
+        for b in (self.btn_rot, self.btn_lock, self.btn_del, self.btn_positions):
+            sbl.addWidget(b)
+        self.selection_bar.hide()
+        cl.addWidget(self.selection_bar)
 
         self.banner = QFrame()
         self.banner.setObjectName("Banner")
@@ -242,7 +262,8 @@ class UIBuildMixin:
         self.stack.addWidget(self.empty_state)
         self.stack.addWidget(self.canvas)
         cl.addWidget(self.stack, 1)
-        cl.addWidget(self._build_metrics())
+        self.metrics_box = self._build_metrics()
+        card_l.addWidget(self.metrics_box)
         ol.addWidget(card, 1)
 
         # ---------------- parâmetros
@@ -266,6 +287,7 @@ class UIBuildMixin:
         self.parts_panel.doneChanged.connect(self.on_part_done)
         self.parts_panel.sheetToggled.connect(self.on_sheet_cut)
         self.parts_panel.sheetOpenRequested.connect(self.open_sheet_in_rdworks)
+        self.canvas.sheetOpenClicked.connect(self.open_sheet_in_rdworks)
         self.parts_panel.requestFilter.connect(self.on_request_filter)
         split.addWidget(self.parts_panel)
         split.addWidget(outer)
@@ -321,49 +343,58 @@ class UIBuildMixin:
         self.canvas.setAccessibleDescription("Use Editar posições para selecionar uma instância e ajustar X, Y, ângulo e placa por teclado.")
 
     def _build_metrics(self) -> QFrame:
+        """Rodapé do encaixe: quatro células (rótulo em maiúsculas + número) e a linha de estado."""
         box = QFrame()
         box.setObjectName("Metrics")
         outer = QVBoxLayout(box)
-        outer.setContentsMargins(12, 8, 12, 8)
-        outer.setSpacing(8)
-        h = QHBoxLayout()
-        outer.addLayout(h)
-        h.setContentsMargins(0, 0, 0, 0)
-        h.setSpacing(18)
-        self._metrics_layout = h
+        outer.setContentsMargins(0, 0, 0, 8)
+        outer.setSpacing(6)
+        grid = QHBoxLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(0)
+        outer.addLayout(grid)
+        self._metrics_layout = grid
         self._metric_caps = {}
 
-        def metric(caption: str, big: bool = False):
-            v = QVBoxLayout()
-            v.setSpacing(0)
-            val = QLabel("—")
-            val.setObjectName("MetricBig" if big else "MetricValue")
-            cap = QLabel(caption)
+        def metric(key: str, caption: str, last: bool = False):
+            cell = QFrame()
+            cell.setObjectName("MetricCell")
+            cell.setProperty("last", last)
+            v = QVBoxLayout(cell)
+            v.setContentsMargins(16, 10, 16, 8)
+            v.setSpacing(2)
+            cap = QLabel(caption.upper())
             cap.setObjectName("MetricCaption")
-            v.addWidget(val)
+            val = QLabel("—")
+            val.setObjectName("MetricValue")
+            val.setAccessibleName(caption)
             v.addWidget(cap)
-            h.addLayout(v)
-            self._metric_caps[caption] = (cap, val)
-            return val
+            v.addWidget(val)
+            grid.addWidget(cell, 1)
+            self._metric_caps[key] = (cap, val)
+            return val, v
 
-        self.chip_util = metric("aproveitamento", big=True)
-        self._metric_caps["aproveitamento"][0].setText("aproveitamento total")
+        self.chip_util, util_box = metric("aproveitamento", "aproveitamento")
+        self.chip_util.setProperty("accent", True)
         self.chip_util.setToolTip("Área das peças ÷ área das placas usadas")
         self.progress = QProgressBar()
         self.progress.setRange(0, 1000)
         self.progress.setTextVisible(False)
-        self.progress.setMinimumWidth(40)
+        self.progress.setFixedHeight(4)
         self.progress.setToolTip("Aproveitamento: área das peças ÷ área das placas usadas")
-        h.addWidget(self.progress, 1)
-        h.addWidget(self._vsep())
-        self.chip_sheets = metric("placas")
-        self.chip_parts = metric("peças encaixadas")
-        self.chip_gen = metric("soluções testadas")
-        h.addWidget(self._vsep())
+        self.progress.hide()                     # o número já diz tudo; a barra fica para leitores de tela
+        self.chip_sheets, _ = metric("placas", "placas")
+        self.chip_parts, _ = metric("peças encaixadas", "peças")
+        # 4ª célula: tentativas enquanto otimiza; depois, o tempo estimado de máquina
+        self.chip_time, _ = metric("tempo", "tempo estimado", last=True)
+        self.chip_gen = self.chip_time
         self.status_label = QLabel("Pronto")
         self.status_label.setObjectName("State")
         self.status_label.setWordWrap(True)
-        outer.addWidget(self.status_label)
+        row = QHBoxLayout()
+        row.setContentsMargins(12, 0, 12, 0)
+        row.addWidget(self.status_label, 1)
+        outer.addLayout(row)
         return box
 
     def _vsep(self) -> QFrame:
@@ -417,7 +448,7 @@ class UIBuildMixin:
         self.btn_save.setIcon(icon("save", c, 16, m))
         self.btn_intranet.setIcon(icon("export", c, 16, m))
         self.btn_gear.setIcon(icon("settings", m, 17))
-        self.btn_nest.setIcon(icon("play", "#ffffff", 14, m))
+        self._nest_icon()
         paused = self.worker is not None and self.worker.pause_event.is_set()
         self.btn_pause.setIcon(icon("play" if paused else "pause", c, 14, m))
         self.btn_stop.setIcon(icon("stop", c, 14, m))
@@ -429,7 +460,9 @@ class UIBuildMixin:
         self.btn_prev.setIcon(icon("left", c, 17, m))
         self.btn_next.setIcon(icon("right", c, 17, m))
         self.btn_fit.setIcon(icon("fit", c, 17, m))
-        self.btn_positions.setIcon(icon("settings", c, 16, m))
+        self.btn_positions.setIcon(icon("move", c, 17, m))
+        self.btn_parts_panel.setIcon(icon("panel_left", c, 17, m))
+        self.btn_params_panel.setIcon(icon("panel_right", c, 17, m))
         self.banner_close.setIcon(icon("close", m, 14))
         self.empty_icon.setPixmap(pixmap("layers", t["accent"], 64, 1.5))
         self.parts_panel.refresh_icons()
@@ -541,8 +574,10 @@ class UIBuildMixin:
         act(m_nest, "Iniciar/pausar encaixe", self.start_or_pause, "Space")
         act(m_nest, "Parar", self.stop_nest, "Esc")
         act(m_nest, "Destravar todas as peças", self.unlock_all)
+        act(m_nest, "Gerenciar placas salvas…", self.edit_presets)
         m_nest.addSeparator()
         act(m_nest, "Marcar placa da tela como cortada (e ir para a próxima)", self.toggle_current_cut, "C")
+        act(m_nest, "Abrir no RDWorks só a placa da tela", self.open_current_sheet_in_rdworks, "Ctrl+Alt+R")
         m_nest.addSeparator()
         act(m_nest, "Banco de materiais…", lambda: self.open_materials_dialog(), "Ctrl+M")
         act(m_nest, "Retalhos…", lambda: self.open_remnants_dialog(), "Ctrl+Shift+R")
@@ -568,7 +603,7 @@ class UIBuildMixin:
         self.a_params.toggled.connect(self.toggle_params)
         self.settings_panel.setVisible(self.a_params.isChecked())
         self.btn_params_panel.setChecked(self.a_params.isChecked())
-        self.a_parts = act(m_view, "Painel de peças", lambda: None, "Ctrl+Shift+P")
+        self.a_parts = act(m_view, "Painel de peças", lambda: None, "Ctrl+Shift+L")
         self.a_parts.setCheckable(True)
         self.a_parts.setChecked(settings().value("ui/parts_visible", "true") == "true")
         self.a_parts.toggled.connect(self.toggle_parts)
@@ -598,32 +633,26 @@ class UIBuildMixin:
         if not force and (compact, tiny) == getattr(self, "_width_mode", None):
             return
         self._width_mode = (compact, tiny)
-        for b, txt in ((self.btn_open, "Abrir DXF"), (self.btn_intranet, "Intranet FIAP"), (self.btn_save, "Salvar encaixe")):
-            b.setText("" if compact else txt)
         self.btn_export.setText("Exportar" if compact else "Exportar para RDWorks")
         self.preset_combo.setMinimumWidth(170 if compact else 230)
-        self.plate_lbl.setVisible(not compact and self.mode_tabs.currentIndex() != 2)
+        self.plate_lbl.setVisible(False)            # o seletor de placa já diz o que é (sem rótulo "Placa")
         self.btn_nest.setMinimumWidth(0 if compact else 130)
         self.mode_tabs.setTabText(1, "Foto" if compact else "Gravação de foto")
+        self.tabs.setTabText(0, "Original" if tiny else "Arquivo original")
+        if hasattr(self, "sheet_label"):
+            self._update_sheet_label()
         self.logo_lbl.setVisible(not tiny)          # telas pequenas: só o ícone (sobra lugar para as 3 abas)
         self.parts_panel.setMinimumWidth(metric("panel_parts_min"))
         self.settings_panel.setMinimumWidth(280)
         self.settings_panel.set_compact(tiny)
         self.photo_panel.set_compact(tiny)
         self.box_panel.set_compact(tiny)
-        self.status_hint.setText("F1 atalhos" if compact else
-                                 "Roda: zoom  ·  botão do meio / Alt+arrastar: mover vista  ·  R girar  ·  "
-                                 "L travar  ·  Del remover  ·  F1 atalhos")
+        self.status_hint.setText("F1 atalhos")       # dicas do desenho ficam na ajuda (F1), não na barra
         self.status_hint.setVisible(not tiny)
-        self._metrics_layout.setSpacing(10 if compact else 18)
-        for full, short in (("peças encaixadas", "peças"), ("soluções testadas", "soluções"),
-                            ("aproveitamento", "aproveit. total")):
-            cap, val = self._metric_caps[full]
-            cap.setText(short if compact else ("aproveitamento total" if full == "aproveitamento" else full))
-        for wdg in self._metric_caps["soluções testadas"]:
-            wdg.setVisible(not tiny)
+        for key, (cap, val) in self._metric_caps.items():
+            cap.parentWidget().layout().setContentsMargins(10 if compact else 16, 10, 10 if compact else 16, 8)
+        self._metric_caps["aproveitamento"][0].setText("APROVEIT." if tiny else "APROVEITAMENTO")
         self.status_label.setMaximumWidth(16777215)
-        self.btn_positions.setText("" if tiny else "Posições…")
         self.preset_combo.setMaximumWidth(170 if tiny else 230)
         self.preset_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.preset_combo.setMinimumContentsLength(8)
@@ -642,10 +671,8 @@ class UIBuildMixin:
         # a placa vale para encaixe e foto (o gerador de caixas tem material próprio)
         for widget in (self.btn_open, self.btn_intranet, self.btn_save, self._file_sep):
             widget.setVisible(i == 0)
-        for widget in (self.plate_lbl, self.preset_combo, self.btn_gear, self._mode_sep):
+        for widget in (self.preset_combo, self._mode_sep):
             widget.setVisible(i != 2)
-        if getattr(self, "_width_mode", (False, False))[0]:
-            self.plate_lbl.setVisible(False)
         # mensagens da barra de status são de um modo só ("Encaixe concluído… Ctrl+E" não vale na Foto)
         self.statusBar().clearMessage()
         if i == 1:
@@ -686,7 +713,8 @@ class UIBuildMixin:
 
     def show_shortcuts(self):
         QMessageBox.information(self, "Atalhos de teclado", (
-            "Ctrl+Shift+P\tMostrar/recolher painel de peças\n"
+            "Ctrl+Shift+L\tMostrar/recolher painel de peças\n"
+            "Ctrl+Shift+P\tAbrir projeto\n"
             "Ctrl+O\tAbrir DXF\n"
             "Ctrl+Shift+O\tAdicionar DXF\n"
             "Ctrl+I\tIntranet FIAP\n"
@@ -703,6 +731,7 @@ class UIBuildMixin:
             "Ctrl+P\tMostrar/ocultar parâmetros\n"
             "Ctrl+T\tTema claro/escuro\n"
             "Ctrl+1 / 2 / 3\tEncaixe / Gravação de foto / Gerador de caixas\n"
+            "Ctrl+Alt+R\tAbrir no RDWorks só a placa da tela\n"
             "Ctrl+Shift+M\tEditar posições por instância (teclado)\n"
             "Ctrl+A\tSelecionar todas as peças\n"
             "R\tGirar peça selecionada\n"
