@@ -378,6 +378,7 @@ class NestCanvas(QGraphicsView):
     contextMenuForItems = Signal(object, object)   # lista de PartItem, QPoint global
     zoomChanged = Signal(float)
     sheetCutClicked = Signal(int)                  # clique no "cortada" da etiqueta da placa
+    previewFileClicked = Signal(str)               # clique no nome de um arquivo no "Arquivo original"
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -417,6 +418,7 @@ class NestCanvas(QGraphicsView):
         self.part_items = []
         self.sheet_items = []
         self.sheet_labels = []
+        self._review_hl = []                # realces da conferência (somem junto com a cena)
         self.scene().blockSignals(True)
         self.scene().clear()
         self.scene().blockSignals(False)
@@ -436,15 +438,25 @@ class NestCanvas(QGraphicsView):
         self.scene().setSceneRect(QRectF(-200, -100, 400, 200))
         t.setPos(-150, 30)
 
-    def show_preview(self, preview: list[tuple[Prim, bool]]):
-        """Mostra o desenho original importado (contornos abertos em vermelho)."""
+    def show_preview(self, preview: list[tuple[Prim, bool]], frames: dict | None = None,
+                     labels: dict | None = None, issues: list | None = None, acked: set | None = None):
+        """Mostra o desenho original importado (contornos abertos em vermelho).
+
+        Com ``frames`` ({arquivo: [dx, dy, x0, y0, x1, y1]}), cada arquivo ganha quadro e rótulo
+        (``labels``: {arquivo: (nome, solicitação, situação)}); ``issues`` marca aberturas e pontas
+        soltas que ainda não foram conferidas (``acked``)."""
+        from . import review_overlay
         self.clear()
         self.mode = "preview"
+        self.preview_frames = dict(frames or {})
         groups: dict[tuple, QPainterPath] = {}
         problem = QPainterPath()
+        repaired = QPainterPath()
         for pr, bad in preview:
             path = prim_path(pr)
-            if bad:
+            if pr.kind == "LINE" and pr.data.get("repair"):
+                repaired.addPath(path)
+            elif bad:
                 problem.addPath(path)
             else:
                 groups.setdefault(prim_rgb(pr), QPainterPath()).addPath(path)
@@ -460,7 +472,29 @@ class NestCanvas(QGraphicsView):
             item.setPen(pen)
             item.setToolTip("Contorno aberto: a linha não fecha. Verifique no CAD se falta um trecho.")
             self.scene().addItem(item)
+        if not repaired.isEmpty():
+            item = QGraphicsPathItem(repaired)
+            pen = QPen(theme.qcolor("success"), 3)
+            pen.setCosmetic(True)
+            item.setPen(pen)
+            item.setToolTip("Trecho acrescentado na conferência para fechar uma abertura")
+            self.scene().addItem(item)
+        if self.preview_frames:
+            review_overlay.add_frames(self, self.preview_frames, labels or {})
+        if issues:
+            review_overlay.add_issue_marks(self, issues, self.preview_frames, set(acked or ()))
         self.fit_all()
+
+    def focus_rect(self, rect: QRectF, min_size: float = 40.0):
+        """Aproxima a vista de um trecho do desenho (sem ficar absurdamente perto de uma abertura de 0,1 mm)."""
+        if rect is None:
+            return
+        c = rect.center()
+        w = max(rect.width() * 1.6, min_size)
+        h = max(rect.height() * 1.6, min_size)
+        self._auto_fit = False
+        self.fitInView(QRectF(c.x() - w / 2, c.y() - h / 2, w, h), Qt.KeepAspectRatio)
+        self.zoomChanged.emit(self.transform().m11())
 
     owner_colors: dict = {}
     specs: dict = {}                    # placa -> SheetSpec (chapa do material ou retalho)
@@ -627,7 +661,7 @@ class NestCanvas(QGraphicsView):
         self.scene().setSceneRect(r.adjusted(-r.width(), -r.height(), r.width(), r.height()))
         self.fitInView(r.adjusted(-15, -15, 15, 15), Qt.KeepAspectRatio)
         # As etiquetas têm altura fixa na tela, independente da escala do desenho.
-        if self.mode == "layout":
+        if self.mode in ("layout", "preview"):
             scale = max(abs(self.transform().m11()), 1e-3)
             self.fitInView(r.adjusted(-15, -15, 15, 40 / scale), Qt.KeepAspectRatio)
         self._auto_fit = True                # janela mudou de tamanho: enquadra de novo (até o usuário dar zoom)

@@ -23,11 +23,12 @@ from .mainwindow.updates import UpdatesMixin
 from .mainwindow.files import FilesMixin
 from .mainwindow.nesting import NestingMixin
 from .mainwindow.projects import ProjectMixin
+from .mainwindow.review import ReviewMixin
 from .mainwindow.status import StatusMixin
 from .mainwindow.ui_build import UIBuildMixin
 
 
-class MainWindow(UIBuildMixin, FilesMixin, ProjectMixin, NestingMixin, EditingMixin, ChecklistMixin,
+class MainWindow(UIBuildMixin, FilesMixin, ProjectMixin, ReviewMixin, NestingMixin, EditingMixin, ChecklistMixin,
                  StatusMixin, ExportMixin, MaterialsMixin, UpdatesMixin, BoxMixin, QMainWindow):
     def __init__(self, workers: Optional[int] = None):
         super().__init__()

@@ -66,7 +66,7 @@ class ProjectMixin:
                      materials=self.file_materials, request=self.request_info, tags=self.file_tags,
                      checklist={"cut": sorted(self.cut_sheets), "done": sorted(self.done_parts)},
                      file_units=self.file_units, source_hashes=self.source_hashes, report=self.report,
-                     extra=self._project_extra())
+                     extra=self._project_extra(), file_repairs=self.file_repairs)
 
     def _project_extra(self) -> dict:
         from ...core.operations import color_ops_to_json
@@ -76,7 +76,8 @@ class ProjectMixin:
                                 for si, path in sorted(self.sheet_files.items())],
                 "sheet_remnants": [[int(si), rid] for si, rid in sorted(self.sheet_remnants.items())],
                 "saved_leftover": [[int(si), round(float(a), 1)] for si, a in sorted(self.saved_leftover.items())],
-                "last_export_base": getattr(self, "last_export_base", "")}
+                "last_export_base": getattr(self, "last_export_base", ""),
+                "issue_acks": sorted(self.issue_acks)}
 
     def _load_project_extra(self, extra: dict):
         from ...core.operations import color_ops_from_json
@@ -108,6 +109,7 @@ class ProjectMixin:
             except (TypeError, ValueError, IndexError):
                 continue
         self.last_export_base = str(extra.get("last_export_base") or "")
+        self.issue_acks = {str(k) for k in extra.get("issue_acks") or [] if isinstance(k, str)}
 
     @staticmethod
     def autosave_path() -> str:
@@ -191,6 +193,7 @@ class ProjectMixin:
         self.file_materials = dict(proj.materials)
         self.file_tags = dict(getattr(proj, "tags", {}) or {})
         self.file_units = dict(proj.units)
+        self.file_repairs = {k: list(v) for k, v in (getattr(proj, "repairs", {}) or {}).items()}
         self.source_hashes = dict(proj.source_hashes)
         ck = getattr(proj, "checklist", None) or {}
         self.cut_sheets = set(int(x) for x in ck.get("cut", []))
@@ -219,8 +222,7 @@ class ProjectMixin:
             self.tabs.setCurrentIndex(1)
             self.tabs.blockSignals(False)
             self._redraw()
-        else:
-            self.canvas.show_preview(self.report.preview)
+        self.refresh_review()
         self._update_status()
         self._update_buttons()
         if proj.warnings:

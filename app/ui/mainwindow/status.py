@@ -9,12 +9,10 @@ from .common import fmt_pct
 class StatusMixin:
     def _tab_changed(self, i: int):
         if i == 0:
-            if self.report:
-                self.canvas.show_preview(self.report.preview)
-            else:
-                self.canvas.show_empty_hint()
+            self.show_original()
         else:
             self._redraw()
+        self._sync_review_visibility()
         self._update_buttons()
 
     def _redraw(self, keep_view: bool = False):

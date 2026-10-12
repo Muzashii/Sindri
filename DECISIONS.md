@@ -290,3 +290,13 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
 85. **A 1ª solução não é cortada pelo tempo**: o limite de tempo e a parada automática valem só para a
     otimização. Antes, com pouco tempo (ou muitas peças/rotações), a 1ª solução parava no meio e peças que
     cabiam apareciam como "não couberam" (a linha de comando nem exportava). Só o "Parar" do usuário a interrompe.
+86. **Conferência da importação no lugar da janela de avisos**: os avisos viram dados (`core/import_issues.py`:
+    arquivo, tipo, gravidade, local em mm e, para contornos abertos, as aberturas entre pontas próximas) e
+    aparecem num painel ao lado do "Arquivo original", agrupados por solicitação e arquivo. O que o Sindri já
+    resolveu (linhas repetidas, contornos em dobro, POINT) fica escondido por padrão; o que pede atenção leva
+    ao local exato no desenho (F8 = próximo). Cada arquivo aparece num quadro com nome e solicitação, em grade.
+    **Fechar abertura** liga as duas pontas com um trecho reto na mesma cor/camada, só naquela abertura — não
+    aumenta a tolerância de junção do arquivo inteiro, que poderia juntar detalhes que deviam ficar separados.
+    Os trechos ficam guardados por arquivo, na unidade do desenho (continuam certos se a unidade mudar), no
+    projeto `.sindri`, e podem ser desfeitos. "Está certo" marca uma linha aberta proposital; "Copiar recado"
+    gera o texto para o aluno corrigir o arquivo. Busca de pares até 5 mm; o lote padrão fecha até 0,5 mm.

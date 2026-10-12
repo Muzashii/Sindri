@@ -132,12 +132,14 @@ class FilesMixin:
                set(self.done_parts), self.request_label, self.request_info)
         old_params = self.settings_panel.params()
         old_units = dict(self.file_units)
+        old_review = (dict(self.file_repairs), set(self.issue_acks))
         if not add:
             self.settings_panel.reset_file_options()   # arquivo novo: unidade automática, todas as camadas
             self.file_multipliers = {}
             self.file_materials = {}
             self.file_tags = {}
             self.file_units = {}
+            self.file_repairs, self.issue_acks = {}, set()
             self.cut_sheets, self.done_parts = set(), set()
             self.request_label = request_label
             self.request_info = request_info
@@ -155,6 +157,7 @@ class FilesMixin:
              self.request_label, self.request_info) = old
             self.parts_panel.set_request(self.request_info)
             self.file_units = old_units
+            self.file_repairs, self.issue_acks = old_review
             self.settings_panel.set_params(old_params)
             self._refresh_cut_panel()
             return False
@@ -162,16 +165,19 @@ class FilesMixin:
             self.project_path = None
         return True
 
-    def _import(self, files: list[str], keep_quantities: bool = False, keep_layout: bool = False):
+    def _import(self, files: list[str], keep_quantities: bool = False, keep_layout: bool = False,
+                review: bool = False):
+        """``review``: reimportação pedida pela Conferência (fechar aberturas): não reabre avisos."""
         p = self.settings_panel.params()
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             multipliers, materials, tags, units = (dict(self.file_multipliers), dict(self.file_materials),
                                                   dict(self.file_tags), dict(self.file_units))
+            repairs = {k: list(v) for k, v in self.file_repairs.items()}
             rep = run_task(self, "Lendo e reconstruindo os arquivos DXF", lambda:
                            import_files(list(files), p.join_tolerance, p.curve_tolerance, **p.import_kwargs(),
                                         multipliers=multipliers, file_materials=materials,
-                                        file_tags=tags, file_units=units))
+                                        file_tags=tags, file_units=units, file_repairs=repairs))
         except Exception as e:
             QApplication.restoreOverrideCursor()
             QMessageBox.critical(self, "Erro ao abrir", f"Não foi possível ler os arquivos.\n\n{e}")
@@ -236,23 +242,27 @@ class FilesMixin:
         self.tabs.blockSignals(True)
         self.tabs.setCurrentIndex(0)
         self.tabs.blockSignals(False)
-        self.canvas.show_preview(rep.preview)
         names = ", ".join(os.path.basename(f) for f in self.files)
         self.setWindowTitle(f"{APP_NAME} — {names}" if names else APP_NAME)
         self._refresh_cut_panel()
         self._update_status()
         self._update_buttons()
-        if self._ask_fix_units(rep):
+        if not review and self._ask_fix_units(rep):
             return
-        if rep.warnings:
-            self._show_warnings(rep.warnings)
+        # avisos: painel de Conferência ao lado do desenho (não trava a tela com uma janela)
+        self.refresh_review(auto_open=not review)
+        if review:
+            return
         self._announce_color_ops()
         if not self.parts:
             self.statusBar().showMessage("Nenhuma peça encontrada nos arquivos.", 8000)
         else:
             total = sum(p.quantity for p in self.parts)
+            pend = len(self.review_panel.pending())
+            tail = f" · {pend} aviso(s) para conferir (F8)" if pend else ""
             self.statusBar().showMessage(
-                f"{len(self.parts)} tipo(s) de peça, {total} no total. Escolha a placa e clique em Encaixar.", 10000)
+                f"{len(self.parts)} tipo(s) de peça, {total} no total. Escolha a placa e clique em Encaixar.{tail}",
+                10000)
 
     def _ask_fix_units(self, rep) -> bool:
         """Se o tamanho do desenho for absurdo na unidade declarada, corrige sozinho. True = reimportou."""
@@ -286,19 +296,6 @@ class FilesMixin:
     def reimport(self):
         if self.files:
             self._import(self.files, keep_quantities=True)
-
-    def _show_warnings(self, warnings: list[str]):
-        important = [w for w in warnings if "assumindo" in w or "não" in w.lower() or "aberto" in w
-                     or "corromp" in w or "ignorad" in w or "duplicad" in w]
-        if not important:
-            return
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Warning)
-        box.setWindowTitle("Avisos da importação")
-        box.setText("O arquivo foi aberto, mas há pontos de atenção:")
-        box.setInformativeText("\n".join("• " + w for w in important[:12]) +
-                               ("\n…" if len(important) > 12 else ""))
-        box.exec()
 
     def show_import_details(self):
         if self.report is None:
@@ -356,6 +353,7 @@ class FilesMixin:
         self.file_materials, self.request_info = {}, None
         self.file_tags = {}
         self.file_units, self.source_hashes = {}, {}
+        self.file_repairs, self.issue_acks = {}, set()
         if hasattr(self, "_autosave_timer"):
             self._autosave_timer.stop()
         self.parts_panel.set_request(None)
@@ -377,6 +375,7 @@ class FilesMixin:
         self.settings_panel.set_layers({})
         self.parts_panel.set_parts([])
         self.banner.hide()
+        self.refresh_review()
         self.canvas.show_empty_hint()
         self.tabs.blockSignals(True)
         self.tabs.setCurrentIndex(0)
