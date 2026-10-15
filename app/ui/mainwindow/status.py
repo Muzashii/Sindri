@@ -126,6 +126,8 @@ class StatusMixin:
             kind, txt = "warn", f"⚠ {len(self.too_big)} tipo(s) maior(es) que a placa"
         elif getattr(self, "_collision_count", 0):
             kind, txt = "warn", f"⚠ {self._collision_count} peça(s) com colisão, borda ou material incompatível"
+        elif self.placements and missing > 0 and not self.settings_panel.multi.isChecked():
+            kind, txt = "warn", f"⚠ {missing} sem lugar · ligue “Abrir nova placa se não couber” em Encaixe"
         elif self.placements and missing > 0:
             kind, txt = "warn", f"⚠ {missing} sem lugar"
         elif self.placements:

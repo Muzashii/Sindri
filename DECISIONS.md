@@ -300,3 +300,4 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
     Os trechos ficam guardados por arquivo, na unidade do desenho (continuam certos se a unidade mudar), no
     projeto `.sindri`, e podem ser desfeitos. "Está certo" marca uma linha aberta proposital; "Copiar recado"
     gera o texto para o aluno corrigir o arquivo. Busca de pares até 5 mm; o lote padrão fecha até 0,5 mm.
+87. **Nova placa ligada a cada sessão**: "Abrir nova placa se não couber" desmarcado ficava salvo nas preferências e o encaixe passava a usar só 1 placa em toda abertura, com peças "sem lugar". Agora cada sessão começa com a opção ligada (projetos `.sindri` mantêm o que foi salvo) e, se ela estiver desligada e sobrar peça, o aviso de status diz para ligá-la.

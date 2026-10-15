@@ -86,6 +86,9 @@ class MainWindow(UIBuildMixin, FilesMixin, ProjectMixin, ReviewMixin, NestingMix
                 params = NestParams.from_json(json.loads(raw))
             except Exception:
                 pass
+        # "Abrir nova placa se não couber" desligado sem querer ficava salvo para sempre e o encaixe
+        # passava a usar só 1 placa, deixando peças sem lugar. Cada sessão começa com ele ligado.
+        params.multi_sheet = True
         self.settings_panel.set_params(params)
         self.params = params
         self._refresh_presets()
