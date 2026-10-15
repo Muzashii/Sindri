@@ -301,3 +301,11 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
     projeto `.sindri`, e podem ser desfeitos. "Está certo" marca uma linha aberta proposital; "Copiar recado"
     gera o texto para o aluno corrigir o arquivo. Busca de pares até 5 mm; o lote padrão fecha até 0,5 mm.
 87. **Nova placa ligada a cada sessão**: "Abrir nova placa se não couber" desmarcado ficava salvo nas preferências e o encaixe passava a usar só 1 placa em toda abertura, com peças "sem lugar". Agora cada sessão começa com a opção ligada (projetos `.sindri` mantêm o que foi salvo) e, se ela estiver desligada e sobrar peça, o aviso de status diz para ligá-la.
+88. **Furo detalhado não trava o encaixe**: o part-in-part calcula, para cada rotação da peça com furo e cada
+    peça candidata, a soma de Minkowski furo × peça (vértices × vértices). Um anel de 450 mm com o furo desenhado
+    em ~1.800 segmentos (kit de 8 peças numa placa 1400×900) levava ~17 s só na 1ª solução e o genético ficava
+    parado em "1 soluções" (2 rodadas em 2 min). Furos com mais de 100 vértices agora são simplificados como o
+    contorno externo (tolerância crescente até 0,4–1 mm, conforme o tamanho) e encolhidos por essa mesma
+    tolerância, recortados pelo furo exato: o furo usado no encaixe só perde área (no máx. ~0,4 mm na borda),
+    nunca passa do real. Furos pequenos continuam exatos. Os IFPs de furo já calculados vão para os processos
+    do genético junto com o resto do cache. Resultado no kit: 1ª solução em ~0,2 s e ~35 rodadas/s.

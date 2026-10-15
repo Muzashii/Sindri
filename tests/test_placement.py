@@ -252,3 +252,43 @@ def test_limite_de_tempo_nao_corta_a_primeira_solucao(lab_parts):
     res = nest(lab_parts, NestParams(), time_limit=0.01, workers=0, seed=1)
     assert res.unplaced == []
     assert len(res.placements) == sum(p.quantity for p in lab_parts)
+
+
+def test_anel_com_furo_detalhado_nao_trava_a_primeira_solucao(tmp_path):
+    """Anel de 450 mm com ganchos e um furo desenhado com ~1.800 segmentos (caso real: kit de 8 peças
+    numa placa 1400×900). O IFP do furo (part-in-part) é furo × peça: com o furo inteiro a 1ª solução
+    levava ~17 s e o genético quase não andava. O furo é simplificado só para dentro: as peças que vão
+    para dentro dele continuam sem sobrepor."""
+    import time
+    from shapely import affinity
+    from shapely.geometry import Point, box
+    from shapely.ops import unary_union
+    cx, cy = 230, 230
+    outer = unary_union([Point(cx, cy).buffer(225, 450)]
+                        + [affinity.rotate(box(cx - 8, cy + 215, cx + 8, cy + 240), a, origin=(cx, cy))
+                           for a in range(20, 360, 40)])
+    hole = Point(cx, cy).buffer(185, 450).difference(unary_union(
+        [affinity.rotate(box(cx - 6, cy + 170, cx + 6, cy + 190), a, origin=(cx, cy)) for a in range(0, 360, 30)]))
+    ring = outer.difference(hole)
+    assert len(ring.interiors[0].coords) > 1500
+    doc = ezdxf.new("R2000")
+    doc.units = 4
+    msp = doc.modelspace()
+    for r in [ring.exterior] + list(ring.interiors):
+        msp.add_lwpolyline(list(r.coords)[:-1], close=True)
+    msp.add_circle((700, 60), 50)          # discos (contorno com muitos vértices) vão para dentro do furo
+    msp.add_circle((900, 60), 30)
+    f = tmp_path / "anel.dxf"
+    doc.saveas(f)
+    rep = import_files([str(f)])
+    for p in rep.parts:
+        if p.outer.area < 20000:
+            p.quantity = 4 if p.outer.area > 5000 else 3
+    # placa só um pouco maior que o anel: os discos só cabem dentro do furo
+    params = NestParams(sheet_width=520, sheet_height=520, margin=6, spacing=2.0)
+    g = GeneticNester(rep.parts, params, workers=0, seed=1)
+    t = time.time()
+    res = g.evaluate_local(g.first_individual())
+    assert time.time() - t < 5
+    assert res.unplaced == [] and res.sheets_used == 1 and len(res.placements) == 8
+    assert validate_layout({p.id: p for p in rep.parts}, res.placements, params) == []
