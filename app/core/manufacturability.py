@@ -28,7 +28,7 @@ SLOT_TOL = 0.02              # rasgo com largura = espessura nominal (± 0,02 mm
 @dataclass
 class Issue:
     kind: str                               # parede_fina | furo_pequeno | peca_pequena | maior_que_chapa |
-    message: str                            # rasgo_sem_compensacao | texto
+    message: str                            # rasgo_sem_compensacao | texto | kerf_sem_compensacao | kerf_espacamento
     geom: Optional[object] = None           # região do problema, em coordenadas da peça (para pintar)
 
 
@@ -38,13 +38,14 @@ class MaterialLimits:
     kerf: float = 0.0
     min_part: float = DEFAULT_MIN_PART
     usable: Optional[tuple[float, float]] = None   # largura × altura úteis da chapa (mm)
+    spacing: Optional[float] = None                # espaçamento do encaixe (mm), para o aviso de kerf
 
     @staticmethod
-    def from_db(m, usable=None) -> "MaterialLimits":
+    def from_db(m, usable=None, spacing: Optional[float] = None) -> "MaterialLimits":
         if m is None:
-            return MaterialLimits(usable=usable)
+            return MaterialLimits(usable=usable, spacing=spacing)
         return MaterialLimits(float(m.thickness or 0), float(m.kerf or 0),
-                              float(m.min_part or DEFAULT_MIN_PART), usable)
+                              float(m.min_part or DEFAULT_MIN_PART), usable, spacing)
 
 
 def _inner_cut_polygons(part: Part) -> list[Polygon]:
@@ -81,15 +82,31 @@ def check_part(part: Part, limits: MaterialLimits) -> list[Issue]:
     # peça pequena demais para a mesa
     mp = limits.min_part or DEFAULT_MIN_PART
     if w < mp and h < mp:
+        n_tabs = int(getattr(part, "tabs", 0) or 0)
         issues.append(Issue("peca_pequena",
                             f"Peça pequena ({w:.1f} × {h:.1f} mm): pode cair na colmeia ou levantar com o sopro. "
-                            "Considere micro-pontes (tabs) só nesta peça."))
+                            + (f"Está com {n_tabs} micro-pontes: fica presa na chapa até você destacar."
+                               if n_tabs else
+                               "Ligue micro-pontes só nesta peça: botão “Pontes” na linha dela, na lista de peças.")))
     # maior que a área útil (aproximado pela caixa: nunca encaixa em nenhuma rotação de 90°)
     if limits.usable:
         uw, uh = limits.usable
         if min(w, h) > min(uw, uh) or max(w, h) > max(uw, uh):
             issues.append(Issue("maior_que_chapa", f"Maior que a área útil da chapa ({uw:g} × {uh:g} mm): "
                                                    "não vai ter lugar."))
+    # compensação de kerf ligada na peça: avisa já aqui se ela não vai acontecer na exportação
+    if getattr(part, "kerf_comp", False):
+        from .kerf import can_compensate, spacing_note
+        why = can_compensate(part)
+        if not limits.kerf:
+            why = "o material não tem kerf medido no banco de materiais (cadastre em Materiais)"
+        if why:
+            issues.append(Issue("kerf_sem_compensacao", f"“Compensar kerf” está ligado, mas {why}: "
+                                                        "a peça sai sem compensação."))
+        elif limits.spacing is not None:
+            note = spacing_note(limits.spacing, limits.kerf)
+            if note:
+                issues.append(Issue("kerf_espacamento", note))
     if part.is_open:
         return issues
     solid = fine_solid(part)
@@ -155,7 +172,8 @@ def seal_for(materials: Iterable[str], issues: Iterable[Issue] = (), non_dxf: in
         kinds[i.kind] = kinds.get(i.kind, 0) + 1
     names = {"parede_fina": "parede fina", "furo_pequeno": "furo menor que o kerf", "peca_pequena": "peça pequena",
              "maior_que_chapa": "peça maior que a chapa", "rasgo_sem_compensacao": "rasgo sem compensação",
-             "texto": "texto não convertido"}
+             "texto": "texto não convertido", "kerf_sem_compensacao": "compensação de kerf que não será feita",
+             "kerf_espacamento": "espaçamento menor que o kerf"}
     for k, n in kinds.items():
         reasons.append(f"{n} peça(s) com {names.get(k, k)}")
     if non_dxf:

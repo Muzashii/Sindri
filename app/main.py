@@ -15,7 +15,8 @@ def main() -> int:
     try:  # o navegador embutido (intranet) precisa ser carregado antes da QApplication
         import PySide6.QtWebEngineWidgets  # noqa: F401
     except Exception:
-        pass
+        from app.core.fileutil import log_exception
+        log_exception("abertura: navegador embutido (QtWebEngine) indisponível")
     from app.ui.main_window import MainWindow
 
     from PySide6.QtCore import Qt
@@ -32,10 +33,11 @@ def main() -> int:
             import ctypes
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("LabMaker.Sindri")
         except Exception:
-            pass
+            from app.core.fileutil import log_exception
+            log_exception("abertura: ícone na barra de tarefas do Windows")
     win = MainWindow()
     win.showMaximized()
-    files = [a for a in sys.argv[1:] if a.lower().endswith((".dxf", ".dxfnest", ".sindri"))]
+    files = [a for a in sys.argv[1:] if a.lower().endswith((".dxf", ".ai", ".rd", ".dxfnest", ".sindri"))]
     if files:
         if files[0].lower().endswith((".dxfnest", ".sindri")):
             win.open_project(files[0])

@@ -86,6 +86,9 @@ def _worker_eval(ind: Individual):
 
 # ---------------------------------------------------------------------------
 class GeneticNester:
+    INSERT_RATE = 0.20      # chance, por indivíduo mutado, de reinserir uma peça em posição aleatória
+    INVERT_RATE = 0.10      # chance, por indivíduo mutado, de inverter um trecho da ordem
+
     def __init__(self, parts: list[Part], params: NestParams,
                  locked: Optional[list[Placement]] = None, seed: Optional[int] = None,
                  workers: Optional[int] = None):
@@ -151,6 +154,14 @@ class GeneticNester:
             if self.params.allow_mirror and self.rng.random() < rate:
                 k, r, m = genes[i]
                 genes[i] = (k, r, not m)
+        # mais exploração: a troca de vizinhos acima só desloca uma peça uma posição por vez
+        if self.INSERT_RATE > 0 and n > 2 and self.rng.random() < self.INSERT_RATE:      # inserção: tira uma peça e põe em outro lugar
+            g = genes.pop(self.rng.randrange(n))
+            genes.insert(self.rng.randrange(n), g)
+        if self.INVERT_RATE > 0 and n > 3 and self.rng.random() < self.INVERT_RATE:      # inversão de um trecho da ordem
+            i, j = sorted(self.rng.sample(range(n + 1), 2))
+            if j - i > 1:
+                genes[i:j] = genes[i:j][::-1]
         crit = ind.criterion
         if self.rng.random() < rate:
             crit = "left" if crit == "bbox" else "bbox"
@@ -176,7 +187,8 @@ class GeneticNester:
     def _to_result(self, res, ind: Individual) -> NestResult:
         return NestResult(res.placements, res.sheets_used, res.utilization, res.fitness,
                           list(res.unplaced) + list(self.too_big), self.generation, self.evaluated,
-                          list(res.sheet_materials), list(getattr(res, "sheet_remnants", [])))
+                          list(res.sheet_materials), list(getattr(res, "sheet_remnants", [])),
+                          list(getattr(res, "sheet_bbox", [])))
 
     def _consider(self, ind: Individual, res, on_best) -> None:
         self.evaluated += 1

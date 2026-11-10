@@ -102,6 +102,7 @@ class PartRow(QFrame):
         self.lock.setMinimumWidth(104)
         self.panel = panel
         ctl.addWidget(self.lock)
+        self._build_cut_button(ctl)
         self.done_btn = QToolButton()
         self.done_btn.setObjectName("DoneButton")
         self.done_btn.setCheckable(True)
@@ -122,6 +123,86 @@ class PartRow(QFrame):
             tips += [""] + ["⚠ " + x for x in warns]
             self.setProperty("warn", True)
         self.setToolTip("\n".join(tips))
+
+    # ---- micro-pontes e compensação de kerf (valem só na exportação)
+    def _build_cut_button(self, ctl):
+        from PySide6.QtGui import QAction, QActionGroup
+        from PySide6.QtWidgets import QMenu
+        from ..core.tabs import TAB_CHOICES
+        part = self.part
+        self.cut_btn = QToolButton()
+        self.cut_btn.setObjectName("PartCutOptions")
+        self.cut_btn.setPopupMode(QToolButton.InstantPopup)
+        self.cut_btn.setAutoRaise(True)
+        self.cut_btn.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.cut_btn.setFixedHeight(20)
+        self.cut_btn.setAccessibleName(f"Pontes e kerf de {part.name}")
+        menu = QMenu(self.cut_btn)
+        menu.setToolTipsVisible(True)
+        head = menu.addAction("Micro-pontes no contorno")
+        head.setEnabled(False)
+        group = QActionGroup(menu)
+        self.tab_actions: dict[int, QAction] = {}
+        for n in TAB_CHOICES:
+            a = menu.addAction("Sem pontes" if n == 0 else f"{n} pontes")
+            a.setCheckable(True)
+            a.setToolTip("O corte do contorno passa direto (a peça se solta)." if n == 0 else
+                         f"O laser deixa {n} trechinhos sem cortar no contorno externo: a peça fica presa na "
+                         "chapa (não cai na colmeia nem levanta com o sopro). Depois é só destacar.")
+            a.triggered.connect(lambda _=False, k=n: self._tabs_chosen(k))
+            group.addAction(a)
+            self.tab_actions[n] = a
+        menu.addSeparator()
+        self.kerf_action = menu.addAction("Compensar kerf")
+        self.kerf_action.setCheckable(True)
+        self.kerf_action.setToolTip(self.KERF_TIP)
+        self.kerf_action.triggered.connect(self._kerf_chosen)
+        self.cut_btn.setMenu(menu)
+        ctl.addWidget(self.cut_btn)
+        self.set_cut_state(int(getattr(part, "tabs", 0) or 0), bool(getattr(part, "kerf_comp", False)))
+
+    KERF_TIP = ("Peça de encaixe: desloca o corte em metade do kerf do material (contorno para fora, furos e\n"
+                "rasgos para dentro), para a peça cortada sair com a medida do desenho.\n"
+                "Altera a medida do desenho de propósito, só no arquivo exportado. Usa o kerf medido em\n"
+                "Materiais; sem kerf cadastrado a peça sai sem compensação (com aviso).\n"
+                "Gravação e vinco não mudam.")
+
+    def set_cut_state(self, tabs: int, kerf: bool):
+        """Mostra no botão o que está ligado ("Pontes 2 · kerf"); sem nada ligado fica só "Pontes"."""
+        self._tabs, self._kerf = int(tabs), bool(kerf)
+        for n, a in self.tab_actions.items():
+            a.setChecked(n == self._tabs)
+        if self._tabs not in self.tab_actions:               # valor vindo de projeto (ex.: 5): nenhum marcado
+            for a in self.tab_actions.values():
+                a.setChecked(False)
+        self.kerf_action.setChecked(self._kerf)
+        txt = f"Pontes {self._tabs}" if self._tabs else "Pontes"
+        if self._kerf:
+            txt += " · kerf"
+        active = bool(self._tabs or self._kerf)
+        self.cut_btn.setText(txt)
+        self.cut_btn.setProperty("active", active)
+        # ligado: cor de destaque; desligado: discreto como texto secundário
+        t = theme.tokens()
+        self.cut_btn.setStyleSheet(f"QToolButton#PartCutOptions {{ color: {t['focus' if active else 'muted']}; "
+                                   "padding: 0 14px 0 4px; }")
+        self.cut_btn.setMinimumWidth(self.cut_btn.sizeHint().width())
+        state = (f"{self._tabs} micro-pontes" if self._tabs else "sem micro-pontes") + \
+                (" · kerf compensado" if self._kerf else "")
+        self.cut_btn.setToolTip(f"Nesta peça: {state}.\n"
+                                "Pontes: o laser deixa trechinhos sem cortar no contorno, para peça pequena não cair "
+                                "na colmeia.\nCompensar kerf: para peças de encaixe (altera a medida de propósito).\n"
+                                "Valem só no arquivo exportado; o desenho e o encaixe não mudam.")
+
+    def _tabs_chosen(self, n: int):
+        if n == self._tabs:
+            return
+        self.set_cut_state(n, self._kerf)
+        self.panel.tabsChanged.emit(self.part.id, n)
+
+    def _kerf_chosen(self, on: bool):
+        self.set_cut_state(self._tabs, bool(on))
+        self.panel.kerfCompChanged.emit(self.part.id, bool(on))
 
     def _lock_icon(self):
         self.lock.setAccessibleName(f"Rotação fixa de {self.part.name}")
@@ -196,6 +277,8 @@ class PartRow(QFrame):
 class PartsPanel(QWidget):
     quantityChanged = Signal(str, int)
     rotationLockChanged = Signal(str, bool)
+    tabsChanged = Signal(str, int)        # micro-pontes da peça (0 = sem), valem na exportação
+    kerfCompChanged = Signal(str, bool)   # compensar kerf nesta peça, na exportação
     partSelected = Signal(str)
     doneChanged = Signal(str, bool)       # peça marcada como feita (cortada)
     requestFilter = Signal(str)           # mostrar só as peças de uma solicitação ("" = todas)
@@ -538,6 +621,12 @@ class PartsPanel(QWidget):
         self.refresh_icons()
         from .nowheel import protect
         protect(self)
+
+    def set_cut_options(self, pid: str, tabs: int, kerf_comp: bool):
+        """Atualiza o botão "Pontes" de uma peça sem emitir sinal (ex.: depois de desfazer)."""
+        for r in self.rows:
+            if r.part.id == pid:
+                r.set_cut_state(tabs, kerf_comp)
 
     def set_quantity(self, pid: str, q: int):
         for r in self.rows:

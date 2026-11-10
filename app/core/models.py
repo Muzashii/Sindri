@@ -61,6 +61,8 @@ class Part:
     is_open: bool = False              # peça formada por contorno(s) aberto(s)
     material: str = ""                 # ex.: "MDF 3mm" — peças de materiais diferentes nunca dividem placa
     tag: str = ""                      # nº da solicitação (lote com várias): identifica de quem é a peça
+    tabs: int = 0                      # micro-pontes no contorno externo, feitas na exportação (0 = sem)
+    kerf_comp: bool = False            # compensar o kerf na exportação (peça de encaixe): corte ± kerf/2
 
     @property
     def identity(self) -> str:
@@ -126,6 +128,14 @@ class NestResult:
     evaluated: int = 0
     sheet_materials: list[str] = field(default_factory=list)
     sheet_remnants: list[str] = field(default_factory=list)   # id do retalho de cada placa ("" = chapa)
+    # retângulo ocupado em cada placa: [x0, y0, x1, y1] em mm, com a folga do encaixe (None = vazia).
+    # Vale para o resultado do encaixe automático; depois de ajuste manual use placement.occupied_bbox.
+    sheet_bbox: list = field(default_factory=list)
+
+    @property
+    def sheet_bbox_area(self) -> list[float]:
+        """Área (mm²) do retângulo ocupado em cada placa (0 = sem dado)."""
+        return [max(0.0, (b[2] - b[0]) * (b[3] - b[1])) if b else 0.0 for b in self.sheet_bbox]
 
     def to_json(self) -> dict:
         return {
@@ -136,6 +146,7 @@ class NestResult:
             "unplaced": [list(u) for u in self.unplaced],
             "sheet_materials": list(self.sheet_materials),
             "sheet_remnants": list(self.sheet_remnants),
+            "sheet_bbox": [list(b) if b else None for b in self.sheet_bbox],
         }
 
     @staticmethod
@@ -148,6 +159,8 @@ class NestResult:
             unplaced=[tuple(u) for u in d.get("unplaced", [])],
             sheet_materials=list(d.get("sheet_materials", [])),
             sheet_remnants=[str(x) for x in d.get("sheet_remnants", [])],
+            sheet_bbox=[[float(v) for v in b] if isinstance(b, (list, tuple)) and len(b) == 4 else None
+                        for b in d.get("sheet_bbox", []) or []],
         )
 
 
@@ -181,6 +194,7 @@ class NestParams:
     remnants: list = field(default_factory=list)
     # placas que já existem e são retalhos (encaixar "só o que falta"): [[índice da placa, id do retalho]]
     sheet_remnants: list = field(default_factory=list)
+    tab_width: float = 0.4            # largura (mm) das micro-pontes das peças com "Pontes" ligado
 
     def import_kwargs(self) -> dict:
         return {"units_override": self.units_override if self.units_override >= 0 else None,
@@ -223,7 +237,7 @@ class NestParams:
         return p
 
     def validate(self) -> None:
-        for name in ("sheet_width", "sheet_height", "curve_tolerance", "join_tolerance"):
+        for name in ("sheet_width", "sheet_height", "curve_tolerance", "join_tolerance", "tab_width"):
             value = getattr(self, name)
             if not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
                 raise ValueError(f"{name}: informe um número positivo e finito.")

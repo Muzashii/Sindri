@@ -419,7 +419,8 @@ def default_base_folder() -> str:
             if ctypes.windll.shell32.SHGetFolderPathW(None, 5, None, 0, folder) == 0:
                 docs = folder.value
         except (OSError, AttributeError):
-            pass
+            from .fileutil import log_exception
+            log_exception("intranet: pasta Documentos do Windows (usa a pasta do usuário)")
     if not os.path.isdir(docs):
         docs = os.path.expanduser("~")
     return os.path.join(docs, "Sindri", "Solicitações")

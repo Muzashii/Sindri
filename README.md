@@ -31,6 +31,10 @@ compacta possível nas placas e entrega um único DXF pronto para o **RDWorks**,
 ## Interface redesenhada
 
 Painéis de peças e parâmetros podem ser recolhidos pelos botões acima do desenho;
+**Formatos de entrada:** DXF, **AI** (Adobe Illustrator, salvo com "compatível com PDF" ou no formato antigo) e **RD** (arquivo de máquina do RDWorks, só leitura — curvas chegam como segmentos; o Sindri não gera .rd). Abrir ou soltar um arquivo já começa o encaixe (menu Encaixe > "Encaixar ao abrir arquivos").
+
+**Na bancada:** `F11` abre o modo bancada (tela cheia: placa atual, conferência das camadas, tempo e três botões grandes). O RDWorks só precisa ser fechado quando velocidade/potência mudam de uma placa para a outra. O tempo entre abrir a placa e marcá-la como cortada calibra a estimativa. `Ctrl+Alt+O` abre projeto.
+
 `Ctrl+Shift+P` alterna as peças e `Ctrl+P` alterna os parâmetros. Cabeçalhos com seta
 recolhem as seções de configuração sem perder valores. O resumo da seleção aparece
 acima do canvas, e os rótulos ficam menores conforme o zoom.

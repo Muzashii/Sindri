@@ -68,7 +68,10 @@ def _part_from_json(data):
     data.update(outer=wkb.loads(data["outer"], hex=True),
                 holes=[wkb.loads(h, hex=True) for h in data["holes"]],
                 prims=[Prim.from_json(p) for p in data["prims"]])
+    names = {f.name for f in fields(Part)}
+    data = {k: v for k, v in data.items() if k in names}     # campo de versão mais nova: ignorado
     part = Part(**data)
+    part.tabs, part.kerf_comp = _clean_tabs(part.tabs), bool(part.kerf_comp)
     if type(part.quantity) is not int or part.quantity < 0 or part.file_quantity < 1:
         raise ValueError("Quantidade inválida no projeto.")
     if part.outer.is_empty or not part.outer.is_valid or part.outer.area <= 0:
@@ -76,6 +79,12 @@ def _part_from_json(data):
     if any(type(i) is not int or not 0 <= i < len(part.prims) for i in part.outer_prim_idx):
         raise ValueError("Índice de geometria inválido no projeto.")
     return part
+
+
+def _clean_tabs(v) -> int:
+    """Nº de micro-pontes salvo no projeto (0 se ausente ou inválido)."""
+    from .tabs import MAX_TABS
+    return v if type(v) is int and 0 <= v <= MAX_TABS else 0
 
 
 def _get(d: Optional[dict], f: str, default):
@@ -102,7 +111,8 @@ def save_project(path: str, files: list[str], params: NestParams, parts: list[Pa
         "files_rel": [relative_path(f, base) for f in files],
         "params": params.to_json(),
         "parts": {p.id: {"quantity": p.quantity, "rotation_locked": p.rotation_locked,
-                         "area": round(p.area, 2)} for p in parts},
+                         "area": round(p.area, 2), "tabs": int(getattr(p, "tabs", 0) or 0),
+                         "kerf_comp": bool(getattr(p, "kerf_comp", False))} for p in parts},
         "result": result.to_json() if result else None,
         "multipliers": [[relative_path(k, base), int(v)]
                         for k, v in (multipliers or {}).items()],
@@ -238,6 +248,8 @@ def _load_project(path: str) -> Project:
         if type(s.get("quantity", p.quantity)) is not int or p.quantity < 0:
             raise ProjectError("Quantidade inválida no projeto.")
         p.rotation_locked = bool(s.get("rotation_locked", False))
+        p.tabs = _clean_tabs(s.get("tabs", 0))             # projetos antigos: sem pontes, sem compensação
+        p.kerf_comp = bool(s.get("kerf_comp", False))
     if set(saved) != {p.id for p in report.parts}:
         warnings.append("As peças dos arquivos de origem não correspondem exatamente ao projeto salvo.")
     result = NestResult.from_json(data["result"]) if data.get("result") else None

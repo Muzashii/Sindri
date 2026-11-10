@@ -314,3 +314,35 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
     original" — antes ficava por cima do encaixe, porque a troca de aba era feita com os sinais bloqueados).
     "Abrir projeto…" passou para `Ctrl+Alt+O`: `Ctrl+Shift+P` estava em duas ações e o Qt não disparava
     nenhuma. Um teste falha se algum atalho se repetir.
+90. **Importar .ai e .rd pelo mesmo fluxo do DXF** (`core/ai_import.py`, `core/rd_import.py`, despacho único em
+    `dxf_import.read_drawing`): o .ai moderno é um PDF — os caminhos são lidos dos operadores de desenho, com a
+    matriz de transformação, em pontos convertidos para mm; cada Bézier vira uma SPLINE cúbica exata (nada é
+    discretizado); caminho de recorte não é desenho; forma só com preenchimento usa o contorno e avisa; texto
+    não convertido em contornos e imagens são ignorados com aviso. O .ai antigo (PostScript, Illustrator ≤ 8)
+    é lido pelo subconjunto de operadores de caminho. .ai salvo sem conteúdo PDF devolve instrução clara.
+    O .rd (arquivo de máquina Ruida) é só leitura: desembaralha os bytes (chave 0x88, 0x11 ou procurada),
+    lê mover/cortar absolutos e relativos, camada, cor, velocidade e potência; curvas chegam como segmentos
+    (aviso para preferir o DXF/AI de origem) e velocidade/potência do arquivo são só informadas, nunca
+    aplicadas. O Sindri **não gera** .rd. O .rld (projeto do RDWorks) não é lido: a mensagem explica o que
+    salvar. **A validar no laboratório** com um .rd salvo pelo RDWorks da máquina e um .ai real de aluno.
+91. **Encaixar ao abrir arquivos** (`files/auto_nest`, ligado; menu Encaixe): abrir pelo diálogo ou soltar na
+    janela já começa o encaixe, como a intranet faz — exceto se houver algo pendente na Conferência, peça
+    grande demais ou placa já cortada.
+92. **RDWorks sem fechar quando nada muda** (`laser.already_applied`): antes de pedir para fechar o RDWorks, o
+    Sindri lê o `config`; se velocidade/potência das camadas já são as da placa (mesmo material da anterior),
+    só abre o arquivo. Config ilegível conta como "não aplicado". **A validar**: o RDWorks aceitar abrir outro
+    arquivo já estando aberto.
+93. **`C` com ciclo completo, opcional** (`bancada/abrir_proxima`, desligado): ao marcar a placa como cortada,
+    abre a próxima não cortada no RDWorks.
+94. **Tempo real × estimado**: o relógio começa quando a placa é aberta no RDWorks pelo Sindri e para ao
+    marcá-la como cortada; a medida vai para `tempos_reais.json` na pasta de gestão. Medida < 20 s ou > 4 h é
+    descartada; desmarcar a placa tira a medida. Com 3 medidas ou mais, a estimativa é multiplicada pela
+    mediana de real ÷ estimado (limitada a 0,5–3×) e o aviso diz "calibrado com N cortes reais".
+95. **Modo bancada** (`F11`, `ui/bench_mode.py`): tela cheia com placa atual, material, conferência das camadas,
+    tempo estimado/decorrido e três botões (Abrir no RDWorks · Cortada ✓ · Próxima placa). Só chama o que a
+    janela principal já faz.
+96. **Atualização por versão marcada**: o atualizador instala a maior tag `vMAIOR.MENOR.CORREÇÃO`; sem nenhuma
+    tag `v*` no repositório vale o comportamento antigo (ponta do `main`), para ninguém ficar sem atualização
+    até a primeira tag. Nunca rebaixa. `versao.txt` guarda "sha tag"; `core/version.py` dá "Sindri 1.1.0
+    (abc1234)" para o Sobre. Erros antes engolidos na abertura, intranet e limpeza vão para o
+    `sindri_erro.log` (`fileutil.log_exception`). CI roda `ruff check app` (regras F e B).

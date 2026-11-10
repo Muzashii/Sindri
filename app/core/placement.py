@@ -73,6 +73,25 @@ class DecodeResult:
     last_bbox: Optional[list[int]] = None
     sheet_materials: list = field(default_factory=list)
     sheet_remnants: list = field(default_factory=list)     # id do retalho de cada placa ("" = chapa)
+    # retângulo ocupado em cada placa, [x0, y0, x1, y1] em mm, já com a folga do encaixe (None = vazia)
+    sheet_bbox: list = field(default_factory=list)
+
+
+def occupied_bbox(parts: dict, placements: list) -> dict:
+    """{placa: (x0, y0, x1, y1)} em mm — retângulo que as peças ocupam em cada placa, pela geometria real
+    (sem folga). Serve depois de ajuste manual, quando ``NestResult.sheet_bbox`` já não vale. O que sobra
+    da chapa fora desse retângulo é a "sobra reaproveitável"."""
+    from .validate import placed_geometry
+    out: dict = {}
+    for pl in placements:
+        part = parts.get(pl.part_id)
+        if part is None:
+            continue
+        x0, y0, x1, y1 = placed_geometry(part.outer, pl).bounds
+        b = out.get(pl.sheet_index)
+        out[pl.sheet_index] = (x0, y0, x1, y1) if b is None else (min(b[0], x0), min(b[1], y0),
+                                                                  max(b[2], x1), max(b[3], y1))
+    return out
 
 
 class Decoder:
@@ -386,7 +405,8 @@ class Decoder:
         last_bbox = sheets[-1].bbox if sheets else None
         fitness = self.fitness(n, last_bbox, len(unplaced), sheets)
         return DecodeResult(placements, n, unplaced, fitness, util, last_bbox,
-                            [sh.material or "" for sh in sheets], [sh.remnant for sh in sheets])
+                            [sh.material or "" for sh in sheets], [sh.remnant for sh in sheets],
+                            [[v / S for v in sh.bbox] if sh.bbox else None for sh in sheets])
 
     def fitness(self, n_sheets, last_bbox, n_unplaced, sheets) -> float:
         """Menor é melhor: peças sem lugar, placas extras e compactação da última placa de cada material.

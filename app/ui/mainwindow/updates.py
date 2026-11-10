@@ -61,7 +61,10 @@ class UpdatesMixin:
         when = remote.date[:10].split("-")
         when = f"{when[2]}/{when[1]}" if len(when) == 3 else ""
         msg = remote.message.replace("<", "&lt;")[:90]
-        self.show_banner(f"<b>Nova versão do Sindri</b> ({when} · {msg}). "
+        number = getattr(remote, "number", "")
+        what = f"Versão {number} do Sindri disponível" if number else "Nova versão do Sindri"
+        detail = " · ".join(x for x in (when, msg) if x)
+        self.show_banner(f"<b>{what}</b>" + (f" ({detail})" if detail else "") + ". "
                          '<a href="update:">Atualizar agora</a> · <a href="later:">Depois</a>', "warn")
 
     def install_pending_update(self):

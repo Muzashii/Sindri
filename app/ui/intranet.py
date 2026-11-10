@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (QCheckBox, QAbstractItemView, QApplication, QComb
 from ..core.intranet import (ALL_STATUS, JS_CRAWL_RESET, JS_CRAWL_STATE, crawl_script, date_key,
                              merge_rows, status_options, INTRANET_URL, JS_DETAIL, JS_LIST, JS_OPEN, RequestDetail,
                              default_base_folder, parse_detail, should_go_to_requests, target_path)
+from ..core.fileutil import log_exception
 from . import theme
 from .dialogs import settings
 from .icons import icon, pixmap
@@ -465,7 +466,7 @@ class IntranetDialog(QDialog):
             with open(os.path.join(folder, "intranet_log.txt"), "w", encoding="utf-8") as fh:
                 fh.write("\n\n".join(self._logs.values()) + "\n")
         except OSError:
-            pass
+            log_exception("intranet: gravar intranet_log.txt")
 
     def _write_log(self, status: str, data: dict):
         """Registro da leitura das páginas (ajuda a diagnosticar se o site mudar)."""
@@ -948,6 +949,7 @@ class IntranetDialog(QDialog):
                 from ..core.fileutil import replace_file
                 replace_file(temp, f.local_path)
             except OSError:
+                log_exception(f"intranet: gravar o arquivo baixado da solicitação {d.code}")
                 ok = False
         self._remove_partial(req)
         self._log_dl(f"fim {key}: {'ok' if ok else 'ERRO estado=' + str(req.state())} "
@@ -985,7 +987,7 @@ class IntranetDialog(QDialog):
             try:
                 os.remove(path)
             except OSError:
-                pass
+                log_exception("intranet: apagar download incompleto (.part)")
 
     def _cancel_downloads(self):
         pending, self._downloads = self._downloads, []
@@ -1119,6 +1121,7 @@ class IntranetDialog(QDialog):
         try:
             d = parse_detail(json.loads(raw))
         except Exception:
+            log_exception(f"intranet: ler os dados da solicitação {code} (lote)")
             return
         self._fetch.stop()
         self._cache[d.code] = d
@@ -1202,7 +1205,7 @@ class IntranetDialog(QDialog):
             try:
                 shared_profile().downloadRequested.disconnect(self._download_requested)
             except Exception:
-                pass
+                log_exception("intranet: desligar o aviso de download ao fechar a janela")
             self._dl_connected = False
 
     def showEvent(self, e):
