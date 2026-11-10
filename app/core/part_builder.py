@@ -23,7 +23,7 @@ from shapely.geometry import GeometryCollection
 from shapely.strtree import STRtree
 from shapely import affinity
 
-from .dxf_import import RawFile, read_dxf
+from .dxf_import import RawFile, read_dxf, read_drawing  # noqa: F401 (read_dxf: compatibilidade)
 from .geometry import (Transform, flatten_prim, prim_endpoints, prim_is_closed, ring_to_polygon,
                        transform_prim, prim_rgb)
 from .import_issues import CHECK, ERROR, FIXED, ImportIssue, bbox_of, find_gaps, repair_prims
@@ -633,7 +633,7 @@ def import_files(paths: list[str], join_tol: float = 0.05, curve_tol: float = 0.
                  file_tags: Optional[dict] = None,
                  file_units: Optional[dict] = None,
                  file_repairs: Optional[dict] = None) -> ImportReport:
-    """Importa vários DXF e devolve as peças agrupadas.
+    """Importa vários desenhos (.dxf, .ai, .rd — ver ``dxf_import.read_drawing``) e devolve as peças agrupadas.
 
     ``file_repairs``: {arquivo: [trecho, ...]} aberturas fechadas pelo operador (ver
     :func:`import_issues.gap_to_repair`), somadas ao desenho antes de montar as peças.
@@ -642,6 +642,7 @@ def import_files(paths: list[str], join_tol: float = 0.05, curve_tol: float = 0.
     issues: list[ImportIssue] = []
     frames: dict[str, list[float]] = {}
     factors: dict[str, float] = {}       # arquivo -> mm por unidade do desenho (para guardar reparos)
+    file_meta: dict[str, dict] = {}      # arquivo -> dados do formato de origem (.rd: laser por camada)
     sheets_pv: list[tuple[str, list[tuple[Prim, bool]], tuple[float, float, float, float]]] = []
     all_raw: list[_RawPart] = []
     preview: list[tuple[Prim, bool]] = []
@@ -653,7 +654,7 @@ def import_files(paths: list[str], join_tol: float = 0.05, curve_tol: float = 0.
         for path in paths:
             try:
                 unit = units_override if units_override is not None else (file_units or {}).get(os.path.abspath(path))
-                raws.append(read_dxf(path, unit, ignore_text, excluded_layers))
+                raws.append(read_drawing(path, unit, ignore_text, excluded_layers))
             except DXFImportError as e:
                 warnings.append(str(e))
                 issues.append(ImportIssue(os.path.abspath(path), "read_error", ERROR, str(e)))
@@ -669,6 +670,8 @@ def import_files(paths: list[str], join_tol: float = 0.05, curve_tol: float = 0.
         files_ok.append(rf.path)
         unit_notes[rf.path] = rf.unit_note
         factors[os.path.abspath(rf.path)] = rf.unit_factor
+        if getattr(rf, "meta", None):
+            file_meta[os.path.abspath(rf.path)] = rf.meta
         warnings.extend(rf.warnings)
         issues.extend(getattr(rf, "issues", []) or [])
         prims = list(rf.prims)
@@ -718,7 +721,8 @@ def import_files(paths: list[str], join_tol: float = 0.05, curve_tol: float = 0.
         parts.append(make_part(rp, f"P{i + 1:03d}", name, qty))
     return ImportReport(parts=parts, preview=preview, warnings=warnings, files=files_ok,
                         unit_notes=unit_notes, extra={"suspicious_units": suspicious, "layers": layers,
-                                                      "frames": frames, "unit_factors": factors},
+                                                      "frames": frames, "unit_factors": factors,
+                                                      "file_meta": file_meta},
                         issues=issues)
 
 

@@ -10,6 +10,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from ...core.intranet import merge_request_info, request_codes
+from ...core.dxf_import import DRAWING_FILTER, is_drawing
 from ...core.part_builder import import_files
 from ..dialogs import CleanupDialog, PresetsDialog, load_presets, save_presets, settings
 from ..prefs import get_list_value
@@ -99,24 +100,39 @@ class FilesMixin:
 
     def dragEnterEvent(self, e):
         if e.mimeData().hasUrls():
-            if any(u.toLocalFile().lower().endswith((".dxf", ".dxfnest", ".sindri")) for u in e.mimeData().urls()):
+            if any(is_drawing(u.toLocalFile()) or u.toLocalFile().lower().endswith((".dxfnest", ".sindri"))
+                   for u in e.mimeData().urls()):
                 e.acceptProposedAction()
 
     def dropEvent(self, e):
         paths = [u.toLocalFile() for u in e.mimeData().urls()]
         projs = [p for p in paths if p.lower().endswith((".dxfnest", ".sindri"))]
-        dxfs = [p for p in paths if p.lower().endswith(".dxf")]
+        dxfs = [p for p in paths if is_drawing(p)]
         if projs:
             self.open_project(projs[0])
         elif dxfs:
-            self.load_files(dxfs, add=bool(self.files))
+            if self.load_files(dxfs, add=bool(self.files)):
+                self._auto_nest_after_open()
 
     def open_dxf_dialog(self, add: bool = False):
         start = settings().value("ui/last_dir", os.path.expanduser("~"))
-        paths, _ = QFileDialog.getOpenFileNames(self, "Abrir DXF", start, "Desenhos DXF (*.dxf);;Todos (*.*)")
+        paths, _ = QFileDialog.getOpenFileNames(self, "Abrir desenho", start, DRAWING_FILTER)
         if paths:
             settings().setValue("ui/last_dir", os.path.dirname(paths[0]))
-            self.load_files(paths, add=add)
+            if self.load_files(paths, add=add):
+                self._auto_nest_after_open()
+
+    def set_auto_nest_files(self, on: bool):
+        settings().setValue("files/auto_nest", "true" if on else "false")
+
+    def _auto_nest_after_open(self):
+        """Arquivo aberto ou solto pelo técnico: já começa a encaixar (como a intranet faz), desde que não
+        haja nada para conferir antes, nenhuma peça grande demais e nenhuma placa já cortada."""
+        if settings().value("files/auto_nest", "true") != "true" or not self.parts:
+            return
+        if self.too_big or self.cut_sheets or self.review_panel.pending():
+            return
+        QTimer.singleShot(300, lambda: self.worker is None and self.parts and self.start_nest())
 
     def load_files(self, paths: list[str], add: bool = False, multipliers: Optional[dict] = None,
                    request_label: Optional[str] = None, materials: Optional[dict] = None,

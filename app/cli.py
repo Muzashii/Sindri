@@ -20,7 +20,7 @@ from .core.validate import validate_layout
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="sindri", description="Encaixe automático de peças DXF.")
-    ap.add_argument("arquivos", nargs="+", help="Arquivos .dxf de entrada")
+    ap.add_argument("arquivos", nargs="+", help="Arquivos de entrada (.dxf, .ai ou .rd)")
     ap.add_argument("--placa", default="600x400", help="Largura x altura em mm (padrão 600x400)")
     ap.add_argument("--margem", type=float, default=5.0)
     ap.add_argument("--espaco", type=float, default=2.0)

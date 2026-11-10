@@ -54,7 +54,7 @@ class ReviewMixin:
             sub = " · ".join(x for x in (names.get(tag) or tag, self.file_materials.get(f, "")) if x)
             name = os.path.basename(f)
             if name.lower().endswith(".dxf"):
-                name = name[:-4]                      # todos são DXF: sobra espaço para o nome
+                name = name[:-4]                      # DXF é o comum: sobra espaço para o nome
             out[f] = (name, sub, self.review_panel.file_status(f))
         return out
 
