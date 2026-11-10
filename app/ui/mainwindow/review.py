@@ -15,7 +15,7 @@ class ReviewMixin:
     def _build_review_panel(self) -> ReviewPanel:
         self.file_repairs: dict[str, list] = {}    # arquivo -> trechos que fecham aberturas
         self.issue_acks: set[str] = set()          # avisos que o técnico marcou como "está certo"
-        self._review_open = True
+        self._review_open = False               # abre sozinho só quando há pendência
         p = ReviewPanel()
         p.issueActivated.connect(self.focus_issue)
         p.fileActivated.connect(self.focus_file)

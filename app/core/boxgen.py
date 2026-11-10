@@ -82,7 +82,7 @@ TEXT_LAYER, TEXT_ACI = "GRAVACAO", 5   # azul: nome das peças (opcional)
 
 FACE_NAMES = {"base": "Base", "tampa": "Tampa", "frente": "Frente", "fundo": "Fundo (traseira)",
               "esquerda": "Lateral esquerda", "direita": "Lateral direita"}
-PRIORITY = {"bau_fim": 3, "porta_fim": 3, "porta_lado": 2, "base": 5, "tampa": 4, "frente": 3, "fundo": 3, "esquerda": 2, "direita": 2,
+PRIORITY = {"bau_fim": 3, "porta_fim": 3, "base": 5, "tampa": 4, "frente": 3, "fundo": 3, "esquerda": 2, "direita": 2,
             # tampas que são caixas rasas (baú, portas): mesma regra, entre as peças da própria tampa
             "bau_topo": 5, "bau_dobradica": 3, "bau_frente": 3, "bau_lado": 2,
             "porta_topo": 5, "porta_dobradica": 3, "porta_frente": 3, "porta_lado": 2}

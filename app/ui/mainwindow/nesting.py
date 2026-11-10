@@ -108,6 +108,7 @@ class NestingMixin:
         self.tabs.blockSignals(True)
         self.tabs.setCurrentIndex(1)
         self.tabs.blockSignals(False)
+        self._sync_review_visibility()      # a Conferência é da aba "Arquivo original"
         self._redraw()
         self.canvas.set_editable(False)
         self.statusBar().showMessage("Calculando… a melhor solução aparece e vai melhorando. Clique em Parar quando estiver bom.")

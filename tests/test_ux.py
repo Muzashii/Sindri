@@ -180,3 +180,40 @@ def test_text_contrast_of_corrected_themes_and_materials():
         assert _contrast("#ffffff", color) >= 4.5
     for material in ("Acrílico 2 mm", "Acrílico 6 mm", "Compensado"):
         assert _contrast("#ffffff", material_color(material).name()) >= 4.5
+
+
+def test_atalhos_nao_se_repetem_e_conferencia_nao_cobre_o_encaixe(tmp_path, monkeypatch):
+    """Atalho repetido não dispara nenhuma das ações (Qt: 'Ambiguous shortcut'); a Conferência só abre
+    quando há pendência e nunca fica por cima da aba Encaixe."""
+    import time
+    from PySide6.QtWidgets import QApplication
+    from app.ui.main_window import MainWindow
+    from tests.conftest import fx
+    from PySide6.QtWidgets import QMessageBox
+    QApplication.instance() or QApplication([])
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: 0)
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.Discard))
+    monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: QMessageBox.Discard))
+    w = MainWindow(workers=0)
+    try:
+        seen = {}
+        for a in w.actions():
+            k = a.shortcut().toString()
+            if k:
+                assert k not in seen, f"{k}: {seen[k]} / {a.text()}"
+                seen[k] = a.text()
+        w.show()
+        w.load_files([fx("exemplo_lab.dxf")])
+        assert not w.review_panel.pending() and not w.review_panel.isVisible()
+        w.set_review_open(True)
+        assert w.review_panel.isVisible()
+        w.start_nest()
+        assert w.tabs.currentIndex() == 1 and not w.review_panel.isVisible()
+    finally:
+        w.stop_nest()
+        for _ in range(600):
+            QApplication.processEvents()
+            if w.worker is None:
+                break
+            time.sleep(0.05)
+        w.close()

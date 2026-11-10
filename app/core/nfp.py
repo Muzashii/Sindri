@@ -125,7 +125,6 @@ class NFPCache:
         v = self._variants.get(key)
         if v is not None:
             return v
-        sh = self.shapes[pid]
         half = self._half_spacing(pid)
         tf = Transform(rot, mirror)
         simp = Polygon(tf.pts_array(self._base_outline(pid)))

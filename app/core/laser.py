@@ -19,7 +19,7 @@ import sys
 from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
-from .models import Part, Placement, Prim
+from .models import Part, Prim
 
 CONFIG_NAME = "config"
 BACKUP_NAME = "config.antes_sindri"

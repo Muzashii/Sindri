@@ -1,6 +1,6 @@
 """Accessible, keyboard-operable editor for individual placed instances."""
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QListWidget, QListWidgetItem,
     QFormLayout, QDoubleSpinBox, QComboBox, QLabel, QPushButton, QDialogButtonBox)
 
 class PositionDialog(QDialog):

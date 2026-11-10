@@ -533,7 +533,7 @@ class UIBuildMixin:
         act(m_file, "Limpar tudo", lambda: self.clear_all(), "Ctrl+Shift+Del")
         act(m_file, "Adicionar DXF…", lambda: self.open_dxf_dialog(add=True), "Ctrl+Shift+O")
         m_file.addSeparator()
-        act(m_file, "Abrir projeto…", self.open_project_dialog, "Ctrl+Shift+P")
+        act(m_file, "Abrir projeto…", self.open_project_dialog, "Ctrl+Alt+O")
         act(m_file, "Salvar projeto de encaixe", self.save_project, "Ctrl+S")
         act(m_file, "Salvar projeto como…", lambda: self.save_project(ask=True), "Ctrl+Shift+S")
         m_file.addSeparator()
@@ -708,6 +708,7 @@ class UIBuildMixin:
     def show_shortcuts(self):
         QMessageBox.information(self, "Atalhos de teclado", (
             "Ctrl+Shift+P\tMostrar/recolher painel de peças\n"
+            "Ctrl+Alt+O\tAbrir projeto\n"
             "Ctrl+O\tAbrir DXF\n"
             "Ctrl+Shift+O\tAdicionar DXF\n"
             "Ctrl+I\tIntranet FIAP\n"

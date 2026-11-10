@@ -309,3 +309,8 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
     tolerância, recortados pelo furo exato: o furo usado no encaixe só perde área (no máx. ~0,4 mm na borda),
     nunca passa do real. Furos pequenos continuam exatos. Os IFPs de furo já calculados vão para os processos
     do genético junto com o resto do cache. Resultado no kit: 1ª solução em ~0,2 s e ~35 rodadas/s.
+89. **Conferência só quando há pendência; atalhos sem repetição**: o painel de Conferência começa fechado e
+    abre sozinho apenas se a importação deixar algo para conferir; ao encaixar, ele some (é da aba "Arquivo
+    original" — antes ficava por cima do encaixe, porque a troca de aba era feita com os sinais bloqueados).
+    "Abrir projeto…" passou para `Ctrl+Alt+O`: `Ctrl+Shift+P` estava em duas ações e o Qt não disparava
+    nenhuma. Um teste falha se algum atalho se repetir.

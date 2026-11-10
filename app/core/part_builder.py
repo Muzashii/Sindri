@@ -570,7 +570,7 @@ def _same_part(a: _RawPart, b: _RawPart, la, lb, tol: float) -> Optional[float]:
         if la0.hausdorff_distance(rb) <= tol:
             # A geometria de cada cor/camada também precisa coincidir.
             for op in {operation(p) for p in a.prims}:
-                def lines(rp, center):
+                def lines(rp, center, op=op):
                     seq = [flatten_prim(p, tol / 4) for p in rp.prims if operation(p) == op]
                     geom = MultiLineString([pts for pts in seq if len(pts) >= 2])
                     return affinity.translate(geom, -center.x, -center.y)
