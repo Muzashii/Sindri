@@ -36,6 +36,9 @@ class SheetTime:
     starts: int = 0
     by_op: dict = field(default_factory=dict)       # camada -> segundos
     fallback: set = field(default_factory=set)      # camadas estimadas sem velocidade cadastrada
+    raw_seconds: float = 0.0          # estimativa antes da calibração (0 = não calibrada)
+    calibrated_n: int = 0             # nº de cortes reais usados na calibração (0 = sem calibração)
+    factor: float = 1.0
 
     @property
     def minutes(self) -> float:
@@ -46,6 +49,17 @@ class SheetTime:
         m = self.minutes
         txt = f"~{m:.0f} min" if m >= 1 else f"~{max(1, round(self.seconds)):.0f} s"
         return txt + (" (estimado com velocidade padrão)" if self.fallback else "")
+
+    @property
+    def raw(self) -> float:
+        """Segundos da estimativa pura (sem o fator dos cortes reais)."""
+        return self.raw_seconds if self.calibrated_n else self.seconds
+
+    @property
+    def calibration_text(self) -> str:
+        if not self.calibrated_n:
+            return ""
+        return f"calibrado com {self.calibrated_n} cortes reais (×{fmt_num(self.factor, 2)})"
 
 
 def _part_profile(part: Part, color_ops: Optional[dict]) -> dict:
@@ -190,3 +204,110 @@ def append_monthly_csv(folder: str, rows: Iterable[dict], when=None) -> str:
 
 def fmt_num(v: float, dec: int = 1) -> str:
     return f"{v:.{dec}f}".replace(".", ",")
+
+
+# ------------------------------------------------------------------ tempo real × estimado
+HISTORY_NAME = "tempos_reais.json"
+HISTORY_SCHEMA = "sindri-tempos"
+MIN_REAL_S = 20.0                 # menos que isso: marcou sem cortar
+MAX_REAL_S = 4 * 3600.0           # mais que isso: esqueceu de marcar (almoço, outro dia)
+MIN_MEASURES = 3
+FACTOR_RANGE = (0.5, 3.0)
+
+
+def valid_measure(estimated_s: float, real_s: float) -> bool:
+    """Medida que serve para calibrar: placa aberta e cortada num tempo plausível."""
+    try:
+        e, r = float(estimated_s), float(real_s)
+    except (TypeError, ValueError):
+        return False
+    return e == e and r == r and e > 0 and MIN_REAL_S <= r <= MAX_REAL_S
+
+
+def correction_factor(history: Iterable[dict], min_n: int = MIN_MEASURES,
+                      limits: tuple[float, float] = FACTOR_RANGE) -> tuple[float, int]:
+    """(fator, nº de medidas usadas): mediana de real ÷ estimado dos cortes válidos, limitada a 0,5–3×.
+    Com menos de ``min_n`` medidas válidas devolve (1.0, 0) — a estimativa fica como está."""
+    ratios = []
+    for h in history or []:
+        if not isinstance(h, dict):
+            continue
+        e, r = h.get("estimado_s"), h.get("real_s")
+        if valid_measure(e, r):
+            ratios.append(float(r) / float(e))
+    if len(ratios) < max(1, min_n):
+        return 1.0, 0
+    ratios.sort()
+    n = len(ratios)
+    med = ratios[n // 2] if n % 2 else (ratios[n // 2 - 1] + ratios[n // 2]) / 2.0
+    return min(limits[1], max(limits[0], med)), n
+
+
+def calibrated(t: SheetTime, factor: float, n: int) -> SheetTime:
+    """Cópia da estimativa multiplicada pelo fator dos cortes reais (guarda a estimativa pura)."""
+    if not n or factor <= 0:
+        return t
+    return SheetTime(seconds=t.seconds * factor, cut_length=t.cut_length, travel=t.travel, starts=t.starts,
+                     by_op={k: v * factor for k, v in t.by_op.items()}, fallback=set(t.fallback),
+                     raw_seconds=t.seconds, calibrated_n=int(n), factor=float(factor))
+
+
+def fmt_duration(seconds: float) -> str:
+    """'14 min', '1 h 05 min' ou '45 s'."""
+    s = max(0.0, float(seconds))
+    if s < 60:
+        return f"{max(1, round(s)):.0f} s"
+    m = int(round(s / 60.0))
+    return f"{m} min" if m < 60 else f"{m // 60} h {m % 60:02d} min"
+
+
+def fmt_clock(seconds: float) -> str:
+    """Cronômetro: '03:27' ou '1:03:27'."""
+    s = int(max(0.0, float(seconds)))
+    h, m, sec = s // 3600, (s % 3600) // 60, s % 60
+    return f"{h}:{m:02d}:{sec:02d}" if h else f"{m:02d}:{sec:02d}"
+
+
+def load_time_history(path: str) -> list[dict]:
+    """Cortes medidos ([] se o arquivo não existe ou está estragado — nunca derruba a exportação)."""
+    import json
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, UnicodeError, ValueError):
+        return []
+    if not isinstance(data, dict) or data.get("format") != HISTORY_SCHEMA:
+        return []
+    return [h for h in data.get("cortes", []) if isinstance(h, dict)]
+
+
+def _save_time_history(path: str, items: list[dict]) -> None:
+    import json
+    from .fileutil import replace_file
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump({"format": HISTORY_SCHEMA, "version": 1, "cortes": items}, fh, ensure_ascii=False, indent=1)
+    replace_file(tmp, path)
+
+
+def append_time_history(path: str, entry: dict, keep: int = 2000) -> bool:
+    """Acrescenta um corte medido ``{id, placa, arquivo, material, estimado_s, real_s, data}``.
+    Medida absurda (< 20 s, > 4 h, sem estimativa) é descartada: devolve False e não grava."""
+    if not valid_measure(entry.get("estimado_s"), entry.get("real_s")):
+        return False
+    items = load_time_history(path)
+    items.append({**entry, "estimado_s": round(float(entry["estimado_s"]), 1),
+                  "real_s": round(float(entry["real_s"]), 1)})
+    _save_time_history(path, items[-keep:])
+    return True
+
+
+def remove_time_entry(path: str, entry_id: str) -> bool:
+    """Tira uma medida (placa desmarcada logo depois de marcar por engano)."""
+    items = load_time_history(path)
+    kept = [h for h in items if h.get("id") != entry_id]
+    if not entry_id or len(kept) == len(items):
+        return False
+    _save_time_history(path, kept)
+    return True

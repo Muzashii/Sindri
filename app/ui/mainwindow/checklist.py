@@ -29,14 +29,67 @@ class ChecklistMixin:
         if self.canvas.mode != "layout" or not self.placements or self.worker is not None:
             return
         si = self.canvas.current_sheet()
-        on = si not in self.cut_sheets
-        self.on_sheet_cut(si, on)
-        if on:
-            order = self.sheet_index().ordered
-            later = [s for s in order[order.index(si) + 1:] if s not in self.cut_sheets] if si in order else []
-            nxt = later[0] if later else next((s for s in order if s not in self.cut_sheets), None)
-            if nxt is not None:
-                self.goto_sheet(nxt)
+        if si not in self.cut_sheets:
+            self.mark_cut_and_advance(si)
+        else:
+            self.on_sheet_cut(si, False)
+
+    def next_uncut_sheet(self, after: int | None = None) -> int | None:
+        """Próxima placa ainda não cortada (depois de ``after`` na numeração; senão a 1ª que falta)."""
+        order = self.sheet_index().ordered
+        later = [s for s in order[order.index(after) + 1:] if s not in self.cut_sheets] if after in order else []
+        return later[0] if later else next((s for s in order if s not in self.cut_sheets), None)
+
+    def mark_cut_and_advance(self, si: int) -> int | None:
+        """Marca a placa como cortada e vai para a próxima não cortada. Com a preferência "abrir a
+        próxima" ligada, já abre essa próxima no RDWorks (um C faz o ciclo inteiro). Devolve a próxima."""
+        if not self.placements or self.worker is not None or si in self.cut_sheets:
+            return None
+        self.on_sheet_cut(si, True)
+        nxt = self.next_uncut_sheet(si)
+        if nxt is not None:
+            self.goto_sheet(nxt)
+            if self.open_next_on_cut():
+                note = self.__dict__.pop("_cut_time_shown", "")
+                self.open_sheet_in_rdworks(nxt)
+                if note:                               # o aviso da placa aberta cobriu o do tempo real
+                    self.statusBar().showMessage(note, 15000)
+        return nxt
+
+    # ---- preferência: C faz o ciclo inteiro (marca, vai para a próxima e abre no RDWorks)
+    def open_next_on_cut(self) -> bool:
+        from ..prefs import get_bool
+        return get_bool("bancada/abrir_proxima", False)
+
+    def set_open_next_on_cut(self, on: bool = True):
+        from ..prefs import set_bool
+        set_bool("bancada/abrir_proxima", bool(on))
+        a = getattr(self, "a_open_next", None)
+        if a is not None and a.isChecked() != bool(on):
+            a.setChecked(bool(on))
+        self.statusBar().showMessage(
+            "Ao marcar uma placa como cortada, a próxima abre no RDWorks." if on
+            else "Marcar como cortada só vai para a próxima placa (sem abrir o RDWorks).", 6000)
+
+    def _init_open_next_action(self, action):
+        """Deixa a ação do menu marcável e com o estado salvo."""
+        action.setCheckable(True)
+        action.setChecked(self.open_next_on_cut())
+        self.a_open_next = action
+        return action
+
+    # ---- modo bancada (tela cheia para a hora do corte)
+    def toggle_bench_mode(self):
+        bench = getattr(self, "_bench", None)
+        if bench is not None and bench.isVisible():
+            bench.close()
+            return
+        if not self.placements or self.worker is not None or self.canvas.mode != "layout":
+            self.statusBar().showMessage("Modo bancada: faça o encaixe primeiro (ou espere ele terminar).", 6000)
+            return
+        from ..bench_mode import BenchMode
+        self._bench = BenchMode(self)
+        self._bench.open_fullscreen()
 
     def filter_request_index(self, k: int):
         """Alt+1…9: só a solicitação k do lote; Alt+0: todas."""
@@ -83,6 +136,10 @@ class ChecklistMixin:
         """Placa cortada: as peças que só aparecem em placas cortadas ficam como feitas."""
         self._push_undo()
         (self.cut_sheets.add if on else self.cut_sheets.discard)(si)
+        if on:                                         # tempo real × estimado (se a placa foi aberta daqui)
+            self._cut_time_note = self._cut_time_shown = self._record_real_time(si)
+        else:
+            self._forget_real_time(si)
         idx = self.sheet_index()
         for pid in {pl.part_id for pl in idx.by_sheet.get(si, ())}:
             instances = {pl.instance for pl in self.placements if pl.part_id == pid and pl.sheet_index in self.cut_sheets}

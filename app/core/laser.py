@@ -417,6 +417,47 @@ def verify(data: bytes, values: dict[int, tuple], tol: float = 1e-6) -> list[tup
     return applied
 
 
+def already_applied(data: bytes, values: dict[int, tuple], single_tube: bool = True, tol: float = 1e-6) -> bool:
+    """O config JÁ tem exatamente estes valores (em todas as tabelas)? Mesma tolerância da leitura de volta.
+
+    Serve para não pedir "feche o RDWorks" a cada placa do mesmo material: se os valores da placa anterior
+    são os mesmos, não há o que gravar. ``single_tube`` falso: o tubo 2 também precisa estar igual.
+    Config ilegível, tabela não reconhecida ou camada fora da tabela -> False (cai no fluxo de gravar)."""
+    if not values:
+        return False
+    try:
+        tables = find_tables(data)
+        if not tables:
+            return False
+        for idx, val in values.items():
+            want = _triple(val)
+            seen = False
+            for t in tables:
+                if not 0 <= int(idx) < t.count:
+                    continue
+                seen = True
+                s, a, b, c, d = struct.unpack_from("<5d", data, t.offset + int(idx) * t.stride)
+                got, ref = (s, a, b), want
+                if not single_tube:
+                    got, ref = (s, a, b, c, d), (*want, want[1], want[2])
+                if any(x != x or abs(x - y) > tol for x, y in zip(got, ref)):
+                    return False
+            if not seen:
+                return False
+        return True
+    except (struct.error, TypeError, ValueError, IndexError):
+        return False
+
+
+def config_already_applied(path: str, values: dict[int, tuple], single_tube: bool = True) -> bool:
+    """``already_applied`` lendo o arquivo; qualquer erro de leitura conta como "não aplicado"."""
+    try:
+        with open(path, "rb") as fh:
+            return already_applied(fh.read(), values, single_tube)
+    except OSError:
+        return False
+
+
 def config_version(data: bytes) -> Optional[str]:
     """Versão gravada no cabeçalho do config ("RDFILEVER8.0.01" -> "8.0.01")."""
     import re

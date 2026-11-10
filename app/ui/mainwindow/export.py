@@ -255,6 +255,9 @@ class ExportMixin:
             kw = self._export_kwargs(o, plan, export_stats)
             rems = dict(self.sheet_remnants)
             times = self._sheet_times(plan, o)
+            calib = next((t.calibration_text for t in times.values() if t.calibrated_n), "")
+            if calib:
+                header = header + [f"Tempo estimado {calib}."]
             sheet_info = self._sheet_info(plan, times)
             costs = self._request_costs(times)
 
@@ -330,7 +333,8 @@ class ExportMixin:
                                                                            key=lambda kv: idx2.number.get(kv[0], 0)))
                     + (f" (total ~{total / 60:.0f} min)" if len(times) > 1 else "")
                     + (" — algumas camadas sem velocidade no banco de materiais (estimativa com valor padrão)."
-                       if any(t.fallback for t in times.values()) else "."))
+                       if any(t.fallback for t in times.values()) else ".")
+                    + (f" Estimativa {calib[0].lower() + calib[1:]}." if calib else ""))
         if csv_path:
             from urllib.parse import quote as _q
             txt += f' <a href="open:{_q(csv_path)}">Uso do mês (CSV)</a>'
@@ -361,10 +365,21 @@ class ExportMixin:
         except (TypeError, ValueError):
             return TimeModel()
 
-    def _sheet_times(self, plan: dict, o: dict | None = None) -> dict:
-        """{placa: SheetTime} com as velocidades/passadas do banco de materiais."""
+    def time_history_path(self) -> str:
+        """Histórico dos cortes medidos (tempo real × estimado), na pasta de gestão."""
+        from ...core.machine_time import HISTORY_NAME
+        return os.path.join(self.management_folder(), HISTORY_NAME)
+
+    def time_calibration(self) -> tuple[float, int]:
+        """(fator, nº de cortes reais) para corrigir a estimativa; (1.0, 0) com menos de 3 medidas."""
+        from ...core.machine_time import correction_factor, load_time_history
+        return correction_factor(load_time_history(self.time_history_path()))
+
+    def _sheet_times(self, plan: dict, o: dict | None = None, calibrate: bool = True) -> dict:
+        """{placa: SheetTime} com as velocidades/passadas do banco de materiais. ``calibrate``: aplica o
+        fator medido nos cortes reais (a estimativa pura fica em ``SheetTime.raw``)."""
         from ...core.dxf_export import start_point
-        from ...core.machine_time import sheet_time
+        from ...core.machine_time import calibrated, sheet_time
         cfg = self.material_cfg()
         specs = self.sheet_specs()
         corner = (o or {}).get("start", "inferior_esquerdo")
@@ -374,6 +389,10 @@ class ExportMixin:
             start = start_point(corner, spec.width, spec.height) if spec else (0.0, 0.0)
             out[si] = sheet_time(self.pmap, pls, lambda m, op: laser.op_entry(cfg.get(m) or {}, op),
                                  plan["color_ops"], self.time_model(), start)
+        if calibrate and out:
+            factor, n = self.time_calibration()
+            if n:
+                out = {si: calibrated(t, factor, n) for si, t in out.items()}
         return out
 
     def _sheet_info(self, plan: dict, times: dict) -> dict:
@@ -439,7 +458,66 @@ class ExportMixin:
             return ""
         values = plan["rd_values"]
         groups = [] if values is not None else plan["groups"]
-        return self._open_in_rdworks([path], groups, values)
+        msg = self._open_in_rdworks([path], groups, values)
+        if getattr(self, "_rd_open_ok", False):
+            self._note_sheet_opened(si, plan, path)
+        return msg
+
+    # ---- tempo real × estimado: o relógio começa ao abrir a placa no RDWorks e para ao marcar como cortada
+    def _now(self) -> float:
+        import time
+        return time.time()
+
+    def _note_sheet_opened(self, si: int, plan: dict, path: str):
+        try:
+            t = self._sheet_times(plan, calibrate=False).get(si)
+        except Exception:                            # a medida é um extra: nunca atrapalha abrir a placa
+            t = None
+        factor, n = self.time_calibration()
+        opened = self.__dict__.setdefault("_sheet_opened", {})
+        opened[si] = {"t": self._now(), "file": path, "est": float(t.seconds) if t else 0.0,
+                      "shown": float(t.seconds) * (factor if n else 1.0) if t else 0.0,
+                      "material": self.sheet_index().material.get(si, "") or ""}
+
+    def sheet_elapsed(self, si: int) -> float | None:
+        """Segundos desde que a placa foi aberta no RDWorks (None se não foi aberta nesta sessão)."""
+        info = self.__dict__.get("_sheet_opened", {}).get(si)
+        return max(0.0, self._now() - info["t"]) if info else None
+
+    def _record_real_time(self, si: int) -> str:
+        """Placa marcada como cortada: guarda real × estimado no histórico e devolve a frase do aviso
+        ("" se a placa não foi aberta pelo Sindri ou se a medida é absurda)."""
+        import datetime as _dt
+        import uuid
+        from ...core import machine_time as mt
+        info = self.__dict__.get("_sheet_opened", {}).pop(si, None)
+        if not info or info.get("file") != self.sheet_files.get(si):
+            return ""
+        real = self._now() - info["t"]
+        n = self.sheet_index().number.get(si, si + 1)
+        if not mt.valid_measure(info["est"], real):
+            return ""
+        entry = {"id": uuid.uuid4().hex[:12], "placa": n, "arquivo": os.path.basename(info["file"]),
+                 "material": info["material"], "estimado_s": info["est"], "real_s": real,
+                 "data": _dt.datetime.now().isoformat(timespec="seconds")}
+        try:
+            mt.append_time_history(self.time_history_path(), entry)
+            self.__dict__.setdefault("_sheet_measured", {})[si] = (entry["id"], info)
+        except OSError as e:
+            self.statusBar().showMessage(f"Não consegui guardar o tempo real da placa: {e}", 10000)
+        return f"Placa {n}: estimado ~{mt.fmt_duration(info['shown'])}, real {mt.fmt_duration(real)}."
+
+    def _forget_real_time(self, si: int):
+        """Placa desmarcada (marcou por engano): a medida sai do histórico e o relógio volta a contar."""
+        from ...core import machine_time as mt
+        got = self.__dict__.get("_sheet_measured", {}).pop(si, None)
+        if not got:
+            return
+        try:
+            mt.remove_time_entry(self.time_history_path(), got[0])
+        except OSError:
+            pass
+        self.__dict__.setdefault("_sheet_opened", {})[si] = got[1]
 
     def open_sheet_in_rdworks(self, si: int):
         """Botão "Abrir no RDWorks" do checklist: abre só o arquivo daquela placa. Se o arquivo não
@@ -724,6 +802,13 @@ class ExportMixin:
         cfg = laser.config_path(exe)
         if not os.path.isfile(cfg):
             return False, "⚠ Velocidade/potência não aplicadas: não achei o arquivo de configuração do RDWorks."
+        if laser.config_already_applied(cfg, values, self.single_tube()):
+            # mesmos valores da placa anterior: nada a gravar, então o RDWorks pode continuar aberto
+            # (a validar no laboratório: o RDWorks aceita abrir outro arquivo já estando aberto?)
+            return False, ("Velocidade/potência já estavam aplicadas (mesmos valores da placa anterior): "
+                           + laser.applied_text([(i, *laser._triple(v)) for i, v in sorted(values.items())],
+                                                self._laser_palette())
+                           + ". O RDWorks não precisou ser fechado.")
         while laser.rdworks_running():
             box = QMessageBox(self)
             box.setIcon(QMessageBox.Warning)
@@ -825,6 +910,7 @@ class ExportMixin:
         st.setValue("rdworks/exe", exe)
         path = targets[0]
         QApplication.clipboard().setText(os.path.abspath(path))
+        self._rd_open_ok = False
         opened, laser_msg = self._apply_laser(exe, path, groups or [], values)
         try:
             if not opened:
@@ -833,6 +919,7 @@ class ExportMixin:
             if not os.path.isfile(exe):
                 st.remove("rdworks/exe")
             return f"Não foi possível abrir o RDWorks: {e}"
+        self._rd_open_ok = True
         msg = (f"Abrindo {os.path.basename(path)} no RDWorks "
                "(o Windows pode pedir permissão — o RDWorks roda como administrador).")
         msg += ("\nSe ele abrir vazio: Arquivo › Importar (Ctrl+I), Ctrl+V e Enter "

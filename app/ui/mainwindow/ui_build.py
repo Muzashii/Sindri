@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ...core.version import version_label
 from ..canvas import NestCanvas
 from ..dialogs import settings
 from ..icons import icon, pixmap
@@ -63,7 +64,8 @@ class UIBuildMixin:
         self._mode_sep = self._vsep()
         tl.addWidget(self._mode_sep)
         self.btn_open = QPushButton("Abrir DXF")
-        self.btn_open.setToolTip("Abrir um ou vários arquivos DXF (Ctrl+O). Você também pode arrastá-los para a janela.")
+        self.btn_open.setToolTip("Abrir um ou vários desenhos — DXF, AI (Illustrator) ou RD (RDWorks) — (Ctrl+O). "
+                                 "Você também pode arrastá-los para a janela.")
         self.btn_open.clicked.connect(lambda: self.open_dxf_dialog())
         self.btn_save = QPushButton("Salvar encaixe")
         self.btn_save.setToolTip("Salva arquivos, parâmetros e o encaixe atual em um projeto .sindri (Ctrl+S)")
@@ -161,7 +163,7 @@ class UIBuildMixin:
         self.tabs.setDrawBase(False)
         self.tabs.addTab("Arquivo original")
         self.tabs.addTab("Encaixe")
-        self.tabs.setTabToolTip(0, "Como as peças estão no DXF (contornos abertos em vermelho)")
+        self.tabs.setTabToolTip(0, "Como as peças estão no arquivo (contornos abertos em vermelho)")
         self.tabs.setTabToolTip(1, "Resultado do encaixe nas placas")
         self.tabs.currentChanged.connect(self._tab_changed)
         head.addWidget(self.tabs)
@@ -405,7 +407,7 @@ class UIBuildMixin:
         self.empty_icon = QLabel()
         self.empty_icon.setAlignment(Qt.AlignCenter)
         lay.addWidget(self.empty_icon)
-        t1 = QLabel("Arraste arquivos DXF para cá")
+        t1 = QLabel("Arraste arquivos DXF, AI ou RD para cá")
         t1.setAlignment(Qt.AlignCenter)
         t1.setObjectName("EmptyTitle")
         t2 = QLabel("As peças são detectadas e agrupadas automaticamente. "
@@ -559,8 +561,14 @@ class UIBuildMixin:
         act(m_nest, "Iniciar/pausar encaixe", self.start_or_pause, "Space")
         act(m_nest, "Parar", self.stop_nest, "Esc")
         act(m_nest, "Destravar todas as peças", self.unlock_all)
+        self.a_auto_nest = act(m_nest, "Encaixar ao abrir arquivos", self.set_auto_nest_files)
+        self.a_auto_nest.setCheckable(True)
+        self.a_auto_nest.setChecked(settings().value("files/auto_nest", "true") == "true")
         m_nest.addSeparator()
         act(m_nest, "Marcar placa da tela como cortada (e ir para a próxima)", self.toggle_current_cut, "C")
+        self._init_open_next_action(act(m_nest, "Ao marcar como cortada, abrir a próxima no RDWorks",
+                                        self.set_open_next_on_cut))
+        act(m_nest, "Modo bancada (tela cheia para o corte)", self.toggle_bench_mode, "F11")
         m_nest.addSeparator()
         act(m_nest, "Banco de materiais…", lambda: self.open_materials_dialog(), "Ctrl+M")
         act(m_nest, "Retalhos…", lambda: self.open_remnants_dialog(), "Ctrl+Shift+R")
@@ -709,6 +717,7 @@ class UIBuildMixin:
         QMessageBox.information(self, "Atalhos de teclado", (
             "Ctrl+Shift+P\tMostrar/recolher painel de peças\n"
             "Ctrl+Alt+O\tAbrir projeto\n"
+            "F11\tModo bancada (tela cheia para o corte)\n"
             "Ctrl+O\tAbrir DXF\n"
             "Ctrl+Shift+O\tAdicionar DXF\n"
             "Ctrl+I\tIntranet FIAP\n"
@@ -739,7 +748,7 @@ class UIBuildMixin:
 
     def show_about(self):
         QMessageBox.about(self, "Sobre o Sindri", (
-            "<b>Sindri</b> — encaixe automático de peças para corte a laser.<br><br>"
-            "Lê DXF, organiza as peças com No-Fit Polygon + algoritmo genético (mesma abordagem do "
+            f"<b>{version_label()}</b> — encaixe automático de peças para corte a laser.<br><br>"
+            "Lê DXF, AI (Illustrator) e RD (arquivo de máquina do RDWorks), organiza as peças com No-Fit Polygon + algoritmo genético (mesma abordagem do "
             "SVGnest/Deepnest) e exporta DXF pronto para o RDWorks, preservando arcos, círculos, "
             "camadas e cores."))

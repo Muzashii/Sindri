@@ -222,7 +222,9 @@ class MaterialsMixin:
                 self.statusBar().showMessage(f"Não consegui atualizar os retalhos: {e}", 10000)
         if on:
             n = self.sheet_index().number.get(si, si + 1)
-            self.show_banner(f"Placa {n} cortada. <a href=\"leftover:{si}\">Guardar o que sobrou como retalho</a>"
+            note = self.__dict__.pop("_cut_time_note", "")        # tempo real × estimado (se foi medido)
+            self.show_banner((f"<b>{note}</b><br>" if note else "")
+                             + f"Placa {n} cortada. <a href=\"leftover:{si}\">Guardar o que sobrou como retalho</a>"
                              " (para o próximo encaixe usar antes de abrir chapa nova).", "info")
 
     def save_leftover(self, si: int) -> list:
