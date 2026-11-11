@@ -62,9 +62,17 @@ def test_resumo_da_selecao_fica_na_barra_de_icones(window):
     _item(w, "P001").setSelected(True)
     QApplication.processEvents()
     assert "Peça 1" in w.selection_summary.full_text() and w.selection_summary.property("hint") is False
-    w.selection_summary.resize(60, w.selection_summary.height())
+    assert "Peça 1" in w.selection_summary.toolTip()
+    # o corte com "…" é testado num rótulo solto: dentro da barra o layout devolve a largura que a fonte
+    # do sistema pede (no Windows o texto cabia inteiro e o teste falhava)
+    from app.ui.components import ElidedLabel
+    lbl = ElidedLabel()
+    lbl.setText(w.selection_summary.full_text())
+    lbl.resize(60, 20)
+    lbl.show()
     QApplication.processEvents()
-    assert w.selection_summary.text().endswith("…") and "Peça 1" in w.selection_summary.toolTip()
+    assert lbl.text().endswith("…") and lbl.toolTip() == w.selection_summary.full_text()
+    lbl.deleteLater()
 
 
 def test_aviso_de_cores_aparece_uma_vez_por_lote(window, tmp_path):
