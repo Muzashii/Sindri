@@ -2,9 +2,11 @@
 import importlib
 from importlib.metadata import version
 import re
+import sys
 
 MINIMUM = {"numpy": (1, 26), "shapely": (2, 0, 4), "pyclipper": (1, 3),
            "ezdxf": (1, 1), "pypdf": (4, 0), "PySide6": (6, 6)}
+BROKEN_PYSIDE = (6, 12)        # só com Python < 3.12 (lá o None não é imortal)
 
 
 def check():
@@ -12,6 +14,10 @@ def check():
         installed = tuple(int(x) for x in re.match(r"\d+(?:\.\d+)*", version(name)).group().split("."))
         if installed < minimum or (name == "numpy" and installed >= (3,)):
             raise ImportError(f"Versão incompatível de {name}: {version(name)}; mínimo {'.'.join(map(str, minimum))}.")
+        if name == "PySide6" and installed >= BROKEN_PYSIDE and sys.version_info < (3, 12):
+            # PySide6 6.12 com Python 3.11 derruba o programa ("deallocating None"): reinstala a 6.11
+            raise ImportError(f"PySide6 {version(name)} não funciona com Python "
+                              f"{sys.version_info[0]}.{sys.version_info[1]}; use uma versão anterior à 6.12.")
     # Qt antes das bibliotecas nativas de geometria, como no lançador.
     for name in ("PySide6.QtWidgets", "PySide6.QtWebEngineWidgets", "numpy", "shapely.geometry", "pyclipper", "ezdxf", "pypdf"):
         importlib.import_module(name)

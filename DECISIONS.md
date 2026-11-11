@@ -384,3 +384,9 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
     Ctrl+seta encosta na vizinha ou na margem respeitando o espaçamento (mesmo verificador de colisão).
     Toques seguidos são um passo de desfazer; peça travada não se move.
 103. **Encaixe repetível nos testes**: `SINDRI_NEST_SEED` fixa a semente do genético (só o `conftest` usa).
+104. **PySide6 abaixo da 6.12 enquanto houver Python 3.11**: PySide6 6.12.0 com Python 3.11 derruba o programa
+    ("Fatal Python error: none_dealloc: deallocating None" — erro de contagem de referência que só aparece
+    antes do 3.12, onde o None deixou de ser imortal). O CI quebrava assim desde 10/11. `requirements.txt`,
+    `pyproject.toml` e `executar.bat` pedem `<6.12`; `runtime_check` recusa 6.12+ com Python < 3.12 (o
+    lançador reinstala a versão anterior). O `Sindri.exe` já usa 6.11.2 (`requirements-build.txt`). Rever
+    quando sair uma 6.12.x corrigida.

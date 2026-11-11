@@ -15,7 +15,7 @@ dependencies = [
     "shapely>=2.0.4",
     "pyclipper>=1.3",
     "numpy>=1.26,<3",
-    "PySide6>=6.6",
+    "PySide6>=6.6,<6.12",
 ]
 
 [project.optional-dependencies]

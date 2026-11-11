@@ -372,3 +372,20 @@ def test_adicionar_solicitacao_mantem_encaixe_e_corte(window, tmp_path):
     # a mesma solicitação de novo: nada muda
     n = len(window.parts)
     assert window._add_requests([(d2, d2.files)]) is False and len(window.parts) == n
+
+
+def test_pyside_6_12_com_python_3_11_e_recusado(monkeypatch):
+    """PySide6 6.12 + Python 3.11 derruba o programa (none_dealloc): o lançador reinstala uma versão anterior."""
+    import types
+    from app import runtime_check
+    versions = {"numpy": "1.26.4", "shapely": "2.1.2", "pyclipper": "1.3.0", "ezdxf": "1.4.4", "pypdf": "6.1.0"}
+    monkeypatch.setattr(runtime_check, "version", lambda name: versions.get(name, "6.12.0"))
+    monkeypatch.setattr(runtime_check, "sys", types.SimpleNamespace(version_info=(3, 11, 9)))
+    with pytest.raises(ImportError, match="6.12"):
+        runtime_check.check()
+    monkeypatch.setattr(runtime_check, "sys", types.SimpleNamespace(version_info=(3, 13, 0)))
+    monkeypatch.setattr(runtime_check.importlib, "import_module", lambda name: None)
+    runtime_check.check()                                   # Python 3.12+: a 6.12 serve
+    monkeypatch.setattr(runtime_check, "sys", types.SimpleNamespace(version_info=(3, 11, 9)))
+    versions["PySide6"] = "6.11.2"
+    runtime_check.check()
