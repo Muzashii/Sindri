@@ -269,7 +269,8 @@ class StatusMixin:
             self.btn_nest.setObjectName("danger")
             self.btn_nest.setToolTip("Para e mantém a melhor solução encontrada (Esc)")
         else:
-            self.btn_nest.setText("Encaixar" if not self.placements else "Encaixar de novo")
+            tiny = getattr(self, "_width_mode", (False, False))[1]     # janela estreita: texto curto
+            self.btn_nest.setText("Encaixar" if not self.placements or tiny else "Encaixar de novo")
             self.btn_nest.setObjectName("primary")
             self.btn_nest.setToolTip("Organiza as peças automaticamente (Espaço). Peças travadas ficam onde estão.")
         self.btn_nest.style().unpolish(self.btn_nest)
@@ -278,6 +279,7 @@ class StatusMixin:
         self.btn_pause.setEnabled(running)
         self.btn_stop.setVisible(False)
         self.btn_export.setEnabled(bool(self.placements))
+        self.btn_save_as.setEnabled(bool(self.placements))
         self.btn_export_menu.setEnabled(bool(self.placements))
         self.btn_save.setEnabled(has_parts)
         self.parts_panel.btn_clear.setEnabled(has_parts)

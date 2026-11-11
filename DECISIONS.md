@@ -398,3 +398,13 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
     o técnico não ia usar. O rodapé troca "tentativas" pelo **tempo estimado de corte** do lote (mesma conta
     do relatório, com a calibração dos cortes reais); com placas já marcadas como cortadas mostra "falta
     cortar"; a dica lista cada placa. Reler o arquivo agora também preserva pontes e kerf de cada peça.
+106. **Dois botões de saída** (pedido do técnico, 11/11): o verde **"Abrir no RDWorks"** (`Ctrl+E`, com a seta
+    para uma placa só) é o antigo "Exportar para RDWorks", sem mudança. O novo **"Exportar"** (`Ctrl+Shift+E`)
+    abre uma janela para escolher formato, o que exportar (um arquivo por placa, todas num arquivo só, só a
+    placa da tela), relatório, pasta e nome; nunca abre o RDWorks e nunca sobrescreve (acrescenta _2, _3…).
+    Passa pelas mesmas conferências (geometria, material proibido, cores). SVG, PDF e AI saem de
+    `core/vector_export.py`, convertendo o próprio DXF exportado: medida real em mm, traço na cor da camada,
+    arcos e curvas como Béziers exatas; textos de DXF ficam de fora com aviso. O .ai é um PDF com extensão .ai
+    (formato "compatível com PDF" do Illustrator). As opções do RDWorks (versão, canto de início, ordem)
+    continuam no menu Arquivo. "Adicionar peças" com um arquivo que já está no lote devolve as peças que
+    tinham sido excluídas dele; se nenhuma foi excluída, avisa que já estão todas e não duplica.

@@ -122,6 +122,37 @@ class FilesMixin:
             if self.load_files(paths, add=add):
                 self._auto_nest_after_open()
 
+    def _readd_known_files(self, paths: list[str]) -> list[str]:
+        """"Adicionar peças" com um arquivo que já está no lote: devolve à lista as peças dele que tinham sido
+        excluídas (o arquivo é relido) e avisa quando já estão todas. Devolve os caminhos que ainda precisam
+        ser lidos — os novos e os que tinham peça excluída."""
+        def norm(p):
+            return os.path.normcase(os.path.abspath(p))
+        loaded = {norm(p) for p in self.files}
+        removed = set(getattr(self, "removed_parts", set()))
+        out, complete, restored = [], [], 0
+        for p in paths:
+            if norm(p) not in loaded:
+                out.append(p)
+                continue
+            mine = {k for k in removed if k.startswith(norm(p) + "|")}
+            if mine:
+                removed -= mine
+                restored += len(mine)
+                out.append(p)
+            else:
+                complete.append(os.path.basename(p))
+        if restored:
+            self.removed_parts = removed
+        if complete:
+            names = ", ".join(complete[:3]) + ("…" if len(complete) > 3 else "")
+            self.statusBar().showMessage(f"Todas as peças de {names} já estão na lista.", 8000)
+            if not out:
+                self.show_banner(f"Todas as peças de <b>{names}</b> já estão na lista — nada para adicionar.", "info")
+        if restored:
+            self.statusBar().showMessage(f"{restored} peça(s) excluída(s) voltaram para a lista.", 8000)
+        return out
+
     def set_auto_nest_files(self, on: bool):
         settings().setValue("files/auto_nest", "true" if on else "false")
 
@@ -142,6 +173,10 @@ class FilesMixin:
         checklist das peças que já estavam abertas; as novas ficam de fora até encaixar de novo."""
         if self.worker is not None:
             self.stop_nest(wait=True)
+        if add and self.files:
+            paths = self._readd_known_files(paths)      # arquivo que já está aberto: só traz o que foi excluído
+            if not paths:
+                return False
         if not self.confirm_discard(add):
             return False
         old = (dict(self.file_multipliers), dict(self.file_materials), dict(self.file_tags), set(self.cut_sheets),
@@ -166,7 +201,9 @@ class FilesMixin:
             self.file_materials.update(materials)
         if tags:
             self.file_tags.update(tags)
-        files = list(self.files) + [p for p in paths if p not in self.files] if add else list(paths)
+        known = {os.path.normcase(os.path.abspath(f)) for f in self.files}
+        files = (list(self.files) + [p for p in paths if os.path.normcase(os.path.abspath(p)) not in known]
+                 if add else list(paths))
         if self._import(files, keep_quantities=add, keep_layout=add and keep_layout) is False:
             # leitura falhou: volta ao estado anterior (as peças antigas continuam na tela)
             (self.file_multipliers, self.file_materials, self.file_tags, self.cut_sheets, self.done_parts,

@@ -131,6 +131,19 @@ class ExportMixin:
             if sheet_no is None:
                 return
             sheet_mat = idx0.material.get(sheet, "")
+        p = self._pre_export_checks(sheet)
+        if p is None:
+            return
+        o = self._export_options(ask)
+        if o is None:
+            return
+        if open_rd is not None:
+            o["open_rdworks"] = bool(open_rd)
+        self._do_export(o, p, sheet_no, sheet_mat)
+
+    def _pre_export_checks(self, sheet: int | None = None):
+        """O que vale para qualquer saída: geometria válida, material permitido, cores confirmadas e aviso de
+        peças de fora. Devolve os parâmetros do encaixe, ou None se o técnico desistiu / há erro."""
         p = self.nest_params()
         # problemas numa única confirmação (só aparece se houver algum)
         problems = []
@@ -158,13 +171,131 @@ class ExportMixin:
             r = QMessageBox.warning(self, "Exportar mesmo assim?", "\n\n".join("• " + x for x in problems),
                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
             if r != QMessageBox.Yes:
-                return
-        o = self._export_options(ask)
-        if o is None:
+                return None
+        return p
+
+    # ------------------------------------------------------------------ botão "Exportar" (pasta e formato)
+    def export_files(self):
+        """Botão "Exportar": grava o encaixe onde o técnico escolher, em DXF, SVG, PDF ou AI, sem abrir o
+        RDWorks. Mesmas conferências da exportação para o RDWorks."""
+        from ..export_files_dialog import ExportFilesDialog
+        if self.worker is not None:
+            self.stop_nest(wait=True)
+        if not self.placements:
+            self.statusBar().showMessage("Encaixe as peças antes de exportar.", 5000)
             return
-        if open_rd is not None:
-            o["open_rdworks"] = bool(open_rd)
-        self._do_export(o, p, sheet_no, sheet_mat)
+        self._compact_sheets()
+        idx = self.sheet_index()
+        sheets = [(idx.number[si], idx.material.get(si, "")) for si in idx.ordered]
+        cur = self.canvas.current_sheet() if self.canvas.mode == "layout" else None
+        current = (idx.number[cur], idx.material.get(cur, "")) if cur in idx.number else None
+        st = settings()
+        folder = st.value("export_files/folder", "") or st.value("export/last_dir", "") or \
+            (os.path.dirname(self.files[0]) if self.files else os.getcwd())
+        base = self.request_label or os.path.splitext(os.path.basename(self.project_path or self.files[0]))[0]
+        dlg = ExportFilesDialog(folder, base, sheets, current, self)
+        if not dlg.exec():
+            return
+        o = dlg.options()
+        only = None
+        if o["scope"] == "tela" and cur is not None:
+            only = {cur}
+        p = self._pre_export_checks(cur if only else None)
+        if p is None:
+            return
+        self._do_export_files(o, p, only)
+
+    def _do_export_files(self, o: dict, p, only: set | None):
+        from ...core.dxf_export import export_cut_files, sheet_file_suffix
+        from ...core.vector_export import FORMATS, convert
+        st = settings()
+        fmt, scope = o["format"], o["scope"]
+        ext = FORMATS[fmt][0]
+        idx = self.sheet_index()
+        sheets = [si for si in idx.ordered if only is None or si in only]
+        dxf_opts = {"version": "R12" if fmt == "dxf12" else "R2000",
+                    "inner": st.value("export/inner", "true") == "true",
+                    "path": st.value("export/path", "true") == "true",
+                    "start": st.value("export/start", "inferior_esquerdo") or "inferior_esquerdo",
+                    "order": st.value("export/order", "caminho") or "caminho"}
+        names = {si: sheet_file_suffix(idx.number[si], idx.material.get(si, "")) + ext for si in sheets}
+        suffixes = (["_todas_placas" + ext] if scope == "todas" else list(names.values())) + \
+            (["_relatorio.pdf"] if o["report"] else [])
+        base, k = o["base"], 2
+        while any(os.path.exists(os.path.join(o["folder"], f"{base}{s}")) for s in suffixes):
+            base = f"{o['base']}_{k}"
+            k += 1
+        plan = self._laser_export_plan(only)
+        stats: dict = {}
+        skipped: dict = {}
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            parts, placements, pmap = copy.deepcopy((self.parts, self.placements, self.pmap))
+            kw = self._export_kwargs(dxf_opts, plan, stats)
+            report = None
+            if o["report"]:
+                times = self._sheet_times(plan, dxf_opts)
+                report = dict(header=self._report_header(), requests=copy.deepcopy(self._report_requests()),
+                              sheet_remnants=dict(self.sheet_remnants), sheet_info=self._sheet_info(plan, times),
+                              costs=[c for c in self._request_costs(times) if c["solicitacao"]],
+                              res=NestResult(placements, self.n_sheets, self._utilization(), 0.0, list(self.unplaced)))
+
+            def write():
+                os.makedirs(o["folder"], exist_ok=True)
+                with tempfile.TemporaryDirectory(prefix=".sindri-export-", dir=o["folder"]) as stage:
+                    if scope == "todas":
+                        dxfs = [export_all_sheets(parts, placements, p, stage, base, sheet_outline=o["outline"],
+                                                  file_suffix="_todas_placas", **kw)]
+                    else:
+                        cut = export_cut_files(parts, placements, p, stage, base, only_sheets=only, **kw)
+                        dxfs = [cut[si] for si in sheets]
+                    sources = []
+                    for d in dxfs:
+                        if fmt.startswith("dxf"):
+                            sources.append(d)
+                            continue
+                        out = os.path.splitext(d)[0] + ext
+                        _, miss = convert(d, fmt, out, title=os.path.basename(out))
+                        for key, n in miss.items():
+                            skipped[key] = skipped.get(key, 0) + n
+                        sources.append(out)
+                    if report:
+                        pdf = os.path.join(stage, f"{base}_relatorio.pdf")
+                        export_pdf(pdf, base, pmap, report["res"], p, header=report["header"],
+                                   requests=report["requests"], sheet_remnants=report["sheet_remnants"],
+                                   sheet_info=report["sheet_info"], costs=report["costs"])
+                        sources.append(pdf)
+                    moved = []
+                    try:
+                        for s in sources:
+                            target = os.path.join(o["folder"], os.path.basename(s))
+                            if os.path.exists(target):
+                                raise FileExistsError(target)
+                            os.rename(s, target)
+                            moved.append(target)
+                    except OSError:
+                        for t in moved:
+                            os.remove(t)
+                        raise
+                    return moved
+            files = run_task(self, "Exportando", write)
+        except Exception as e:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.critical(self, "Erro ao exportar", f"Não foi possível salvar os arquivos:\n{e}")
+            return
+        QApplication.restoreOverrideCursor()
+        from urllib.parse import quote
+        label = FORMATS[fmt][1].split(" (")[0].split(" —")[0]
+        txt = (f"<b>Exportado em {label}:</b> {len(files)} arquivo(s) em {o['folder']}"
+               f' · <a href="open:{quote(o["folder"])}">Abrir pasta</a>')
+        if skipped:
+            what = ", ".join(f"{n} {k.lower()}" for k, n in sorted(skipped.items()))
+            txt += (f"<br>Ficaram de fora do {label}: {what} (textos do desenho). Para levar textos, converta-os "
+                    "em contornos ou use DXF.")
+        if fmt == "ai":
+            txt += "<br>O .ai sai no formato compatível com PDF (abre no Illustrator e no Sindri)."
+        self.show_banner(txt, "ok")
+        self.statusBar().showMessage(f"Exportado em {o['folder']}", 8000)
 
     def _export_options(self, ask: bool) -> dict | None:
         st = settings()

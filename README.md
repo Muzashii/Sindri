@@ -37,6 +37,8 @@ Painéis de peças e parâmetros podem ser recolhidos pelos botões acima do des
 
 **Lista de peças:** "Adicionar peças" junta DXF, AI ou RD aos que já estão abertos; "Excluir" em cada peça a tira da lista e do encaixe (o arquivo não muda; Ctrl+Z desfaz).
 
+**Saída:** "Abrir no RDWorks" (`Ctrl+E`) gera um DXF de corte por placa + relatório e abre no RDWorks já com velocidade e potência; a seta ao lado abre uma placa só. "Exportar" (`Ctrl+Shift+E`) salva onde você escolher, em **DXF R2000, DXF R12, SVG, PDF ou AI** (medida real em mm, uma cor por camada), um arquivo por placa, todas num arquivo só ou só a placa da tela, com ou sem o relatório — sem abrir o RDWorks.
+
 **Mais ferramentas de corte:** micro-pontes e compensação de kerf por peça (botão "Pontes" na lista de peças; o kerf vem do banco de materiais) e **grade de teste** velocidade × potência (banco de materiais › "Grade de teste…"), que abre no RDWorks com os valores de cada cor e grava no banco o quadrado escolhido.
 
 **No encaixe:** setas movem a peça selecionada (1 mm; Shift 10 mm; Alt 0,1 mm) e Ctrl+seta encosta na vizinha ou na margem. O rodapé mostra o aproveitamento das placas cheias e o da última; placa quase vazia gera aviso com "Encaixar de novo com mais tempo" e "Ver retalhos". Muitas placas aparecem em grade.
@@ -215,7 +217,7 @@ também as versões mínimas das bibliotecas.
 | `Ctrl+I` | Intranet FIAP | `L` | Travar / destravar | `Ctrl+P` | Esconder parâmetros |
 | `Ctrl+S` | Salvar projeto | `Del` | Remover peça | `Ctrl+T` | Tema claro/escuro |
 | `Ctrl+E` | Exportar | `Ctrl+Z` / `Ctrl+Y` | Desfazer / refazer | `Alt+1…9` | Só a solicitação N |
-| `Ctrl+Shift+E` | Exportar com opções | `C` | Placa cortada → próxima | `Alt+0` | Todas as solicitações |
+| `Ctrl+Shift+E` | Exportar (pasta e formato) | `C` | Placa cortada → próxima | `Alt+0` | Todas as solicitações |
 | `Ctrl+Shift+Del` | Limpar tudo | `Esc` | Parar o encaixe | `F1` | Todos os atalhos |
 | | | | | `Ctrl+1/2/3` | Encaixe / Foto / Caixa |
 

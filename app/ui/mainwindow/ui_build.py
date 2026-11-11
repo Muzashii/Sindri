@@ -107,17 +107,22 @@ class UIBuildMixin:
         self.btn_stop = QPushButton("Parar")
         self.btn_stop.setToolTip("Para e mantém a melhor solução encontrada (Esc)")
         self.btn_stop.clicked.connect(lambda: self.stop_nest())
-        self.btn_export = QPushButton("Exportar para RDWorks")
+        self.btn_export = QPushButton("Abrir no RDWorks")
         self.btn_export.setObjectName("success")
-        self.btn_export.setToolTip("Gera o arquivo com todas as placas + relatório e abre no RDWorks (Ctrl+E).\n"
-                                   "Ctrl+Shift+E: escolher pasta e opções.")
-        self.btn_export.clicked.connect(lambda: self.export())
+        self.btn_export.setToolTip("Gera um arquivo de corte por placa + relatório e abre no RDWorks (Ctrl+E),\n"
+                                   "já com velocidade e potência de cada camada.")
+        self.btn_export.clicked.connect(lambda: self.export(open_rd=True))
+        # "Exportar": salvar onde quiser, no formato que quiser (DXF, SVG, PDF, AI), sem abrir o RDWorks
+        self.btn_save_as = QPushButton("Exportar")
+        self.btn_save_as.setToolTip("Escolher pasta e formato — DXF, SVG, PDF ou AI — sem abrir o RDWorks "
+                                    "(Ctrl+Shift+E)")
+        self.btn_save_as.clicked.connect(self.export_files)
         # seta ao lado: escolher uma placa só
         from PySide6.QtWidgets import QMenu
         self.btn_export_menu = QPushButton("▾")
         self.btn_export_menu.setObjectName("success")
         self.btn_export_menu.setFixedWidth(34)
-        self.btn_export_menu.setToolTip("Exportar só uma placa (Ctrl+Alt+E: a placa que está na tela)")
+        self.btn_export_menu.setToolTip("Abrir só uma placa no RDWorks (Ctrl+Alt+E: a placa que está na tela)")
         self._export_menu = QMenu(self)
         self._export_menu.aboutToShow.connect(self._fill_export_menu)
         self.btn_export_menu.setMenu(self._export_menu)
@@ -134,6 +139,7 @@ class UIBuildMixin:
         exp.addWidget(self.btn_export)
         exp.addWidget(self.btn_export_menu)
         na.addLayout(exp)
+        na.addWidget(self.btn_save_as)
         tl.addWidget(self.nest_actions)
         tl.addWidget(self._vsep())
         self.btn_theme = QToolButton()
@@ -455,7 +461,8 @@ class UIBuildMixin:
         paused = self.worker is not None and self.worker.pause_event.is_set()
         self.btn_pause.setIcon(icon("play" if paused else "pause", c, 14, m))
         self.btn_stop.setIcon(icon("stop", c, 14, m))
-        self.btn_export.setIcon(icon("export", "#ffffff", 16, m))
+        self.btn_export.setIcon(icon("zap", "#ffffff", 16, m))
+        self.btn_save_as.setIcon(icon("save", c, 16, m))
         self.btn_theme.setIcon(icon("sun" if self.dark else "moon", c, 18))
         self.btn_rot.setIcon(icon("rotate", c, 17, m))
         self.btn_lock.setIcon(icon("lock", c, 17, m))
@@ -585,9 +592,10 @@ class UIBuildMixin:
         act(m_file, "Salvar projeto de encaixe", self.save_project, "Ctrl+S")
         act(m_file, "Salvar projeto como…", lambda: self.save_project(ask=True), "Ctrl+Shift+S")
         m_file.addSeparator()
-        act(m_file, "Exportar para RDWorks", self.export, "Ctrl+E")
-        act(m_file, "Exportar com opções…", self.export_with_options, "Ctrl+Shift+E")
-        act(m_file, "Exportar só a placa da tela", self.export_current_sheet, "Ctrl+Alt+E")
+        act(m_file, "Abrir no RDWorks", lambda: self.export(open_rd=True), "Ctrl+E")
+        act(m_file, "Abrir só a placa da tela no RDWorks", self.export_current_sheet, "Ctrl+Alt+E")
+        act(m_file, "Opções do RDWorks (pasta, versão, ordem do corte)…", self.export_with_options)
+        act(m_file, "Exportar (escolher pasta e formato)…", self.export_files, "Ctrl+Shift+E")
         m_file.addSeparator()
         act(m_file, "Recuperar último trabalho (salvo automaticamente)", self.recover_autosave)
         act(m_file, "Limpar arquivos baixados e relatórios…", self.cleanup_files)
@@ -679,8 +687,9 @@ class UIBuildMixin:
         # o texto não pode impedir a janela de encolher até 1024 px (ao encolher, vira só ícone em seguida)
         self.btn_intranet.setMinimumWidth(36)
         self._sync_panel_toggles()
-        self.btn_export.setText("Exportar" if compact else "Exportar para RDWorks")
-        self.preset_combo.setMinimumWidth(170 if compact else 230)
+        self.btn_export.setText("RDWorks" if tiny else "Abrir no RDWorks")
+        self.btn_save_as.setText("Exportar")
+        self.preset_combo.setMinimumWidth(120 if tiny else (170 if compact else 230))
         self.plate_lbl.setVisible(not compact and self.mode_tabs.currentIndex() != 2)
         self.btn_nest.setMinimumWidth(0 if compact else 130)
         self.mode_tabs.setTabText(1, "Foto" if compact else "Gravação de foto")
@@ -701,7 +710,8 @@ class UIBuildMixin:
         self._update_sheet_label()
         self.status_label.setMaximumWidth(16777215)
         self.btn_positions.setText("" if tiny else "Posições…")
-        self.preset_combo.setMaximumWidth(170 if tiny else 230)
+        self.preset_combo.setMaximumWidth(130 if tiny else 230)
+        self._update_buttons()                       # "Encaixar de novo" vira "Encaixar" na janela estreita
         self.preset_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.preset_combo.setMinimumContentsLength(8)
         side_l = int(min(metric("panel_parts"), max(self.parts_panel.minimumWidth(), w * 0.22)))
@@ -797,9 +807,9 @@ class UIBuildMixin:
             "Ctrl+S\tSalvar projeto\n"
             "Espaço\tEncaixar / pausar\n"
             "Esc\tParar encaixe\n"
-            "Ctrl+E\tExportar (direto, opções da última vez)\n"
-            "Ctrl+Shift+E\tExportar com opções\n"
-            "Ctrl+Alt+E\tExportar só a placa da tela\n"
+            "Ctrl+E\tAbrir no RDWorks (todas as placas, opções da última vez)\n"
+            "Ctrl+Shift+E\tExportar: escolher pasta e formato (DXF, SVG, PDF, AI)\n"
+            "Ctrl+Alt+E\tAbrir só a placa da tela no RDWorks\n"
             "C\tMarcar placa da tela como cortada → próxima\n"
             "Alt+1…9 / Alt+0\tSó a solicitação N do lote / todas\n"
             "N\tMostrar/ocultar nº nas peças\n"

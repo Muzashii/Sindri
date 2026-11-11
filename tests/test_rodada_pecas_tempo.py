@@ -122,3 +122,26 @@ def test_rodape_mostra_tempo_de_corte(window):
     w.resize(1024, 700)
     QApplication.processEvents()
     assert val.isVisible()
+
+
+def test_adicionar_o_mesmo_arquivo_devolve_so_as_pecas_excluidas(window):
+    w = window
+    w.load_files([fx("exemplo_lab.dxf")])
+    n = len(w.parts)
+    qty = {p.identity: p.quantity for p in w.parts}
+    # nada excluído: avisa e não duplica
+    assert w.load_files([fx("exemplo_lab.dxf")], add=True) is False
+    assert len(w.parts) == n and len(w.files) == 1
+    assert "já estão na lista" in w.banner_text.text()
+    # duas peças excluídas: voltam (com a quantidade do arquivo), as outras ficam como estavam
+    a, b = w.parts[0], w.parts[2]
+    w.parts[1].quantity += 3
+    w.remove_part(a.id)
+    w.remove_part(b.id)
+    assert len(w.parts) == n - 2
+    import os
+    assert w.load_files([os.path.join(os.path.dirname(fx("exemplo_lab.dxf")), ".", "exemplo_lab.dxf")], add=True)
+    assert len(w.parts) == n and len(w.files) == 1
+    got = {p.identity: p.quantity for p in w.parts}
+    assert got[a.identity] == qty[a.identity] and got[b.identity] == qty[b.identity]
+    assert got[w.parts[1].identity] == qty[w.parts[1].identity] + 3
