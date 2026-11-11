@@ -151,6 +151,11 @@ class MaterialsDialog(QDialog):
         right.addWidget(self.safety)
         right.addStretch(1)
         btns = QHBoxLayout()
+        b_grid = QPushButton("Grade de teste…")
+        b_grid.setToolTip("Gera uma grade de velocidade × potência para este material, abre no RDWorks já com os "
+                          "valores de cada cor e grava no banco o quadrado que ficou bom.")
+        b_grid.clicked.connect(self._open_test_grid)
+        btns.addWidget(b_grid)
         btns.addStretch(1)
         self.b_save = QPushButton("Salvar material")
         self.b_save.setDefault(True)
@@ -167,6 +172,12 @@ class MaterialsDialog(QDialog):
         self.name.textChanged.connect(self._update_safety)
         self.forbidden.toggled.connect(self._update_safety)
         self._reload(select)
+
+    def _open_test_grid(self):
+        from .testgrid_dialog import TestGridDialog
+        dlg = TestGridDialog(self.owner, self.name.text().strip())
+        dlg.exec()
+        self._reload(self.name.text().strip())
 
     # ------------------------------------------------------------------
     @property
