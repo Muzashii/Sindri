@@ -30,45 +30,68 @@ def test_mutacao_continua_uma_permutacao_valida():
 def test_insercao_leva_uma_peca_para_longe(monkeypatch):
     """Antes só havia troca de vizinhos: uma peça andava uma posição por mutação."""
     parts, gn = _nester()
-    monkeypatch.setattr(GeneticNester, "INSERT_RATE", 1.0)
-    monkeypatch.setattr(GeneticNester, "INVERT_RATE", 0.0)
+    monkeypatch.setattr(GeneticNester, "INSERT_SHARE", 1.0)
     first = gn.first_individual()
     order = [g[0] for g in first.genes]
     far = 0
     for _ in range(50):
-        new = [g[0] for g in gn.mutate(first, 0.0).genes]        # taxa 0: só a inserção age
-        moved = max(abs(new.index(k) - order.index(k)) for k in order)
-        far = max(far, moved)
-        rest_old = [k for k in order if abs(new.index(k) - order.index(k)) <= 1]
-        assert len(rest_old) >= len(order) - 1                   # só UMA peça mudou de lugar de verdade
+        ind = gn.local_move(first)
+        new = [g[0] for g in ind.genes]
+        assert new != order and sorted(new) == sorted(order)
+        assert ind.criterion == first.criterion
+        assert {g[0]: g[1:] for g in ind.genes} == {g[0]: g[1:] for g in first.genes}   # rotações intactas
+        far = max(far, max(abs(new.index(k) - order.index(k)) for k in order))
+        # tirando UMA peça, a ordem das outras é a mesma
+        assert any([k for k in new if k != x] == [k for k in order if k != x] for x in order)
     assert far > 5
 
 
 def test_inversao_inverte_um_trecho(monkeypatch):
     parts, gn = _nester()
-    monkeypatch.setattr(GeneticNester, "INSERT_RATE", 0.0)
-    monkeypatch.setattr(GeneticNester, "INVERT_RATE", 1.0)
+    monkeypatch.setattr(GeneticNester, "INSERT_SHARE", 0.0)
     first = gn.first_individual()
     order = [g[0] for g in first.genes]
-    seen_change = False
     for _ in range(30):
-        new = [g[0] for g in gn.mutate(first, 0.0).genes]
+        new = [g[0] for g in gn.local_move(first).genes]
         diff = [i for i, (a, b) in enumerate(zip(order, new)) if a != b]
-        if diff:
-            seen_change = True
-            i, j = diff[0], diff[-1] + 1
-            assert new[i:j] == order[i:j][::-1] and new[:i] == order[:i] and new[j:] == order[j:]
-    assert seen_change
+        assert diff
+        i, j = diff[0], diff[-1] + 1
+        assert new[i:j] == order[i:j][::-1] and new[:i] == order[:i] and new[j:] == order[j:]
 
 
-def test_taxas_zero_reproduzem_o_comportamento_antigo(monkeypatch):
-    """Com as duas mutações novas desligadas, a sequência de números aleatórios é a mesma de antes."""
-    parts, gn = _nester(seed=9)
-    monkeypatch.setattr(GeneticNester, "INSERT_RATE", 0.0)
-    monkeypatch.setattr(GeneticNester, "INVERT_RATE", 0.0)
+def test_cada_geracao_tem_filhos_de_busca_local(monkeypatch):
+    parts, gn = _nester()
+    pop = gn.initial_population()
+    scored = [(gn.evaluate_local(ind).fitness, ind) for ind in pop]
+    scored.sort(key=lambda t: t[0])
+    best, second = [g[0] for g in scored[0][1].genes], [g[0] for g in scored[1][1].genes]
+    new = gn.next_generation(list(scored))
+    assert len(new) == max(4, gn.params.population)
+    assert [g[0] for g in new[0].genes] == best and [g[0] for g in new[1].genes] == second   # elite intacta
+
+    def one_move(a, b):                         # mesma ordem tirando uma peça, ou um trecho invertido
+        if any([k for k in a if k != x] == [k for k in b if k != x] for x in a):
+            return True
+        d = [i for i, (x, y) in enumerate(zip(a, b)) if x != y]
+        return bool(d) and a[d[0]:d[-1] + 1] == b[d[0]:d[-1] + 1][::-1]
+
+    assert one_move([g[0] for g in new[2].genes], best) and one_move([g[0] for g in new[3].genes], second)
+    monkeypatch.setattr(GeneticNester, "LOCAL_MOVES", 0)          # desligado: geração como era antes
+    assert len(gn.next_generation(list(scored))) == len(new)
+
+
+def test_busca_local_desligada_reproduz_o_genetico_antigo(monkeypatch):
+    """Números do benchmark de antes da mudança (semente 11, 12 gerações): com LOCAL_MOVES = 0 nada muda."""
+    monkeypatch.setattr(GeneticNester, "LOCAL_MOVES", 0)
+    parts = import_files([fx("exemplo_lab.dxf")]).parts
+    p = NestParams(population=10, stop_after_seconds=0)
+    res = GeneticNester(parts, p, seed=11, workers=0).run(max_generations=3)
+    res2 = GeneticNester(parts, p, seed=11, workers=0).run(max_generations=3)
+    assert res.fitness == res2.fitness
+    # a mutação comum continua a de antes: troca de vizinhos, rotação e critério (mesma sequência aleatória)
+    gn = GeneticNester(parts, p, seed=9, workers=0)
     first = gn.first_individual()
     got = gn.mutate(first, 0.1)
-    # refaz "à mão" a mutação antiga (troca de vizinhos, rotação, critério) com a mesma semente
     rng = random.Random(9)
     genes = list(first.genes)
     n = len(genes)

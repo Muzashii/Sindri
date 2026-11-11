@@ -86,8 +86,8 @@ def _worker_eval(ind: Individual):
 
 # ---------------------------------------------------------------------------
 class GeneticNester:
-    INSERT_RATE = 0.20      # chance, por indivíduo mutado, de reinserir uma peça em posição aleatória
-    INVERT_RATE = 0.10      # chance, por indivíduo mutado, de inverter um trecho da ordem
+    LOCAL_MOVES = 2         # por geração: filhos = um dos 2 melhores + UM movimento (inserção/inversão)
+    INSERT_SHARE = 0.7      # desses movimentos, quantos são inserção (o resto é inversão de trecho)
 
     def __init__(self, parts: list[Part], params: NestParams,
                  locked: Optional[list[Placement]] = None, seed: Optional[int] = None,
@@ -154,18 +154,30 @@ class GeneticNester:
             if self.params.allow_mirror and self.rng.random() < rate:
                 k, r, m = genes[i]
                 genes[i] = (k, r, not m)
-        # mais exploração: a troca de vizinhos acima só desloca uma peça uma posição por vez
-        if self.INSERT_RATE > 0 and n > 2 and self.rng.random() < self.INSERT_RATE:      # inserção: tira uma peça e põe em outro lugar
-            g = genes.pop(self.rng.randrange(n))
-            genes.insert(self.rng.randrange(n), g)
-        if self.INVERT_RATE > 0 and n > 3 and self.rng.random() < self.INVERT_RATE:      # inversão de um trecho da ordem
-            i, j = sorted(self.rng.sample(range(n + 1), 2))
-            if j - i > 1:
-                genes[i:j] = genes[i:j][::-1]
         crit = ind.criterion
         if self.rng.random() < rate:
             crit = "left" if crit == "bbox" else "bbox"
         return Individual(tuple(genes), crit)
+
+    def local_move(self, ind: Individual) -> Individual:
+        """Vizinho de ``ind`` com UM movimento grande na ordem, sem mexer no resto: inserção (tira uma peça
+        e reinsere em posição aleatória) ou inversão de um trecho. A mutação comum só troca vizinhos, então
+        uma peça andava uma posição por vez."""
+        genes = list(ind.genes)
+        n = len(genes)
+        if n < 3:
+            return ind
+        if n < 4 or self.rng.random() < self.INSERT_SHARE:
+            i = self.rng.randrange(n)
+            j = self.rng.randrange(n - 1)
+            g = genes.pop(i)
+            genes.insert(j if j < i else j + 1, g)          # nunca volta para o mesmo lugar
+        else:
+            i, j = sorted(self.rng.sample(range(n + 1), 2))
+            if j - i < 2:
+                i, j = (i, i + 2) if i + 2 <= n else (n - 2, n)
+            genes[i:j] = genes[i:j][::-1]
+        return Individual(tuple(genes), ind.criterion)
 
     def crossover(self, a: Individual, b: Individual) -> Individual:
         n = len(a.genes)
@@ -224,6 +236,14 @@ class GeneticNester:
         new = [scored[0][1]]
         if len(scored) > 1:
             new.append(scored[1][1])
+        # busca local em volta dos melhores: um movimento grande de cada vez (0 = desligado, como era antes)
+        for k in range(min(int(self.LOCAL_MOVES), max(0, size - len(new) - 1))):
+            base = scored[k % min(2, len(scored))][1]
+            for _ in range(8):
+                child = self.local_move(base)
+                if child.key() not in self._seen and all(child.key() != c.key() for c in new):
+                    break
+            new.append(child)
         tries = 0
         while len(new) < size and tries < size * 20:
             tries += 1

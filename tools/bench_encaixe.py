@@ -194,13 +194,14 @@ def main() -> int:
     ap.add_argument("--generations", type=int, default=GENERATIONS)
     ap.add_argument("--seeds", type=int, nargs="*", default=list(SEEDS))
     ap.add_argument("--only", default="", help="só os lotes cujo nome contém este texto")
-    ap.add_argument("--insert-rate", type=float, help="mutação de inserção (0 = desligada, como era antes)")
-    ap.add_argument("--invert-rate", type=float, help="mutação de inversão de trecho (0 = desligada)")
+    ap.add_argument("--local-moves", type=int, help="filhos por geração feitos por inserção/inversão em volta "
+                                                    "dos melhores (0 = desligado, como era antes)")
+    ap.add_argument("--insert-share", type=float, help="fração desses movimentos que é inserção")
     a = ap.parse_args()
-    if a.insert_rate is not None:
-        GeneticNester.INSERT_RATE = a.insert_rate
-    if a.invert_rate is not None:
-        GeneticNester.INVERT_RATE = a.invert_rate
+    if a.local_moves is not None:
+        GeneticNester.LOCAL_MOVES = a.local_moves
+    if a.insert_share is not None:
+        GeneticNester.INSERT_SHARE = a.insert_share
     rows = run(tuple(a.seeds), a.generations, a.only)
     tot = {"sheets": sum(r["sheets_mean"] for r in rows), "fitness": sum(r["fitness_mean"] for r in rows),
            "util": sum(r["utilization_mean"] for r in rows) / max(1, len(rows))}
