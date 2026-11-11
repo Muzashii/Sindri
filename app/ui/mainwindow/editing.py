@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import os
 
 from PySide6.QtWidgets import QInputDialog, QMenu
 
@@ -65,10 +66,15 @@ class EditingMixin:
         return (copy.deepcopy(self.placements), self.n_sheets, {p.id: p.quantity for p in self.parts},
                 list(self.unplaced), set(self.cut_sheets), set(self.done_parts),
                 {p.id: p.rotation_locked for p in self.parts},
-                {p.id: (p.tabs, p.kerf_comp) for p in self.parts})
+                {p.id: (p.tabs, p.kerf_comp) for p in self.parts},
+                (list(self.parts), set(getattr(self, "removed_parts", set()))))
 
     def _restore(self, snap):
         pls, n, qty, unplaced = snap[:4]
+        if len(snap) > 8:                              # peças excluídas da lista voltam com o desfazer
+            self.parts = list(snap[8][0])
+            self.pmap = {p.id: p for p in self.parts}
+            self.removed_parts = set(snap[8][1])
         if len(snap) > 4:
             self.cut_sheets = set(snap[4])
         if len(snap) > 6:
@@ -248,6 +254,44 @@ class EditingMixin:
             it.update()
         self.statusBar().showMessage(
             "Peça(s) travada(s): ficarão no lugar no próximo encaixe." if new else "Peça(s) destravada(s).", 5000)
+
+    @staticmethod
+    def _removed_key(part) -> str:
+        """Peça excluída da lista: arquivo + desenho (não volta ao reler o arquivo)."""
+        return os.path.normcase(os.path.abspath(part.source_file or "")) + "|" + part.identity
+
+    def remove_part(self, pid: str):
+        """Botão "Excluir" da peça: tira a peça (todas as cópias) da lista e do encaixe. O arquivo no disco
+        não muda; a peça não volta ao reler o arquivo e volta com Ctrl+Z."""
+        part = self.pmap.get(pid)
+        if part is None:
+            return
+        if self.worker is not None:
+            self.stop_nest(wait=True)
+        self._push_undo()
+        gone = [pl for pl in self.placements if pl.part_id == pid]
+        if gone:
+            self._invalidate_cut_for(gone)
+        self.placements = [pl for pl in self.placements if pl.part_id != pid]
+        self.unplaced = [u for u in self.unplaced if (u[0] if isinstance(u, (list, tuple)) else u) != pid]
+        self.done_parts.discard(pid)
+        self.too_big = {x for x in self.too_big if (x[0] if isinstance(x, (list, tuple)) else x) != pid}
+        self.parts = [p for p in self.parts if p.id != pid]
+        self.pmap = {p.id: p for p in self.parts}
+        self.removed_parts = set(getattr(self, "removed_parts", set())) | {self._removed_key(part)}
+        self._compact_sheets()
+        self._rebuild_checker()
+        self.parts_panel.set_parts(self.parts, self.too_big)
+        self.mark_changed()
+        self.reconcile_state()
+        if self.parts:
+            self._redraw(keep_view=True)
+        else:
+            self.canvas.show_empty_hint()
+        self._update_status()
+        self._update_buttons()
+        self.statusBar().showMessage(f"{part.name} excluída da lista (Ctrl+Z desfaz). O arquivo não foi alterado.",
+                                     8000)
 
     def delete_selected(self):
         sel = self._selected_placements()

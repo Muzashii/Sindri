@@ -151,6 +151,8 @@ class UIBuildMixin:
         self.parts_panel.btn_kits.clicked.connect(self.multiply_kits)
         self.parts_panel.btn_reset.clicked.connect(self.reset_quantities)
         self.parts_panel.btn_clear.clicked.connect(lambda: self.clear_all())
+        self.parts_panel.removeRequested.connect(self.remove_part)
+        self.parts_panel.addRequested.connect(lambda: self.open_dxf_dialog(add=True))
 
         # ---------------- área central (cartão com abas, canvas e navegação)
         outer = QWidget()
@@ -277,6 +279,7 @@ class UIBuildMixin:
         self.settings_panel.paramsChanged.connect(self._params_debounced)
         self.settings_panel.reimportNeeded.connect(self.reimport)
         self.settings_panel.laserChanged.connect(self.set_laser_value)
+        self.settings_panel.laserChanged.connect(lambda *_: self._update_time_chip())   # velocidade muda o tempo
         self.settings_panel.materialModeChanged.connect(self.set_material_mode)
         self.settings_panel.colorOpsRequested.connect(lambda: self.confirm_color_ops(force=True))
         self.settings_panel.layerParamsRequested.connect(self.edit_layer_params)
@@ -388,8 +391,8 @@ class UIBuildMixin:
         h.addWidget(self._vsep())
         self.chip_sheets = metric("placas")
         self.chip_parts = metric("peças encaixadas")
-        self.chip_gen = metric("soluções testadas")      # chave antiga; legenda: "tentativas"/"última melhora"
-        self._metric_caps["soluções testadas"][0].setText("tentativas")
+        self.chip_time = metric("tempo de corte")
+        self.chip_time.setToolTip("Tempo estimado de corte das placas")
         h.addWidget(self._vsep())
         self.status_label = QLabel("Pronto")
         self.status_label.setObjectName("State")
@@ -576,7 +579,7 @@ class UIBuildMixin:
         act(m_file, "Adicionar solicitação ao lote aberto…", lambda: self.open_intranet(add=True), "Ctrl+Shift+I")
         act(m_file, "Solicitações prontas para retirada…", self.show_ready_menu)
         act(m_file, "Limpar tudo", lambda: self.clear_all(), "Ctrl+Shift+Del")
-        act(m_file, "Adicionar DXF…", lambda: self.open_dxf_dialog(add=True), "Ctrl+Shift+O")
+        act(m_file, "Adicionar peças (DXF, AI, RD)…", lambda: self.open_dxf_dialog(add=True), "Ctrl+Shift+O")
         m_file.addSeparator()
         act(m_file, "Abrir projeto…", self.open_project_dialog, "Ctrl+Alt+O")
         act(m_file, "Salvar projeto de encaixe", self.save_project, "Ctrl+S")
@@ -611,7 +614,6 @@ class UIBuildMixin:
         act(m_nest, "Marcar placa da tela como cortada (e ir para a próxima)", self.toggle_current_cut, "C")
         self._init_open_next_action(act(m_nest, "Ao marcar como cortada, abrir a próxima no RDWorks",
                                         self.set_open_next_on_cut))
-        act(m_nest, "Modo bancada (tela cheia para o corte)", self.toggle_bench_mode, "F11")
         m_nest.addSeparator()
         act(m_nest, "Banco de materiais…", lambda: self.open_materials_dialog(), "Ctrl+M")
         act(m_nest, "Retalhos…", lambda: self.open_remnants_dialog(), "Ctrl+Shift+R")
@@ -695,11 +697,8 @@ class UIBuildMixin:
         self._metrics_layout.setSpacing(10 if compact else 18)
         cap, _ = self._metric_caps["peças encaixadas"]
         cap.setText("peças" if compact else "peças encaixadas")
-        for wdg in self._metric_caps["soluções testadas"]:
-            wdg.setVisible(not tiny)
         self._update_util_chip()                     # "Cheias · última" muda de formato na janela estreita
         self._update_sheet_label()
-        self._update_gen_chip()
         self.status_label.setMaximumWidth(16777215)
         self.btn_positions.setText("" if tiny else "Posições…")
         self.preset_combo.setMaximumWidth(170 if tiny else 230)
@@ -791,9 +790,8 @@ class UIBuildMixin:
         QMessageBox.information(self, "Atalhos de teclado", (
             "Ctrl+Shift+P\tMostrar/recolher painel de peças\n"
             "Ctrl+Alt+O\tAbrir projeto\n"
-            "F11\tModo bancada (tela cheia para o corte)\n"
             "Ctrl+O\tAbrir DXF\n"
-            "Ctrl+Shift+O\tAdicionar DXF\n"
+            "Ctrl+Shift+O\tAdicionar peças (DXF, AI, RD)\n"
             "Ctrl+I\tIntranet FIAP\n"
             "Ctrl+Shift+I\tAdicionar solicitação ao lote aberto\n"
             "Ctrl+S\tSalvar projeto\n"

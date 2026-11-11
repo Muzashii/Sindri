@@ -10,6 +10,8 @@ class ChecklistMixin:
 
     def _refresh_cut_panel(self):
         """Atualiza, na aba Peças, as caixinhas das placas e as peças feitas (e a cor no desenho)."""
+        if hasattr(self, "_metric_caps"):
+            self._update_time_chip()                    # placa cortada: o rodapé passa a mostrar quanto falta
         idx = self.sheet_index()
         sheets = [{"si": si, "n": idx.number[si], "material": idx.material[si], "count": idx.count(si)}
                   for si in idx.ordered]
@@ -77,19 +79,6 @@ class ChecklistMixin:
         action.setChecked(self.open_next_on_cut())
         self.a_open_next = action
         return action
-
-    # ---- modo bancada (tela cheia para a hora do corte)
-    def toggle_bench_mode(self):
-        bench = getattr(self, "_bench", None)
-        if bench is not None and bench.isVisible():
-            bench.close()
-            return
-        if not self.placements or self.worker is not None or self.canvas.mode != "layout":
-            self.statusBar().showMessage("Modo bancada: faça o encaixe primeiro (ou espere ele terminar).", 6000)
-            return
-        from ..bench_mode import BenchMode
-        self._bench = BenchMode(self)
-        self._bench.open_fullscreen()
 
     def filter_request_index(self, k: int):
         """Alt+1…9: só a solicitação k do lote; Alt+0: todas."""

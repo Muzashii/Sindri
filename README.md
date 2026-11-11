@@ -33,7 +33,9 @@ compacta possível nas placas e entrega um único DXF pronto para o **RDWorks**,
 Painéis de peças e parâmetros podem ser recolhidos pelos botões acima do desenho;
 **Formatos de entrada:** DXF, **AI** (Adobe Illustrator, salvo com "compatível com PDF" ou no formato antigo) e **RD** (arquivo de máquina do RDWorks, só leitura — curvas chegam como segmentos; o Sindri não gera .rd). Abrir ou soltar um arquivo já começa o encaixe (menu Encaixe > "Encaixar ao abrir arquivos").
 
-**Na bancada:** `F11` abre o modo bancada (tela cheia: placa atual, conferência das camadas, tempo e três botões grandes). O RDWorks só precisa ser fechado quando velocidade/potência mudam de uma placa para a outra. O tempo entre abrir a placa e marcá-la como cortada calibra a estimativa. `Ctrl+Alt+O` abre projeto.
+**Na bancada:** o rodapé mostra o **tempo estimado de corte** do lote (e quanto falta, conforme as placas são marcadas como cortadas; a dica traz o tempo de cada placa). O RDWorks só precisa ser fechado quando velocidade/potência mudam de uma placa para a outra. O tempo entre abrir a placa e marcá-la como cortada calibra a estimativa. `Ctrl+Alt+O` abre projeto.
+
+**Lista de peças:** "Adicionar peças" junta DXF, AI ou RD aos que já estão abertos; "Excluir" em cada peça a tira da lista e do encaixe (o arquivo não muda; Ctrl+Z desfaz).
 
 **Mais ferramentas de corte:** micro-pontes e compensação de kerf por peça (botão "Pontes" na lista de peças; o kerf vem do banco de materiais) e **grade de teste** velocidade × potência (banco de materiais › "Grade de teste…"), que abre no RDWorks com os valores de cada cor e grava no banco o quadrado escolhido.
 
