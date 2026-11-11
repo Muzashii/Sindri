@@ -421,6 +421,20 @@ class PartsPanel(QWidget):
             h.addWidget(op)
             self.sheets_grid.addWidget(cell, i // cols, i % cols)
 
+    def _ready_menu(self, b, code: str):
+        """Solicitação pronta: clique direito no cartão copia o recado de retirada ou abre na intranet."""
+        win = self.window()
+        acts = win.request_ready_actions(code) if hasattr(win, "request_ready_actions") else []
+        if not acts:
+            return
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(b)
+        for text, fn in acts:
+            menu.addAction(text, fn)
+        b.setContextMenuPolicy(Qt.CustomContextMenu)
+        b.customContextMenuRequested.connect(lambda pos, m=menu, bb=b: m.popup(bb.mapToGlobal(pos)))
+        b.setToolTip("Pronta ✓ · clique direito: copiar recado de retirada ou abrir na intranet\n" + b.toolTip())
+
     def set_filter(self, tag: str):
         """Mostra na lista só as peças da solicitação escolhida e avisa a janela (desenho)."""
         self.filter_tag = tag
@@ -510,6 +524,7 @@ class PartsPanel(QWidget):
                              + "Clique para mostrar só as peças desta solicitação (clique de novo para ver todas)")
                 b.setStyleSheet(f"QPushButton#ReqRow {{ border-left: 6px solid {cols.get(code, '#888')}; }}")
                 b.clicked.connect(lambda _=False, c=code: self.set_filter("" if self.filter_tag == c else c))
+                self._ready_menu(b, code)
                 self._req_buttons[code] = b
                 self.req_rows.addWidget(b)
             allb = QPushButton("Mostrar todas as solicitações")

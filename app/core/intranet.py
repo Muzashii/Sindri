@@ -499,3 +499,39 @@ def merge_request_info(old: Optional[dict], new: dict) -> dict:
     return {"code": " + ".join(str(c) for c in codes), "codes": codes, "batch": True,
             "rm": ", ".join(r.get("rm", "") for r in reqs if r.get("rm")), "nome": f"{len(reqs)} solicitações",
             "materials": mats, "requests": reqs}
+
+
+# ------------------------------------------------------------------ fechar o ciclo com o aluno
+# A intranet não tem endereço próprio por solicitação: o detalhe abre num modal, por JavaScript
+# (abreSolicitacao(nº)) dentro da página de Solicitações Maker. Por isso não existe request_url(nº):
+# para mudar o status, a janela da intranet abre a lista com a busca preenchida e o modal da solicitação.
+# O Sindri nunca altera o status sozinho.
+
+def find_request(info: Optional[dict], code) -> Optional[dict]:
+    """Resumo de uma solicitação dentro do cartão (avulsa ou lote)."""
+    if not info:
+        return None
+    code = str(code)
+    reqs = info.get("requests", []) if info.get("batch") else [info]
+    return next((r for r in reqs if str(r.get("code", "")) == code), None)
+
+
+def ready_codes(info: Optional[dict], done_tags, all_parts_done: bool) -> list[str]:
+    """Solicitações com todas as peças feitas (ou cortadas), na ordem do lote.
+    Num lote vale ``done_tags`` (nº de cada peça); avulsa, todas as peças abertas feitas."""
+    if not info:
+        return []
+    if info.get("batch"):
+        done = {str(t) for t in done_tags or ()}
+        return [c for c in request_codes(info) if c in done]
+    return request_codes(info) if all_parts_done else []
+
+
+def pickup_note(info: Optional[dict], code) -> str:
+    """Recado curto de "pronto para retirada", só com o que já aparece no cartão (nº, primeiro nome, projeto)."""
+    r = find_request(info, code) or {}
+    first = (str(r.get("nome", "")).split() or [""])[0]
+    proj = str(r.get("projeto", "")).strip()
+    hello = f"Olá, {first}! " if first and not first[0].isdigit() else "Olá! "
+    what = f"Sua solicitação nº {code}" + (f" ({proj})" if proj else "")
+    return hello + what + " está pronta para retirada no Laboratório Maker."
