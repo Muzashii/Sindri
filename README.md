@@ -12,7 +12,7 @@ compacta possível nas placas e entrega um único DXF pronto para o **RDWorks**,
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
 ![PySide6](https://img.shields.io/badge/Qt-PySide6-41CD52?logo=qt&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows&logoColor=white)
-![Testes](https://img.shields.io/badge/testes-0%20pytest-success)
+![Testes](https://img.shields.io/badge/testes-398%20pytest-success)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-MIT-blue)
 
 [Como funciona](#-como-funciona) · [Recursos](#-recursos) · [Instalação](#-instalação-windows) ·
