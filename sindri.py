@@ -23,6 +23,15 @@ def _log_path() -> str:
     return os.path.join(_log_dir(), "sindri_erro.log")
 
 
+def _note(context: str) -> None:
+    """Acrescenta ao sindri_erro.log um erro ignorado na abertura (o pacote app pode nem ter carregado)."""
+    try:
+        with open(_log_path(), "a", encoding="utf-8") as f:
+            f.write(f"ignorado — {context}\n{traceback.format_exc()}\n")
+    except OSError:
+        pass
+
+
 def _report(msg: str) -> None:
     try:
         with open(_log_path(), "w", encoding="utf-8") as f:
@@ -37,7 +46,7 @@ def _report(msg: str) -> None:
                 None, "O Sindri não conseguiu abrir.\n\n" + msg[-1500:] +
                 f"\n\nDetalhes salvos em:\n{_log_path()}", "Sindri — erro", 0x10)
         except Exception:
-            pass
+            _note("abertura: mostrar a janela de erro do Windows")
 
 
 if __name__ == "__main__":
@@ -54,7 +63,7 @@ if __name__ == "__main__":
         _crash = open(os.path.join(_log_dir(), "sindri_travamentos.log"), "a", encoding="utf-8")  # noqa: SIM115
         faulthandler.enable(file=_crash)
     except Exception:
-        pass
+        _note("abertura: registro de travamentos (sindri_travamentos.log)")
     try:
         from app.main import main
         code = main()

@@ -304,8 +304,11 @@ def test_aba_caixa_envia_para_o_encaixe(tmp_path, monkeypatch):
             QApplication.sendEvent(widget, ev)
 
     bp.finger.resize(240, 36)
-    click(bp.finger, 6, 18)                            # clique na ponta esquerda = mínimo
-    assert bp.finger.value() == bp.finger.minimum()
+    # Native numeric input replaces the custom drag-only value interface.
+    from PySide6.QtTest import QTest
+    bp.finger.setValue(bp.finger.minimum())
+    QTest.keyClick(bp.finger, _Qt.Key_Up)
+    assert bp.finger.value() == bp.finger.minimum() + bp.finger.singleStep()
     # divisórias dinâmicas: 3 × 2 e um clique tira uma divisória (e outro põe de volta)
     bp.cols.setValue(3)
     bp.rows.setValue(2)
@@ -367,6 +370,8 @@ def test_aba_caixa_envia_para_o_encaixe(tmp_path, monkeypatch):
     assert w.mode_stack.currentIndex() == 0
     assert sum(pt.quantity for pt in w.parts) == 2 * bp.result.count()
     assert {pt.material for pt in w.parts} == {"MDF 3mm"}
+    # This setup replaces the generated box; discard confirmation is covered in test_ux.
+    w.dirty = False
     # com peças abertas: "Juntar" mantém o que já estava
     assert w.load_files([fx("simples.dxf")])
     assert len(w.files) == 1

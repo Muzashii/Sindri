@@ -17,12 +17,13 @@ from PySide6.QtCore import QStandardPaths, Qt, QTimer, QUrl
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QCheckBox, QAbstractItemView, QApplication, QComboBox, QDialog, QFileDialog,
                                QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-                               QMessageBox, QPushButton, QScrollArea, QSplitter, QStackedWidget,
+                               QMessageBox, QPushButton, QScrollArea, QSpinBox, QSplitter, QStackedWidget,
                                QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from ..core.intranet import (ALL_STATUS, JS_CRAWL_RESET, JS_CRAWL_STATE, crawl_script, date_key,
                              merge_rows, status_options, INTRANET_URL, JS_DETAIL, JS_LIST, JS_OPEN, RequestDetail,
                              default_base_folder, parse_detail, should_go_to_requests, target_path)
+from ..core.fileutil import log_exception
 from . import theme
 from .dialogs import settings
 from .icons import icon, pixmap
@@ -89,6 +90,10 @@ class IntranetDialog(QDialog):
         self.batch: list[RequestDetail] = []         # lote em exibição/envio
         self.batch_result: Optional[list] = None     # [(detalhe, [arquivos baixados])]
         self._fetch_queue: list[int] = []
+        self._fetch_mode = "batch"                   # "batch" (Juntar na placa) ou "queue" (Fila do dia)
+        self.queue_plan = None                       # último plano da Fila do dia (QueuePlan)
+        self._queue_failed: dict[str, str] = {}      # nº -> motivo (não abriu a tempo)
+        self._pending_open: Optional[str] = None     # open_request() pedido antes do login
         self.file_rows: dict[str, QLabel] = {}
         self.failed_files: list[str] = []
         t = theme.tokens()
@@ -140,6 +145,7 @@ class IntranetDialog(QDialog):
         ll.addWidget(lt)
         frow = QHBoxLayout()
         self.search = QLineEdit()
+        self.search.setAccessibleName("Buscar solicitações por nome, RM ou número")
         self.search.setPlaceholderText("Buscar por nome, RM ou nº…")
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self._fill_list)
@@ -160,6 +166,26 @@ class IntranetDialog(QDialog):
         frow.addWidget(self.status_filter, 1)
         frow.addWidget(self.type_filter, 1)
         ll.addLayout(frow)
+        qrow = QHBoxLayout()
+        self.btn_queue = QPushButton("Fila do dia")
+        self.btn_queue.setIcon(icon("layers", t["text"], 14))
+        self.btn_queue.setToolTip("Propõe lotes com as solicitações da lista (ordem de chegada, agrupadas por "
+                                  "material). Lê os detalhes que faltam, sem baixar arquivos.")
+        self.btn_queue.clicked.connect(self.plan_day_queue)
+        self.queue_max = QSpinBox()
+        self.queue_max.setRange(1, 30)
+        try:
+            self.queue_max.setValue(int(settings().value("intranet/queue_max", 8)))
+        except (TypeError, ValueError):
+            self.queue_max.setValue(8)
+        self.queue_max.setPrefix("até ")
+        self.queue_max.setSuffix(" por lote")
+        self.queue_max.setToolTip("Máximo de solicitações por lote na Fila do dia")
+        self.queue_max.setAccessibleName("Máximo de solicitações por lote")
+        self.queue_max.valueChanged.connect(self._queue_max_changed)
+        qrow.addWidget(self.btn_queue, 1)
+        qrow.addWidget(self.queue_max)
+        ll.addLayout(qrow)
         self.list = QTableWidget(0, 4)
         self.list.setHorizontalHeaderLabels(["Nº", "Aluno", "RM", "Data"])
         self.list.verticalHeader().setVisible(False)
@@ -314,6 +340,8 @@ class IntranetDialog(QDialog):
     # ------------------------------------------------------------------ estado / página
     def _set_state(self, text: str, kind: str = ""):
         self.state.setText(text)
+        from .accessibility import announce
+        announce(self.state, text)
         self.state.setProperty("kind", kind)
         self.state.style().unpolish(self.state)
         self.state.style().polish(self.state)
@@ -352,7 +380,7 @@ class IntranetDialog(QDialog):
 
     def _loaded(self, ok: bool):
         if not ok:
-            self._set_state("Não foi possível carregar a intranet (sem internet?)", "warn")
+            self._set_state("Falha ao carregar a intranet. Verifique a conexão ou abra a página e clique em Atualizar.", "warn")
             return
         # pequena espera: algumas páginas terminam de montar a tabela depois do load
         QTimer.singleShot(400, self.refresh_list)
@@ -364,7 +392,12 @@ class IntranetDialog(QDialog):
         try:
             data = json.loads(raw) if raw else {}
         except (TypeError, ValueError):
-            data = {}
+            self._set_state("Não foi possível ler a página. Abra a intranet e tente Atualizar.", "warn")
+            self.btn_page.setChecked(True)
+            return
+        if not isinstance(data, dict):
+            self._set_state("Resposta da página não reconhecida. Tente Atualizar.", "warn")
+            return
         if not data.get("temFuncao"):
             # logado mas na página inicial da intranet: vai sozinho para Solicitações Maker
             if should_go_to_requests(data.get("url", ""), bool(data.get("temSenha")), self.start_url) \
@@ -374,7 +407,8 @@ class IntranetDialog(QDialog):
                 self.view.setUrl(QUrl(self.start_url))
                 return
             self._logged = False
-            self._set_state("Faça login na intranet ao lado", "warn")
+            self._set_state("Faça login na intranet ao lado" if data.get("temSenha") else
+                            "Página não reconhecida. Abra Solicitações Maker ou Atualizar; confira seu acesso no site.", "warn")
             self.btn_page.setChecked(True)
             self._rows = []
             self._fill_list()
@@ -384,6 +418,9 @@ class IntranetDialog(QDialog):
         self._base_rows = list(data.get("solicitacoes", []))
         self._merge_and_show()
         self._start_crawl()
+        if self._pending_open:
+            code, self._pending_open = self._pending_open, None
+            QTimer.singleShot(0, lambda c=code: self.open_request(c))
 
     def _all_crawl_rows(self) -> list[dict]:
         return [r for rows in self._crawl_rows.values() for r in rows]
@@ -456,7 +493,7 @@ class IntranetDialog(QDialog):
             with open(os.path.join(folder, "intranet_log.txt"), "w", encoding="utf-8") as fh:
                 fh.write("\n\n".join(self._logs.values()) + "\n")
         except OSError:
-            pass
+            log_exception("intranet: gravar intranet_log.txt")
 
     def _write_log(self, status: str, data: dict):
         """Registro da leitura das páginas (ajuda a diagnosticar se o site mudar)."""
@@ -482,24 +519,31 @@ class IntranetDialog(QDialog):
         self.status_filter.setCurrentIndex(max(0, i))
         self.status_filter.blockSignals(False)
 
-    def _fill_list(self, *_):
+    def _visible_rows(self) -> list[dict]:
+        """Linhas que passam pela busca e pelos filtros de status e tipo (na ordem da tabela)."""
         q = self.search.text().strip().lower()
         tf = self.type_filter.currentText()
         sf = self.status_filter.currentData() or self.status_filter.currentText()
-        cur = self.code.text().strip()
-        scroll = self.list.verticalScrollBar().value()
-        self.list.blockSignals(True)
-        self.list.setRowCount(0)
-        shown = 0
-        t = theme.tokens()
-        rows = sorted(self._rows, key=lambda r: date_key(r.get("data", "")), reverse=self._sort_desc)
-        for r in rows:
+        out = []
+        for r in sorted(self._rows, key=lambda r: date_key(r.get("data", "")), reverse=self._sort_desc):
             if tf != "Todos os tipos" and r.get("tipo", "") != tf:
                 continue
             if sf != ALL_STATUS and r.get("situacao", "") != sf and not q:
                 continue          # a busca procura em todos os status
             if q and q not in f"{r['codigo']} {r.get('nome', '')} {r.get('rm', '')}".lower():
                 continue
+            out.append(r)
+        return out
+
+    def _fill_list(self, *_):
+        cur = self.code.text().strip()
+        scroll = self.list.verticalScrollBar().value()
+        self.list.blockSignals(True)
+        self.list.setRowCount(0)
+        shown = 0
+        t = theme.tokens()
+        seals = self._known_seals()
+        for r in self._visible_rows():
             i = self.list.rowCount()
             self.list.insertRow(i)
             is_open = str(r["codigo"]) in self.open_codes
@@ -516,6 +560,13 @@ class IntranetDialog(QDialog):
                     f = it.font()
                     f.setBold(True)
                     it.setFont(f)
+                    seal = seals.get(str(r["codigo"]))
+                    if seal is not None:          # selo de quando ela já foi aberta no Sindri
+                        it.setIcon(pixmap("check" if seal.status == "ok" else "warn",
+                                          t["success_text"] if seal.status == "ok" else
+                                          (t["danger"] if seal.status == "bloqueado" else t["warn"]), 14))
+                        it.setToolTip(it.toolTip() + f"\nSelo: {seal.label}"
+                                      + "".join(f"\n• {x}" for x in seal.reasons))
                     if is_open:      # marcada e travada: já está no lote aberto, não entra de novo
                         it.setFlags(it.flags() & ~Qt.ItemIsUserCheckable)
                         it.setCheckState(Qt.Checked)
@@ -636,7 +687,12 @@ class IntranetDialog(QDialog):
         self._cache[self.detail.code] = self.detail
         self.batch = []
         self._show_detail()
-        self._set_state(f"Solicitação {self.detail.code} · pronta para enviar", "ok")
+        if getattr(self, "_status_hint", None) == str(self.detail.code):
+            self._status_hint = None
+            self._set_state(f"Solicitação {self.detail.code} aberta no site ao lado · mude o status lá, à mão "
+                            "(o Sindri não altera o status)", "ok")
+        else:
+            self._set_state(f"Solicitação {self.detail.code} · pronta para enviar", "ok")
 
     def _clear_detail(self):
         while self.dbody.count():
@@ -656,6 +712,7 @@ class IntranetDialog(QDialog):
                 self._clear_layout(it.layout())
 
     def _show_detail(self):
+        self._queue_shown = False
         d = self.detail
         t = theme.tokens()
         self._clear_detail()
@@ -668,6 +725,13 @@ class IntranetDialog(QDialog):
         tipo = info.get("Tipo de Solicitação", "")
         if tipo:
             top.addWidget(_chip(tipo, t["accent"]))
+        seal = self._detail_seal(d)
+        sc = _chip(f"{seal.icon} {seal.label}", {"ok": t["success_text"], "atencao": t["warn"],
+                                                 "bloqueado": t["danger"]}[seal.status])
+        sc.setToolTip("\n".join("• " + x for x in seal.reasons) or "Material e arquivos sem problemas conhecidos.")
+        sc.setObjectName("SealChip")
+        self.detail_seal = seal
+        top.addWidget(sc)
         self.dbody.addLayout(top)
 
         # aluno em destaque
@@ -737,6 +801,29 @@ class IntranetDialog(QDialog):
         self.dstack.setCurrentIndex(1)
 
     @staticmethod
+    def _known_seals() -> dict:
+        """Selos já calculados pelo Sindri (geometria + material), por nº da solicitação."""
+        from ..core.manufacturability import Seal, SealStore, default_seal_path
+        out = {}
+        for code, d in SealStore(default_seal_path()).load().items():
+            if isinstance(d, dict) and d.get("status") in ("ok", "atencao", "bloqueado"):
+                out[str(code)] = Seal(d["status"], [str(x) for x in d.get("reasons", [])])
+        return out
+
+    def _detail_seal(self, d: RequestDetail, known_seals: Optional[dict] = None):
+        """Selo da solicitação aberta: material e tipo de arquivo agora, mais a geometria se ela já passou
+        pelo Sindri. Bloqueado (PVC, vinil…) aparece antes de juntar no lote."""
+        from ..core.manufacturability import Seal, seal_for
+        from ..core.material_safety import worst, SafetyResult
+        mats = [f.material for f in d.files if f.is_dxf]
+        now = seal_for(mats, non_dxf=sum(1 for f in d.files if not f.is_dxf))
+        known = (self._known_seals() if known_seals is None else known_seals).get(str(d.code))
+        if known is None:
+            return now
+        status = worst([SafetyResult(now.status), SafetyResult(known.status)]).status
+        return Seal(status, list(dict.fromkeys(now.reasons + known.reasons)))
+
+    @staticmethod
     def _fkey(d: RequestDetail, f) -> str:
         return f"{d.code}/{f.name}"
 
@@ -751,6 +838,15 @@ class IntranetDialog(QDialog):
             w.setObjectName("Muted")
             al.addWidget(w)
         else:
+            from ..core.material_safety import check_material
+            for m in mats:
+                r = check_material(m)
+                if r.status != "ok":
+                    w = QLabel(("⛔ " if r.blocked else "⚠ ") + f"{m}: {r.reason}"
+                               + (" O Sindri não exporta este material para o laser." if r.blocked else ""))
+                    w.setWordWrap(True)
+                    w.setObjectName("InlineWarning")
+                    al.addWidget(w)
             total = sum(len(fs) for fs in mats.values())
             if len(mats) > 1:
                 b = QPushButton(f"Enviar tudo para a placa  ·  {total} arquivo(s), placas separadas por material")
@@ -892,13 +988,16 @@ class IntranetDialog(QDialog):
                 from ..core.fileutil import replace_file
                 replace_file(temp, f.local_path)
             except OSError:
+                log_exception(f"intranet: gravar o arquivo baixado da solicitação {d.code}")
                 ok = False
         self._remove_partial(req)
         self._log_dl(f"fim {key}: {'ok' if ok else 'ERRO estado=' + str(req.state())} "
                      f"{req.receivedBytes()} bytes")
         lab = self.file_rows.get(self._fkey(d, f))
         if lab:
-            lab.setText("✓ baixado" if ok else "erro")
+            reason = req.interruptReasonString() if not ok else ""
+            lab.setText("✓ baixado" if ok else "Erro no download ou ao gravar o arquivo")
+            lab.setToolTip(reason or ("Confira a conexão, o acesso e a permissão na pasta de destino." if not ok else ""))
         if ok:
             self._dl_ok += 1
         else:
@@ -927,7 +1026,7 @@ class IntranetDialog(QDialog):
             try:
                 os.remove(path)
             except OSError:
-                pass
+                log_exception("intranet: apagar download incompleto (.part)")
 
     def _cancel_downloads(self):
         pending, self._downloads = self._downloads, []
@@ -941,7 +1040,7 @@ class IntranetDialog(QDialog):
         self._sending = None
         self._set_buttons(True)
         if self._dl_ok == 0:
-            self._set_state("Nenhum arquivo baixado — a sessão pode ter expirado. Faça login de novo.", "warn")
+            self._set_state("Nenhum arquivo baixado. Confira o acesso na página, a conexão e a pasta de destino; depois tente enviar novamente.", "warn")
             self.btn_page.setChecked(True)
             return
         failed = [(d, f) for d, fs in self._plan for f in fs if not f.local_path]
@@ -973,6 +1072,8 @@ class IntranetDialog(QDialog):
         self._checked = [c for c in self._checked if c not in self.open_codes]
         self._fill_list()
         self._update_batch_bar()
+        if self.queue_plan is not None and not self._fetch_queue and not self._sending:
+            self._show_queue()             # os lotes que faltam continuam à vista para abrir depois
 
     def _item_checked(self, item):
         if item.column() != 0:
@@ -988,6 +1089,8 @@ class IntranetDialog(QDialog):
         self._update_batch_bar()
 
     def _update_batch_bar(self):
+        busy = self._fetch.isActive() or bool(self._fetch_queue)
+        self.btn_queue.setEnabled(not busy and not self._sending)
         n = len(self._checked)
         self.batch_bar.setVisible(n > 0)
         self.batch_tip.setVisible(n == 0)
@@ -1011,6 +1114,7 @@ class IntranetDialog(QDialog):
             return
         self._poll.stop()
         self._req_seq += 1                         # cancela uma visualização em andamento
+        self._fetch_mode = "batch"
         self._fetch_queue = [int(c) for c in self._checked if c.isdigit()]
         self._fetch_done: list[RequestDetail] = []
         self._fetch_total = len(self._fetch_queue)
@@ -1021,17 +1125,36 @@ class IntranetDialog(QDialog):
             self._fetch_done.append(self._cache[self._fetch_queue.pop(0)])
         if not self._fetch_queue:
             self._fetch.stop()
+            if self._fetch_mode == "queue":
+                self._queue_finished()
+                return
             self.batch = list(self._fetch_done)
             self.detail = None
             self._update_batch_bar()
             self._show_batch()
+            if getattr(self, "_send_after_batch", False):     # "Abrir lote" da Fila do dia
+                self._send_after_batch = False
+                if self.batch:
+                    self.send(ALL_MATERIALS)
             return
         code = self._fetch_queue[0]
-        self._set_state(f"Lendo solicitação {code} ({len(self._fetch_done) + 1}/{self._fetch_total})…", "run")
+        if self._fetch_mode == "queue":
+            self._set_state(f"Fila do dia · lendo a solicitação {code} "
+                            f"({len(self._fetch_done) + 1}/{self._fetch_total})…", "run")
+            self._show_queue(reading=True)
+        else:
+            self._set_state(f"Lendo solicitação {code} ({len(self._fetch_done) + 1}/{self._fetch_total})…", "run")
         self._fetch_left = 60
         self.page.runJavaScript(JS_OPEN % code, 0, self._fetch_opened)
 
     def _fetch_opened(self, res):
+        if res != "ok" and self._fetch_mode == "queue" and self._fetch_queue:
+            # sem a função da página não adianta tentar as outras
+            for c in self._fetch_queue:
+                self._queue_failed[str(c)] = "a página da intranet não respondeu"
+            self._fetch_queue = []
+            self._fetch_next()
+            return
         if res != "ok":
             left = ", ".join(str(c) for c in self._fetch_queue)
             self._fetch_queue = []
@@ -1049,6 +1172,11 @@ class IntranetDialog(QDialog):
         code = self._fetch_queue[0]
         if self._fetch_left < 0:
             self._fetch.stop()
+            if self._fetch_mode == "queue":           # pula esta e segue com as outras
+                self._queue_failed[str(code)] = "não abriu a tempo"
+                self._fetch_queue.pop(0)
+                self._fetch_next()
+                return
             self._fetch_queue = []
             self._set_state(f"A solicitação {code} não abriu a tempo. Tente de novo.", "warn")
             self._update_batch_bar()
@@ -1061,6 +1189,7 @@ class IntranetDialog(QDialog):
         try:
             d = parse_detail(json.loads(raw))
         except Exception:
+            log_exception(f"intranet: ler os dados da solicitação {code} (lote)")
             return
         self._fetch.stop()
         self._cache[d.code] = d
@@ -1069,6 +1198,7 @@ class IntranetDialog(QDialog):
         self._fetch_next()
 
     def _show_batch(self):
+        self._queue_shown = False
         theme.tokens()
         self._clear_detail()
         self.file_rows = {}
@@ -1124,6 +1254,221 @@ class IntranetDialog(QDialog):
         self.dstack.setCurrentIndex(1)
         self._set_state(f"Lote com {len(self.batch)} solicitações · pronto para enviar", "ok")
 
+
+    # ------------------------------------------------------------------ Fila do dia
+    def _queue_summaries(self) -> list[dict]:
+        from ..core.queue_plan import summary_from_detail
+        known = self._known_seals()
+        out = []
+        for r in self._visible_rows():
+            code = str(r["codigo"])
+            d = self._cache.get(int(code)) if code.isdigit() else None
+            seal = self._detail_seal(d, known) if d is not None else known.get(code)
+            out.append(summary_from_detail(code, r, d, seal, code in self.open_codes))
+        return out
+
+    def build_queue_plan(self):
+        """Plano da Fila do dia com o que já se sabe (detalhes em cache + selos salvos)."""
+        from ..core.queue_plan import QueueSkip, plan_queue
+        plan = plan_queue(self._queue_summaries(), self.queue_max.value())
+        reading = {str(c) for c in self._fetch_queue}
+        for c in list(plan.pending):
+            if c in self._queue_failed and c not in reading:
+                plan.pending.remove(c)
+                plan.skipped.append(QueueSkip(c, f"não consegui ler os detalhes ({self._queue_failed[c]})"))
+        self.queue_plan = plan
+        return plan
+
+    def plan_day_queue(self):
+        """Botão "Fila do dia": lê (sem baixar) os detalhes que faltam da lista atual e propõe os lotes."""
+        if self._sending or self._fetch.isActive() or self._fetch_queue:
+            return
+        rows = self._visible_rows()
+        if not rows:
+            self._set_state("Fila do dia: nenhuma solicitação na lista atual (confira o status e o tipo).", "warn")
+            return
+        known = self._known_seals()
+        need = []
+        for r in rows:
+            c = str(r["codigo"])
+            if not c.isdigit() or int(c) in self._cache or c in self.open_codes:
+                continue
+            if known.get(c) is not None and known[c].status == "bloqueado":
+                continue                       # já se sabe que fica de fora: não precisa abrir
+            need.append(int(c))
+        need.sort(key=lambda c: next((date_key(r.get("data", "")) for r in rows if str(r["codigo"]) == str(c)), (0,)))
+        if need and not self._logged:
+            self._set_state("Fila do dia: faça login na intranet para ler as solicitações.", "warn")
+            self.btn_page.setChecked(True)
+            return
+        self._queue_failed = {}
+        self._poll.stop()
+        self._req_seq += 1                    # cancela uma visualização em andamento
+        self._fetch_mode = "queue"
+        self._fetch_queue = need
+        self._fetch_done = []
+        self._fetch_total = len(need)
+        self.detail = None
+        self.batch = []
+        self._update_batch_bar()
+        self._fetch_next()
+
+    def stop_queue(self):
+        """Para a leitura: o plano fica com o que já foi lido (as outras aparecem como não lidas)."""
+        if self._fetch_mode != "queue" or not self._fetch_queue:
+            return
+        self._fetch.stop()
+        self._fetch_queue = []
+        self._queue_finished()
+
+    def _queue_finished(self):
+        plan = self.build_queue_plan()
+        self._update_batch_bar()
+        self._show_queue()
+        if plan.lots:
+            self._set_state(f"Fila do dia · {len(plan.lots)} lote(s) com {plan.planned} solicitação(ões)", "ok")
+        else:
+            self._set_state("Fila do dia · nenhuma solicitação pronta para lote", "warn")
+
+    def _queue_max_changed(self, v):
+        settings().setValue("intranet/queue_max", int(v))
+        if getattr(self, "_queue_shown", False) and self.queue_plan is not None:
+            self._show_queue(reading=bool(self._fetch_queue))
+
+    def _show_queue(self, reading: bool = False):
+        plan = self.build_queue_plan()
+        t = theme.tokens()
+        self._clear_detail()
+        self.file_rows = {}
+        self.send_buttons = []
+        names = {str(r["codigo"]): r.get("nome", "") for r in self._rows}
+        top = QHBoxLayout()
+        tt = QLabel(f"Fila do dia · {len(plan.lots)} lote(s)")
+        tt.setStyleSheet("font-size: 17pt; font-weight: 800;")
+        top.addWidget(tt)
+        top.addStretch(1)
+        self.dbody.addLayout(top)
+        sub = QLabel("Solicitações da lista atual, em ordem de chegada, agrupadas pelo material principal "
+                     f"(até {plan.max_per_lot} por lote). Materiais diferentes nunca dividem placa.")
+        sub.setObjectName("Muted")
+        sub.setWordWrap(True)
+        self.dbody.addWidget(sub)
+        self.queue_buttons: dict[int, QPushButton] = {}
+        if reading:
+            pr = QFrame()
+            pr.setObjectName("RequestCard")
+            pl = QHBoxLayout(pr)
+            pl.setContentsMargins(12, 8, 8, 8)
+            done = self._fetch_total - len(self._fetch_queue)
+            lab = QLabel(f"Lendo os detalhes · {done}/{self._fetch_total} (nada é baixado)")
+            lab.setStyleSheet("font-weight: 600;")
+            stop = QPushButton("Parar")
+            stop.setToolTip("Para a leitura e monta os lotes só com o que já foi lido")
+            stop.clicked.connect(self.stop_queue)
+            pl.addWidget(lab, 1)
+            pl.addWidget(stop)
+            self.dbody.addWidget(pr)
+        for lot in plan.lots:
+            card = QFrame()
+            card.setObjectName("RequestCard")
+            col = theme.material_color(lot.material).name()
+            card.setStyleSheet(f"QFrame#RequestCard {{ border-left: 6px solid {col}; }}")
+            cl = QVBoxLayout(card)
+            cl.setContentsMargins(14, 10, 12, 10)
+            cl.setSpacing(4)
+            h = QHBoxLayout()
+            hl = QLabel(f"<b>Lote {lot.number}</b>  ·  {len(lot.codes)} solicitaç{'ão' if len(lot.codes) == 1 else 'ões'}"
+                        f"  ·  {lot.files} arquivo(s)")
+            hl.setStyleSheet("font-size: 11pt;")
+            h.addWidget(hl, 1)
+            b = QPushButton(f"Abrir lote {lot.number}")
+            b.setObjectName("primary" if lot.number == 1 else "")
+            if lot.number == 1:
+                b.setIcon(icon("play", "#ffffff", 13))
+            b.setToolTip("Marca as solicitações deste lote, baixa os arquivos e abre no Sindri")
+            b.setEnabled(not reading)
+            b.clicked.connect(lambda _=False, n=lot.number: self.open_queue_lot(n))
+            self.queue_buttons[lot.number] = b
+            h.addWidget(b)
+            cl.addLayout(h)
+            who = QLabel(", ".join(f"{c}" + (f" ({names[c].split()[0]})" if names.get(c) else "")
+                                   for c in lot.codes))
+            who.setWordWrap(True)
+            who.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            cl.addWidget(who)
+            mrow = QHBoxLayout()
+            mrow.setSpacing(6)
+            for m, (nr, nf) in lot.per_material.items():
+                mrow.addWidget(_chip(f"{m} · {nr} solic. · {nf} arq.", theme.material_color(m).name()))
+            mrow.addStretch(1)
+            cl.addLayout(mrow)
+            why = QLabel(lot.reason)
+            why.setObjectName("Muted")
+            why.setWordWrap(True)
+            cl.addWidget(why)
+            self.dbody.addWidget(card)
+        if not plan.lots and not reading:
+            w = QLabel("Nenhuma solicitação da lista atual pode entrar num lote agora.")
+            w.setObjectName("Muted")
+            w.setWordWrap(True)
+            self.dbody.addWidget(w)
+        if plan.skipped:
+            sh = QLabel(f"Fora da fila ({len(plan.skipped)})")
+            sh.setObjectName("SectionHead")
+            self.dbody.addWidget(sh)
+            for sk in plan.skipped:
+                w = QLabel(f"<b>{sk.code}</b>  ·  {sk.reason}")
+                w.setWordWrap(True)
+                if sk.reason.startswith("⛔"):
+                    w.setStyleSheet(f"color: {t['danger']};")
+                self.dbody.addWidget(w)
+        if plan.pending and not reading:
+            w = QLabel(f"Não lidas ({len(plan.pending)}): {', '.join(plan.pending)}. Clique em “Fila do dia” "
+                       "de novo para ler as que faltam.")
+            w.setObjectName("Muted")
+            w.setWordWrap(True)
+            self.dbody.addWidget(w)
+        self.dbody.addStretch(1)
+        self.dstack.setCurrentIndex(1)
+        self._queue_shown = True
+
+    def open_queue_lot(self, number: int) -> bool:
+        """Botão "Abrir lote N": marca as solicitações do lote e envia tudo para o Sindri (fluxo do lote)."""
+        plan = self.queue_plan
+        lot = next((x for x in (plan.lots if plan else []) if x.number == number), None)
+        if lot is None or self._sending or self._fetch.isActive() or self._fetch_queue:
+            return False
+        codes = [c for c in lot.codes if c not in self.open_codes]
+        if not codes:
+            return False
+        self._checked = codes                  # ordem de chegada = ordem do lote (nº gravado 1, 2, 3…)
+        self._fill_list()
+        self._update_batch_bar()
+        self._send_after_batch = True
+        self.view_batch()
+        return True
+
+    # ------------------------------------------------------------------ fechar o ciclo com o aluno
+    def open_request(self, code) -> None:
+        """Mostra a solicitação no site da intranet para o técnico mudar o status À MÃO.
+        A intranet não tem endereço por solicitação (o detalhe abre num modal): preenche a busca, mostra
+        a página e abre o modal dela. O Sindri nunca altera o status sozinho."""
+        code = str(code).strip()
+        if not code.isdigit():
+            return
+        self.search.setText(code)
+        self.code.setText(code)
+        self.btn_page.setChecked(True)
+        if not self._logged:
+            self._pending_open = code
+            self._set_state(f"Faça login na intranet · a solicitação {code} abre em seguida", "warn")
+            return
+        if self._sending or self._fetch_queue:
+            self._set_state(f"Espere terminar a leitura/envio para abrir a solicitação {code}", "warn")
+            return
+        self._status_hint = code
+        self.view_request()
+
     # ------------------------------------------------------------------
     def _disconnect(self):
         self._poll.stop()
@@ -1139,12 +1484,13 @@ class IntranetDialog(QDialog):
         self._pending = {}
         self._cancel_downloads()
         self._fetch_queue = []
+        self._send_after_batch = False
         self._set_buttons(True)
         if getattr(self, "_dl_connected", False):
             try:
                 shared_profile().downloadRequested.disconnect(self._download_requested)
             except Exception:
-                pass
+                log_exception("intranet: desligar o aviso de download ao fechar a janela")
             self._dl_connected = False
 
     def showEvent(self, e):

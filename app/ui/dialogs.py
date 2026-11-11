@@ -121,7 +121,8 @@ class ExportDialog(QDialog):
         frow.addWidget(btn)
         form.addRow("Pasta", frow)
         self.base = QLineEdit(base)
-        self.base.setToolTip("Gera nome_todas_placas.dxf (todas as placas organizadas) e nome_relatorio.pdf")
+        self.base.setToolTip("Gera nome_placa01.dxf, nome_placa02.dxf… (um arquivo de corte por placa), "
+                             "nome_todas_placas.dxf (conferência) e nome_relatorio.pdf")
         form.addRow("Nome", self.base)
         self.version = QComboBox()
         self.version.addItem("R2000 (recomendado)", "R2000")
@@ -129,23 +130,55 @@ class ExportDialog(QDialog):
         self.version.setToolTip("Versão do DXF. Se o RDWorks não abrir corretamente, tente a outra.")
         self.version.setCurrentIndex(1 if st.value("export/version", "R2000") == "R12" else 0)
         form.addRow("Versão do DXF", self.version)
+        from ..core.dxf_export import START_CORNERS
+        self.start = QComboBox()
+        for key, label in START_CORNERS.items():
+            self.start.addItem(label[0].upper() + label[1:], key)
+        self.start.setToolTip("Onde o caminho de corte começa: escolha o canto mais perto do home da cabeça.\n"
+                              "A posição das peças não muda — só a ordem em que são cortadas.")
+        self.start.setCurrentIndex(max(0, self.start.findData(st.value("export/start", "inferior_esquerdo"))))
+        form.addRow("Começar o corte pelo", self.start)
+        from ..core.dxf_export import ORDER_MODES
+        self.order = QComboBox()
+        for key, label in ORDER_MODES.items():
+            self.order.addItem(label, key)
+        self.order.setToolTip("Pequenas primeiro: a chapa perde rigidez mais tarde e peça solta tem menos chance de\n"
+                              "bater no bico. Furos e peças dentro de furos continuam antes da peça que os contém.")
+        self.order.setCurrentIndex(max(0, self.order.findData(st.value("export/order", "caminho"))))
+        form.addRow("Ordem das peças", self.order)
+        trow = QHBoxLayout()
+        self.t_travel = QDoubleSpinBox()
+        self.t_travel.setRange(10, 2000)
+        self.t_travel.setSuffix(" mm/s")
+        self.t_travel.setValue(float(st.value("time/travel", 300.0)))
+        self.t_travel.setToolTip("Velocidade de deslocamento sem laser (para a estimativa de tempo).")
+        self.t_over = QDoubleSpinBox()
+        self.t_over.setRange(0, 5)
+        self.t_over.setDecimals(2)
+        self.t_over.setSuffix(" s/contorno")
+        self.t_over.setValue(float(st.value("time/overhead", 0.3)))
+        self.t_over.setToolTip("Tempo extra por início de contorno (acelerar, acender, frear).\n"
+                               "Calibre comparando a estimativa com o tempo que o RDWorks mostra.")
+        trow.addWidget(self.t_travel)
+        trow.addWidget(self.t_over)
+        form.addRow("Estimativa de tempo", trow)
         lay.addLayout(form)
-        self.outline = QCheckBox("Contorno e nº de cada placa (“PLACA 1”, “PLACA 2”…) na camada PLACA, cinza")
-        self.outline.setToolTip("Mostra no RDWorks qual placa é qual. Na camada cinza (PLACA), marque saída = NÃO "
-                                "antes de cortar, para o laser não passar por ela!")
+        self.outline = QCheckBox("No arquivo de conferência: contorno e nº de cada placa (camada PLACA, cinza)")
+        self.outline.setToolTip("Só no arquivo com todas as placas lado a lado, que é para conferir. Os arquivos de "
+                                "corte (um por placa) nunca têm o contorno da placa.")
         self.outline.setChecked(st.value("export/outline2", "true") == "true")
         self.inner = QCheckBox("Cortar contornos internos antes dos externos")
         self.inner.setToolTip("Evita que a peça se solte e se mova antes de os furos serem cortados.")
         self.inner.setChecked(st.value("export/inner", "true") == "true")
         self.path = QCheckBox("Ordenar peças pelo caminho mais curto")
         self.path.setChecked(st.value("export/path", "true") == "true")
-        self.open_rd = QCheckBox("Abrir no RDWorks depois de exportar")
-        self.open_rd.setToolTip("Abre no RDWorks o arquivo com todas as placas organizadas lado a lado "
-                                "(todos os materiais, na ordem Placa 1, 2, 3… do relatório e do checklist).")
+        self.open_rd = QCheckBox("Abrir no RDWorks a 1ª placa ainda não cortada")
+        self.open_rd.setToolTip("Abre só o arquivo de corte daquela placa. As outras abrem pelo botão ▶ ao lado "
+                                "de cada placa no checklist (aba Peças).")
         self.open_rd.setChecked(st.value("export/open_rdworks", "true") == "true")
-        info = QLabel("Saem 2 arquivos: <b>todas as placas</b> organizadas num DXF (o que vai para o RDWorks) "
-                      "e o <b>relatório PDF</b> com o desenho de cada placa, de quem é cada peça e a "
-                      "lista para marcar o que já foi cortado.")
+        info = QLabel("Saem: <b>um DXF de corte por placa</b> (origem no canto da chapa, sem contorno da placa — "
+                      "é o que vai para o RDWorks), o arquivo de <b>conferência</b> com todas as placas lado a lado "
+                      "e o <b>relatório PDF</b> com o desenho de cada placa e de quem é cada peça.")
         info.setWordWrap(True)
         info.setObjectName("Muted")
         lay.addWidget(info)
@@ -170,6 +203,10 @@ class ExportDialog(QDialog):
         st.setValue("export/inner", "true" if self.inner.isChecked() else "false")
         st.setValue("export/path", "true" if self.path.isChecked() else "false")
         st.setValue("export/open_rdworks", "true" if self.open_rd.isChecked() else "false")
+        st.setValue("export/start", self.start.currentData())
+        st.setValue("export/order", self.order.currentData())
+        st.setValue("time/travel", float(self.t_travel.value()))
+        st.setValue("time/overhead", float(self.t_over.value()))
         if not self.base.text().strip():
             self.base.setText("projeto")
         self.accept()
@@ -180,7 +217,8 @@ class ExportDialog(QDialog):
                 "version": self.version.currentData(),
                 "outline": self.outline.isChecked(),
                 "inner": self.inner.isChecked(), "path": self.path.isChecked(),
-                "open_rdworks": self.open_rd.isChecked()}
+                "open_rdworks": self.open_rd.isChecked(), "start": self.start.currentData(),
+                "order": self.order.currentData()}
 
 
 class CleanupDialog(QDialog):
@@ -194,7 +232,7 @@ class CleanupDialog(QDialog):
         self.setMinimumWidth(520)
         lay = QVBoxLayout(self)
         intro = QLabel("Os arquivos escolhidos vão para a <b>Lixeira</b> (dá para recuperar de lá). "
-                       "Projetos salvos (.sindri) que usam solicitações apagadas não vão mais abrir.")
+                       "Projetos portáteis (.sindri) preservam a geometria incorporada; guarde os originais se precisar editá-los.")
         intro.setWordWrap(True)
         lay.addWidget(intro)
         self.checks: dict[str, QCheckBox] = {}

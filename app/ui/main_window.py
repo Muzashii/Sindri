@@ -18,16 +18,18 @@ from .mainwindow.checklist import ChecklistMixin
 from .mainwindow.common import APP_NAME
 from .mainwindow.editing import EditingMixin
 from .mainwindow.export import ExportMixin
+from .mainwindow.materials import MaterialsMixin
 from .mainwindow.updates import UpdatesMixin
 from .mainwindow.files import FilesMixin
 from .mainwindow.nesting import NestingMixin
 from .mainwindow.projects import ProjectMixin
+from .mainwindow.review import ReviewMixin
 from .mainwindow.status import StatusMixin
 from .mainwindow.ui_build import UIBuildMixin
 
 
-class MainWindow(UIBuildMixin, FilesMixin, ProjectMixin, NestingMixin, EditingMixin, ChecklistMixin,
-                 StatusMixin, ExportMixin, UpdatesMixin, BoxMixin, QMainWindow):
+class MainWindow(UIBuildMixin, FilesMixin, ProjectMixin, ReviewMixin, NestingMixin, EditingMixin, ChecklistMixin,
+                 StatusMixin, ExportMixin, MaterialsMixin, UpdatesMixin, BoxMixin, QMainWindow):
     def __init__(self, workers: Optional[int] = None):
         super().__init__()
         self.setWindowTitle(APP_NAME)
@@ -59,6 +61,12 @@ class MainWindow(UIBuildMixin, FilesMixin, ProjectMixin, NestingMixin, EditingMi
         self.source_hashes: dict = {}
         self.cut_sheets: set[int] = set()        # placas já cortadas (checklist)
         self.done_parts: set[str] = set()        # peças marcadas como feitas (cortadas)
+        self.color_ops: dict = {}                # (material, cor do arquivo) -> corte/vinco/gravação
+        self.color_ops_confirmed: set = set()    # cores que o técnico já conferiu
+        self.sheet_files: dict[int, str] = {}    # placa -> DXF de corte exportado
+        self.sheet_stamps: dict[int, str] = {}   # placa -> impressão digital do que foi exportado
+        self.sheet_remnants: dict[int, str] = {} # placa -> id do retalho usado (sem = chapa inteira)
+        self.saved_leftover: dict[int, float] = {}  # placa -> mm² de sobra guardada como retalho
         self.request_label: Optional[str] = None
         self.request_info: Optional[dict] = None
         self.generation = 0
@@ -67,6 +75,8 @@ class MainWindow(UIBuildMixin, FilesMixin, ProjectMixin, NestingMixin, EditingMi
 
         self._build_ui()
         self._build_actions()
+        from .accessibility import configure
+        configure(self)
         from .nowheel import protect
         protect(self)                                 # roda do mouse não muda valores dos campos
         params = NestParams()
@@ -76,6 +86,9 @@ class MainWindow(UIBuildMixin, FilesMixin, ProjectMixin, NestingMixin, EditingMi
                 params = NestParams.from_json(json.loads(raw))
             except Exception:
                 pass
+        # "Abrir nova placa se não couber" desligado sem querer ficava salvo para sempre e o encaixe
+        # passava a usar só 1 placa, deixando peças sem lugar. Cada sessão começa com ele ligado.
+        params.multi_sheet = True
         self.settings_panel.set_params(params)
         self.params = params
         self._refresh_presets()
@@ -93,6 +106,10 @@ class MainWindow(UIBuildMixin, FilesMixin, ProjectMixin, NestingMixin, EditingMi
         self.apply_width(self.width())
 
     def closeEvent(self, e):
+        if getattr(self, "_ui_task_depth", 0):
+            self.statusBar().showMessage("Aguarde a conclusão da operação para fechar.", 5000)
+            e.ignore()
+            return
         if getattr(self, "_applying_update", False):
             self.statusBar().showMessage("Aguarde a conclusão da atualização para fechar.", 5000)
             e.ignore()
@@ -111,6 +128,7 @@ class MainWindow(UIBuildMixin, FilesMixin, ProjectMixin, NestingMixin, EditingMi
                 if self.dirty:
                     e.ignore()
                     return
+        self.flush_material_db()
         self._save_params()                           # parâmetros + "fechou normalmente"
         if getattr(self, "_autosave_timer", None) is not None:
             self._autosave_timer.stop()

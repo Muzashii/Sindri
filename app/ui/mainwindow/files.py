@@ -10,10 +10,12 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from ...core.intranet import merge_request_info, request_codes
+from ...core.dxf_import import DRAWING_FILTER, is_drawing
 from ...core.part_builder import import_files
 from ..dialogs import CleanupDialog, PresetsDialog, load_presets, save_presets, settings
 from ..prefs import get_list_value
 from ..render import clear_graphics_cache
+from ..tasks import run_task
 from .common import APP_NAME
 
 
@@ -52,6 +54,8 @@ class FilesMixin:
     def _preset_chosen(self, i: int):
         data = self.preset_combo.itemData(i)
         if data is None:
+            self.a_params.setChecked(True)
+            self.settings_panel.show()
             self.settings_panel.w.setFocus()
             self.settings_panel.w.selectAll()
             self.statusBar().showMessage("Digite a largura e a altura da placa no painel à direita.", 5000)
@@ -96,24 +100,39 @@ class FilesMixin:
 
     def dragEnterEvent(self, e):
         if e.mimeData().hasUrls():
-            if any(u.toLocalFile().lower().endswith((".dxf", ".dxfnest", ".sindri")) for u in e.mimeData().urls()):
+            if any(is_drawing(u.toLocalFile()) or u.toLocalFile().lower().endswith((".dxfnest", ".sindri"))
+                   for u in e.mimeData().urls()):
                 e.acceptProposedAction()
 
     def dropEvent(self, e):
         paths = [u.toLocalFile() for u in e.mimeData().urls()]
         projs = [p for p in paths if p.lower().endswith((".dxfnest", ".sindri"))]
-        dxfs = [p for p in paths if p.lower().endswith(".dxf")]
+        dxfs = [p for p in paths if is_drawing(p)]
         if projs:
             self.open_project(projs[0])
         elif dxfs:
-            self.load_files(dxfs, add=bool(self.files))
+            if self.load_files(dxfs, add=bool(self.files)):
+                self._auto_nest_after_open()
 
     def open_dxf_dialog(self, add: bool = False):
         start = settings().value("ui/last_dir", os.path.expanduser("~"))
-        paths, _ = QFileDialog.getOpenFileNames(self, "Abrir DXF", start, "Desenhos DXF (*.dxf);;Todos (*.*)")
+        paths, _ = QFileDialog.getOpenFileNames(self, "Abrir desenho", start, DRAWING_FILTER)
         if paths:
             settings().setValue("ui/last_dir", os.path.dirname(paths[0]))
-            self.load_files(paths, add=add)
+            if self.load_files(paths, add=add):
+                self._auto_nest_after_open()
+
+    def set_auto_nest_files(self, on: bool):
+        settings().setValue("files/auto_nest", "true" if on else "false")
+
+    def _auto_nest_after_open(self):
+        """Arquivo aberto ou solto pelo técnico: já começa a encaixar (como a intranet faz), desde que não
+        haja nada para conferir antes, nenhuma peça grande demais e nenhuma placa já cortada."""
+        if settings().value("files/auto_nest", "true") != "true" or not self.parts:
+            return
+        if self.too_big or self.cut_sheets or self.review_panel.pending():
+            return
+        QTimer.singleShot(300, lambda: self.worker is None and self.parts and self.start_nest())
 
     def load_files(self, paths: list[str], add: bool = False, multipliers: Optional[dict] = None,
                    request_label: Optional[str] = None, materials: Optional[dict] = None,
@@ -129,12 +148,14 @@ class FilesMixin:
                set(self.done_parts), self.request_label, self.request_info)
         old_params = self.settings_panel.params()
         old_units = dict(self.file_units)
+        old_review = (dict(self.file_repairs), set(self.issue_acks))
         if not add:
             self.settings_panel.reset_file_options()   # arquivo novo: unidade automática, todas as camadas
             self.file_multipliers = {}
             self.file_materials = {}
             self.file_tags = {}
             self.file_units = {}
+            self.file_repairs, self.issue_acks = {}, set()
             self.cut_sheets, self.done_parts = set(), set()
             self.request_label = request_label
             self.request_info = request_info
@@ -152,6 +173,7 @@ class FilesMixin:
              self.request_label, self.request_info) = old
             self.parts_panel.set_request(self.request_info)
             self.file_units = old_units
+            self.file_repairs, self.issue_acks = old_review
             self.settings_panel.set_params(old_params)
             self._refresh_cut_panel()
             return False
@@ -159,13 +181,19 @@ class FilesMixin:
             self.project_path = None
         return True
 
-    def _import(self, files: list[str], keep_quantities: bool = False, keep_layout: bool = False):
+    def _import(self, files: list[str], keep_quantities: bool = False, keep_layout: bool = False,
+                review: bool = False):
+        """``review``: reimportação pedida pela Conferência (fechar aberturas): não reabre avisos."""
         p = self.settings_panel.params()
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            rep = import_files(files, p.join_tolerance, p.curve_tolerance, **p.import_kwargs(),
-                               multipliers=self.file_multipliers, file_materials=self.file_materials,
-                               file_tags=self.file_tags, file_units=self.file_units)
+            multipliers, materials, tags, units = (dict(self.file_multipliers), dict(self.file_materials),
+                                                  dict(self.file_tags), dict(self.file_units))
+            repairs = {k: list(v) for k, v in self.file_repairs.items()}
+            rep = run_task(self, "Lendo e reconstruindo os arquivos DXF", lambda:
+                           import_files(list(files), p.join_tolerance, p.curve_tolerance, **p.import_kwargs(),
+                                        multipliers=multipliers, file_materials=materials,
+                                        file_tags=tags, file_units=units, file_repairs=repairs))
         except Exception as e:
             QApplication.restoreOverrideCursor()
             QMessageBox.critical(self, "Erro ao abrir", f"Não foi possível ler os arquivos.\n\n{e}")
@@ -230,22 +258,27 @@ class FilesMixin:
         self.tabs.blockSignals(True)
         self.tabs.setCurrentIndex(0)
         self.tabs.blockSignals(False)
-        self.canvas.show_preview(rep.preview)
         names = ", ".join(os.path.basename(f) for f in self.files)
         self.setWindowTitle(f"{APP_NAME} — {names}" if names else APP_NAME)
         self._refresh_cut_panel()
         self._update_status()
         self._update_buttons()
-        if self._ask_fix_units(rep):
+        if not review and self._ask_fix_units(rep):
             return
-        if rep.warnings:
-            self._show_warnings(rep.warnings)
+        # avisos: painel de Conferência ao lado do desenho (não trava a tela com uma janela)
+        self.refresh_review(auto_open=not review)
+        if review:
+            return
+        self._announce_color_ops()
         if not self.parts:
             self.statusBar().showMessage("Nenhuma peça encontrada nos arquivos.", 8000)
         else:
             total = sum(p.quantity for p in self.parts)
+            pend = len(self.review_panel.pending())
+            tail = f" · {pend} aviso(s) para conferir (F8)" if pend else ""
             self.statusBar().showMessage(
-                f"{len(self.parts)} tipo(s) de peça, {total} no total. Escolha a placa e clique em Encaixar.", 10000)
+                f"{len(self.parts)} tipo(s) de peça, {total} no total. Escolha a placa e clique em Encaixar.{tail}",
+                10000)
 
     def _ask_fix_units(self, rep) -> bool:
         """Se o tamanho do desenho for absurdo na unidade declarada, corrige sozinho. True = reimportou."""
@@ -262,22 +295,23 @@ class FilesMixin:
             "A unidade manual nos parâmetros se aplica ao lote inteiro.", "warn")
         return True
 
+    def _announce_color_ops(self):
+        """Mais de uma cor num material: avisa como cada cor vai sair (corte × gravação) e oferece conferir."""
+        from ...core import operations
+        from ...core.laser import color_name
+        parts = [pt for pt in self.parts if pt.quantity > 0]
+        keys = set(operations.file_colors(parts))
+        if not operations.needs_confirmation(parts) or keys <= self.color_ops_confirmed:
+            return
+        eff = self.effective_color_ops()
+        desc = ", ".join(f"{color_name(a).lower()} → {operations.LABELS[op].lower()}"
+                         for (m, a), op in sorted(eff.items(), key=lambda kv: (kv[0][0], kv[0][1])))
+        self.show_banner(f"O desenho tem mais de uma cor: {desc}. A gravação sai numa camada própria e "
+                         'não é cortada. <a href="colorops:">Conferir cores e operações…</a>', "warn")
+
     def reimport(self):
         if self.files:
             self._import(self.files, keep_quantities=True)
-
-    def _show_warnings(self, warnings: list[str]):
-        important = [w for w in warnings if "assumindo" in w or "não" in w.lower() or "aberto" in w
-                     or "corromp" in w or "ignorad" in w or "duplicad" in w]
-        if not important:
-            return
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Warning)
-        box.setWindowTitle("Avisos da importação")
-        box.setText("O arquivo foi aberto, mas há pontos de atenção:")
-        box.setInformativeText("\n".join("• " + w for w in important[:12]) +
-                               ("\n…" if len(important) > 12 else ""))
-        box.exec()
 
     def show_import_details(self):
         if self.report is None:
@@ -300,16 +334,27 @@ class FilesMixin:
     def confirm_discard(self, add: bool = False) -> bool:
         if add or not self.files or not self.dirty:
             return True
-        r = QMessageBox.question(self, "Descartar encaixe?",
-                                 "O encaixe atual não foi salvo. Deseja continuar e descartá-lo?",
-                                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-        return r == QMessageBox.Yes
+        box = QMessageBox(self)
+        box.setWindowTitle("Alterações não salvas")
+        box.setText("Salvar o projeto de encaixe antes de continuar?")
+        save = box.addButton("Salvar", QMessageBox.AcceptRole)
+        discard = box.addButton("Descartar alterações", QMessageBox.DestructiveRole)
+        box.addButton("Cancelar", QMessageBox.RejectRole)
+        box.setDefaultButton(save)
+        box.exec()
+        if box.clickedButton() == save:
+            self.save_project()
+            return not self.dirty
+        return box.clickedButton() == discard
 
     def clear_all(self, ask: bool = True):
         """Remove todos os arquivos, peças e o encaixe (volta para a tela inicial)."""
         if not self.parts and not self.files:
             return
-        if ask:
+        if ask and self.dirty:
+            if not self.confirm_discard():
+                return
+        elif ask:
             r = QMessageBox.question(self, "Limpar tudo",
                                      "Remover todas as peças e o encaixe atual?\n"
                                      "(os arquivos DXF no disco não são alterados)",
@@ -324,11 +369,15 @@ class FilesMixin:
         self.file_materials, self.request_info = {}, None
         self.file_tags = {}
         self.file_units, self.source_hashes = {}, {}
+        self.file_repairs, self.issue_acks = {}, set()
         if hasattr(self, "_autosave_timer"):
             self._autosave_timer.stop()
         self.parts_panel.set_request(None)
         self.placements, self.n_sheets, self.unplaced = [], 0, []
         self.cut_sheets, self.done_parts = set(), set()
+        self.color_ops, self.color_ops_confirmed = {}, set()
+        self.sheet_files, self.sheet_stamps, self.sheet_remnants = {}, {}, {}
+        self.saved_leftover = {}
         self._refresh_cut_panel()
         self.too_big = set()
         self.undo_stack.clear()
@@ -342,6 +391,7 @@ class FilesMixin:
         self.settings_panel.set_layers({})
         self.parts_panel.set_parts([])
         self.banner.hide()
+        self.refresh_review()
         self.canvas.show_empty_hint()
         self.tabs.blockSignals(True)
         self.tabs.setCurrentIndex(0)
@@ -373,7 +423,8 @@ class FilesMixin:
         groups = [
             ("down", "Arquivos das solicitações baixadas da intranet", downloaded_files(base), True),
             ("rep", "Relatórios PDF exportados", exported_files(hist, dirs, REPORT_PATTERNS), True),
-            ("cut", "Arquivos de corte exportados (…_todas_placas.dxf)", exported_files(hist, dirs, CUT_PATTERNS),
+            ("cut", "Arquivos de corte exportados (…_placa01.dxf, …_todas_placas.dxf)",
+             exported_files(hist, dirs, CUT_PATTERNS),
              False),
         ]
         if os.path.isfile(log):

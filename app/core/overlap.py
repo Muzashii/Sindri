@@ -73,9 +73,16 @@ def _point(u, off, t):
     return (ux * t - uy * off, uy * t + ux * off)
 
 
-def remove_overlaps(prims: Iterable[Prim], tol: float = TOL) -> tuple[list[Prim], int]:
-    """Devolve (primitivas sem trechos repetidos, quantos trechos/peças foram retirados)."""
+def remove_overlaps(prims: Iterable[Prim], tol: float = TOL,
+                    keep_gaps: Iterable = ()) -> tuple[list[Prim], int]:
+    """Devolve (primitivas sem trechos repetidos, quantos trechos/peças foram retirados).
+    ``keep_gaps``: trechos (p0, p1) de micro-pontes — contam como "já cortados", para a borda da peça
+    encostada (espaço 0) não cortar a ponte da vizinha."""
     lines = _Lines(tol)
+    for a, b in keep_gaps or ():
+        kk = _key_line(a[0], a[1], b[0], b[1])
+        if kk is not None:
+            lines.subtract(kk[0], kk[1], kk[3], kk[4])
     seen_curves: set = set()
     out: list[Prim] = []
     removed = 0

@@ -5,6 +5,7 @@ A thread apenas coordena; o trabalho pesado roda em processos separados
 """
 from __future__ import annotations
 
+import os
 import threading
 import traceback
 
@@ -33,7 +34,9 @@ class NestWorker(QThread):
 
     def run(self):
         try:
-            gn = GeneticNester(self.parts, self.params, locked=self.locked, workers=self.workers)
+            seed = os.environ.get("SINDRI_NEST_SEED")          # só os testes fixam: o mesmo encaixe toda vez
+            gn = GeneticNester(self.parts, self.params, locked=self.locked, workers=self.workers,
+                               seed=int(seed) if seed and seed.isdigit() else None)
             self.ready.emit({"too_big": sorted({pid for pid, _ in gn.too_big}),
                              "instances": len(gn.instances)})
             self.result = gn.run(on_best=self._best, on_progress=self.progress.emit,

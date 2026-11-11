@@ -12,6 +12,7 @@ from ...core.models import NestResult
 from ...core.placement import Decoder
 from ...workers.nest_worker import NestWorker
 from ..dialogs import settings
+from ..tasks import run_task
 
 
 class NestingMixin:
@@ -28,7 +29,23 @@ class NestingMixin:
             return
         self.start_nest()
 
-    def start_nest(self):
+    def nest_params(self):
+        """Parâmetros do painel + chapa/margem/espaçamento/veio de cada material (banco de materiais),
+        retalhos disponíveis e os retalhos das placas que já existem."""
+        p = self.settings_panel.params()
+        p.material_sheets = self.material_sheets()
+        p.remnants = self.available_remnants() if hasattr(self, "available_remnants") else []
+        p.sheet_remnants = [[int(si), rid] for si, rid in sorted(self.sheet_remnants.items()) if rid]
+        return p
+
+    def sheet_specs(self) -> dict:
+        """{placa: SheetSpec} do encaixe atual (tamanho de cada placa, retalho ou chapa inteira)."""
+        from ...core.sheetspec import sheet_specs
+        return sheet_specs(self.nest_params(), self.sheet_index().material, self.sheet_remnants)
+
+    def start_nest(self, more_time: bool = False):
+        """``more_time``: refaz com o dobro do "parar sozinho sem melhora" (mín. 60 s), só nesta vez
+        (ação do aviso de placa pouco usada); o valor do painel não muda."""
         if not self.parts or self.worker is not None:
             return
         if sum(pt.quantity for pt in self.parts) == 0:
@@ -52,13 +69,16 @@ class NestingMixin:
                 keep_cut = True
             elif box.clickedButton() != b_all:
                 return
-        p = self.settings_panel.params()
+        p = self.nest_params()
         try:
             p.validate()
         except ValueError as e:
             QMessageBox.warning(self, "Parâmetros inválidos", str(e))
             return
         self.params = p
+        if more_time and p.stop_after_seconds > 0:
+            p = copy.copy(p)
+            p.stop_after_seconds = max(60.0, 2.0 * float(p.stop_after_seconds))
         self._cut_keys = set()
         if keep_cut:
             # peças das placas cortadas ficam travadas onde estão; essas placas não recebem peças novas
@@ -69,6 +89,10 @@ class NestingMixin:
             p = copy.copy(p)
             p.closed_sheets = sorted(self.cut_sheets)
         locked = [pl for pl in self.placements if pl.locked and pl.instance < self.pmap[pl.part_id].quantity]
+        locked_sheets = {pl.sheet_index for pl in locked}
+        self.sheet_remnants = {si: rid for si, rid in self.sheet_remnants.items() if si in locked_sheets}
+        p.sheet_remnants = [[si, rid] for si, rid in sorted(self.sheet_remnants.items())]
+        p.remnants = self.available_remnants()          # sem os retalhos de placas que vão ser refeitas
         if self.placements:
             self._push_undo()
         self.placements = list(locked)
@@ -89,6 +113,7 @@ class NestingMixin:
         self.tabs.blockSignals(True)
         self.tabs.setCurrentIndex(1)
         self.tabs.blockSignals(False)
+        self._sync_review_visibility()      # a Conferência é da aba "Arquivo original"
         self._redraw()
         self.canvas.set_editable(False)
         self.statusBar().showMessage("Calculando… a melhor solução aparece e vai melhorando. Clique em Parar quando estiver bom.")
@@ -100,6 +125,7 @@ class NestingMixin:
             return
         self.placements = list(res.placements)
         self.unplaced = list(res.unplaced)
+        self.sheet_remnants = {i: rid for i, rid in enumerate(getattr(res, "sheet_remnants", []) or []) if rid}
         keys = getattr(self, "_cut_keys", set())
         if keys:                         # "só o que falta": as placas cortadas continuam marcadas
             self.cut_sheets = {pl.sheet_index for pl in self.placements if (pl.part_id, pl.instance) in keys}
@@ -155,6 +181,7 @@ class NestingMixin:
             msg += " Ctrl+E exporta."
         self.statusBar().showMessage(msg + " Ao cortar, marque as placas e as peças feitas na lista de Peças.",
                                      12000)
+        self._warn_low_use()
 
     def toggle_pause(self):
         if self.worker is None:
@@ -170,11 +197,12 @@ class NestingMixin:
         self.worker.stop()
         self.statusBar().showMessage("Parando… mantendo a melhor solução.", 3000)
         if wait:
-            if not self.worker.wait(30000):
-                # ainda terminando o cálculo: guarda a referência até a thread acabar (senão o Qt aborta)
-                old = self.worker
+            old = self.worker
+            completed = run_task(self, "Parando o encaixe e preservando o melhor resultado", lambda: old.wait(30000))
+            if not completed:
                 self._old_workers = [x for x in getattr(self, "_old_workers", []) if x.isRunning()] + [old]
-            self.on_finished()
+            if self.worker is old:
+                self.on_finished(old)
 
     def unlock_all(self):
         if any(pl.locked for pl in self.placements):
@@ -185,16 +213,68 @@ class NestingMixin:
             self._redraw(keep_view=True)
 
     def _rebuild_checker(self):
-        p = self.settings_panel.params()
+        p = self.nest_params()
         self.checker = CollisionChecker(self.parts, p) if self.parts else None
+        self._fab_changed = self._refresh_fabrication(p)
         self.too_big = set()
         if self.parts:
             dec = Decoder(self.checker.cache.shapes, p, cache=self.checker.cache)
             mo = (False, True) if p.allow_mirror else (False,)
             for pt in self.parts:
-                rots = [0.0] if pt.rotation_locked else p.rotations()
+                rots = [0.0] if pt.rotation_locked else p.rotations(pt.material or "")
                 if not dec.fits_sheet(pt.id, rots, mo):
                     self.too_big.add(pt.id)
+
+    def _refresh_fabrication(self, p=None) -> bool:
+        """Checagens de fabricabilidade por peça e selo de cada solicitação. True se algo mudou."""
+        from ...core.manufacturability import (MaterialLimits, SealStore, check_part, default_seal_path,
+                                               seal_for)
+        from shapely.ops import unary_union
+        p = p or self.nest_params()
+        db = self.material_db()
+        issues = {}
+        for pt in self.parts:
+            q = p.for_material(pt.material or "")
+            m = db.find(pt.material or "")
+            lim = MaterialLimits.from_db(m, (q.sheet_width - 2 * q.margin, q.sheet_height - 2 * q.margin))
+            key = (lim.thickness, lim.kerf, lim.min_part, lim.usable)
+            cache = pt.__dict__.setdefault("_fab", {})
+            if key not in cache:
+                cache.clear()
+                try:
+                    cache[key] = check_part(pt, lim)
+                except Exception:                     # nunca impede de trabalhar
+                    cache[key] = []
+            issues[pt.id] = cache[key]
+        msgs = {pid: [i.message for i in v] for pid, v in issues.items() if v}
+        changed = msgs != getattr(self, "_fab_msgs", None)
+        self._fab_msgs = msgs
+        self.part_issues = issues
+        self.parts_panel.set_issues(msgs)
+        geoms = {}
+        for pid, v in issues.items():
+            gs = [i.geom for i in v if i.kind == "parede_fina" and i.geom is not None]
+            if gs:
+                geoms[pid] = unary_union(gs)
+        self.canvas.issue_geoms = geoms
+        # selo por solicitação (lista da intranet e cartão do lote)
+        by_tag: dict[str, list] = {}
+        for pt in self.parts:
+            if pt.tag:
+                by_tag.setdefault(pt.tag, []).append(pt)
+        if not by_tag and self.request_info and not self.request_info.get("batch"):
+            by_tag[str(self.request_info.get("code", ""))] = list(self.parts)
+        seals = {tag: seal_for([pt.material or "" for pt in pts], [i for pt in pts for i in issues.get(pt.id, [])],
+                               lookup=self._material_forbidden)
+                 for tag, pts in by_tag.items() if tag}
+        self.request_seals = seals
+        self.parts_panel.set_seals(seals)
+        if seals:
+            try:
+                SealStore(default_seal_path()).put_many(seals)
+            except OSError:
+                pass
+        return changed
 
     def _params_debounced(self):
         """Cada passo de um campo numérico espera 150 ms antes de recalcular tudo."""
@@ -205,7 +285,10 @@ class NestingMixin:
         self._params_timer.start(150)
 
     def on_params_changed(self):
-        new = self.settings_panel.params()
+        if getattr(self, "_ui_task_depth", 0):
+            self._params_timer.start(150)
+            return
+        new = self.nest_params()
         try:
             new.validate()
         except ValueError as e:
@@ -216,7 +299,7 @@ class NestingMixin:
         if self.parts and old != new:
             self.mark_changed()
         self._sync_preset_combo()
-        settings().setValue("ui/last_params", json.dumps(new.to_json()))
+        settings().setValue("ui/last_params", json.dumps(self.settings_panel.params().to_json()))
         if self.files and abs(new.curve_tolerance - old.curve_tolerance) > 1e-9 and self.worker is None:
             # a discretização das peças depende da tolerância de curva: reprocessar
             self._import(self.files, keep_quantities=True)
@@ -224,7 +307,7 @@ class NestingMixin:
         if self.parts:
             old_big = set(self.too_big)
             self._rebuild_checker()
-            if self.too_big != old_big:
+            if self.too_big != old_big or getattr(self, "_fab_changed", False):
                 self.parts_panel.set_parts(self.parts, self.too_big)
             if self.placements:
                 self._redraw(keep_view=(old.sheet_width == new.sheet_width and old.sheet_height == new.sheet_height))

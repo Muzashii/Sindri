@@ -80,9 +80,10 @@ def _label_point(poly):
 
 def render_sheet(painter: QPainter, target: QRectF, parts: dict[str, Part], placements: list[Placement],
                  params: NestParams, sheet: int, owners: dict[str, Owner] | None = None,
-                 label_mode: str = "tag"):
-    """Desenha a placa. Peças pintadas com a cor da solicitação e o nº escrito em cima."""
-    w, h = params.sheet_width, params.sheet_height
+                 label_mode: str = "tag", spec=None):
+    """Desenha a placa (do tamanho dela, ou o contorno do retalho). Peças pintadas com a cor da
+    solicitação e o nº escrito em cima."""
+    w, h = (spec.width, spec.height) if spec is not None else (params.sheet_width, params.sheet_height)
     placements = [pl for pl in placements if pl.sheet_index == sheet]
     s = min(target.width() / w, target.height() / h)
     ox = target.left() + (target.width() - w * s) / 2
@@ -91,9 +92,22 @@ def render_sheet(painter: QPainter, target: QRectF, parts: dict[str, Part], plac
     painter.save()
     painter.translate(ox, oy)
     painter.scale(s, -s)
-    painter.fillRect(QRectF(0, 0, w, h), QColor("#f4f5f7"))
-    painter.setPen(QPen(QColor("#555"), 0))
-    painter.drawRect(QRectF(0, 0, w, h))
+    if spec is not None and spec.is_remnant:
+        from PySide6.QtGui import QPainterPath
+        path = QPainterPath()
+        for ring in [spec.outline, *spec.holes]:
+            path.moveTo(*ring[0])
+            for x, y in ring[1:]:
+                path.lineTo(x, y)
+            path.closeSubpath()
+        path.setFillRule(Qt.OddEvenFill)
+        painter.fillPath(path, QColor("#f4f5f7"))
+        painter.setPen(QPen(QColor("#555"), 0, Qt.DashDotLine))
+        painter.drawPath(path)
+    else:
+        painter.fillRect(QRectF(0, 0, w, h), QColor("#f4f5f7"))
+        painter.setPen(QPen(QColor("#555"), 0))
+        painter.drawRect(QRectF(0, 0, w, h))
     for pl in pls:
         part = parts[pl.part_id]
         g = part_graphics(part, pl.mirrored)
@@ -138,10 +152,11 @@ def render_sheet(painter: QPainter, target: QRectF, parts: dict[str, Part], plac
 
 
 def sheet_stats(parts: dict[str, Part], placements: list[Placement], params: NestParams, sheet: int,
-                index=None):
+                index=None, spec=None):
     from ..core.sheets import SheetIndex
     idx = index or SheetIndex(parts, placements)
-    return idx.count(sheet), idx.net_area(sheet) / (params.sheet_width * params.sheet_height)
+    area = spec.area if spec is not None else params.sheet_width * params.sheet_height
+    return idx.count(sheet), idx.net_area(sheet) / area if area else 0.0
 
 
 def sheet_titles(parts, placements, index=None) -> list[tuple[int, int, str, str]]:
@@ -282,13 +297,21 @@ def _add_clickable_boxes(path: str, boxes: list[tuple[int, QRectF, str]], paint_
 
 
 def export_pdf(path: str, title: str, parts: dict[str, Part], result: NestResult, params: NestParams,
-               header: list[str] | None = None, requests: list[dict] | None = None) -> str:
+               header: list[str] | None = None, requests: list[dict] | None = None,
+               sheet_remnants: dict | None = None, sheet_info: dict | None = None,
+               costs: list[dict] | None = None) -> str:
+    """``sheet_info``: {placa: {"time", "size", "thickness", "layers": [LayerCheck]}} — tempo estimado, chapa
+    e camadas (cor → operação → modo, velocidade, potência, passadas) de cada placa.
+    ``costs``: linhas de uso por solicitação (chapa e minutos rateados)."""
+    sheet_info = sheet_info or {}
     pls = result.placements
     owners = owners_for(parts, pls, requests)
     batch = any(k for k in owners)
     label_mode = "tag" if len([k for k in owners if k]) > 1 else "num"
     from ..core.sheets import SheetIndex
+    from ..core.sheetspec import sheet_specs
     idx = SheetIndex(parts, pls)
+    specs = sheet_specs(params, idx.material, sheet_remnants)
     titles = sheet_titles(parts, pls, idx)
     by_tag: dict[str, list] = {}
     for pl in pls:
@@ -304,7 +327,9 @@ def export_pdf(path: str, title: str, parts: dict[str, Part], result: NestResult
     d.font(10)
     info = [*(header or []),
             f"{_dt.datetime.now():%d/%m/%Y %H:%M}  ·  placa {params.sheet_width:g} × {params.sheet_height:g} mm  ·  "
-            f"margem {params.margin:g} mm  ·  espaço entre peças {params.spacing:g} mm",
+            f"margem {params.margin:g} mm  ·  espaço entre peças {params.spacing:g} mm"
+            + ("  ·  alguns materiais têm chapa/espaço próprios (veja cada placa)"
+               if getattr(params, "material_sheets", None) or any(sp.is_remnant for sp in specs.values()) else ""),
             f"{len(titles)} placa(s)  ·  {len(pls)} peça(s)  ·  aproveitamento médio {100 * result.utilization:.1f}%"
             + (f"  ·  ATENÇÃO: {len(result.unplaced)} peça(s) sem lugar" if result.unplaced else "")]
     d.y = 58
@@ -328,11 +353,11 @@ def export_pdf(path: str, title: str, parts: dict[str, Part], result: NestResult
 
     # checklist das placas
     cols = [("Cortada", 110), ("Placa", 330), ("Material", 220), ("Peças", 110), ("Aproveit.", 130),
-            ("Solicitações nesta placa", d.W - 900)]
+            ("Tempo", 150), ("Solicitações nesta placa", d.W - 1050)]
     table_head("Checklist de corte — marque cada placa ao terminar", cols)
     for si, n, stitle, mat in titles:
         d.need(row, lambda: table_head("Checklist de corte (continuação)", cols))
-        cnt, util = sheet_stats(parts, pls, params, si, idx)
+        cnt, util = sheet_stats(parts, pls, params, si, idx, specs.get(si))
         d.font(10)
         d.checkbox(40, d.y + (row - cb) / 2, cb, f"placa{n}")
         d.font(10, True)
@@ -341,7 +366,8 @@ def export_pdf(path: str, title: str, parts: dict[str, Part], result: NestResult
         d.text(448, d.y, 212, row, mat or "—")
         d.text(668, d.y, 102, row, str(cnt))
         d.text(778, d.y, 122, row, f"{100 * util:.0f}%")
-        x = 908.0
+        d.text(908, d.y, 142, row, (sheet_info.get(si) or {}).get("time_short", "—"))
+        x = 1058.0
         keys = idx.tags_of_sheet.get(si, [])
         d.font(9, True)
         for k in sorted(keys):
@@ -385,20 +411,46 @@ def export_pdf(path: str, title: str, parts: dict[str, Part], result: NestResult
             p.drawLine(QPointF(0, d.y + row), QPointF(d.W, d.y + row))
             d.y += row
 
+    # uso por solicitação (chapa e tempo de máquina rateados pela área ocupada)
+    if costs:
+        cols3 = [("Solicitação", 220), ("Aluno", 520), ("Material", 260), ("Placas", 200), ("Chapa (dm²)", 220),
+                 ("Máquina (min)", d.W - 1420)]
+        table_head("Uso de material e máquina por solicitação (rateio pela área das peças)", cols3)
+        for c in costs:
+            d.need(row, lambda: table_head("Uso por solicitação (continuação)", cols3))
+            d.font(10)
+            vals = [c.get("solicitacao") or "—", c.get("aluno") or "—", c.get("material") or "—",
+                    c.get("placas", ""), c.get("area_chapa_dm2", ""), c.get("minutos", "")]
+            x = 0.0
+            for (name, wdt), v in zip(cols3, vals):
+                d.text(x + 8, d.y, wdt - 8, row, str(v))
+                x += wdt
+            p.setPen(QPen(QColor("#e3e6ea"), 1))
+            p.drawLine(QPointF(0, d.y + row), QPointF(d.W, d.y + row))
+            d.y += row
+
     # ------------------------------------------------------------ uma página por placa
     legend_w = 420.0
     for si, n, stitle, mat in titles:
         d.new_page()
-        cnt, util = sheet_stats(parts, pls, params, si, idx)
+        cnt, util = sheet_stats(parts, pls, params, si, idx, specs.get(si))
         d.font(16, True)
         d.text(0, 0, d.W - 260, 48, f"{stitle}")
         d.font(10)
-        d.text(0, 46, d.W - 260, 30, f"{cnt} peças · aproveitamento {100 * util:.1f}%", "#555")
+        info_s = sheet_info.get(si) or {}
+        sub_bits = [f"{cnt} peças · aproveitamento {100 * util:.1f}%"]
+        if info_s.get("thickness"):
+            sub_bits.append(f"espessura {info_s['thickness']:g} mm")
+        if info_s.get("size"):
+            sub_bits.append(info_s["size"])
+        if info_s.get("time"):
+            sub_bits.append(f"tempo estimado {info_s['time']}")
+        d.text(0, 46, d.W - 260, 30, "  ·  ".join(sub_bits), "#555")
         d.checkbox(d.W - 250, 10, 34, f"cortada_placa{n}")
         d.font(12, True)
         d.text(d.W - 206, 4, 206, 48, "Placa cortada")
         area = QRectF(0, 90, d.W - legend_w - 20, d.H - 90)
-        render_sheet(p, area, parts, pls, params, si, owners, label_mode)
+        render_sheet(p, area, parts, pls, params, si, owners, label_mode, specs.get(si))
         # legenda
         lx = d.W - legend_w
         ly = 96.0
@@ -432,6 +484,30 @@ def export_pdf(path: str, title: str, parts: dict[str, Part], result: NestResult
                     d.text(lx + 40, ly, legend_w - 40, 28, f"{part_number(pt)} → {c}× ({w_:.0f}×{h_:.0f} mm)", "#444")
                     ly += 28
             ly += 14
+        layers = info_s.get("layers") or []
+        if layers and ly < d.H - 220:
+            from ..core.laser import color_name
+            d.font(11, True)
+            d.text(lx, ly, legend_w, 34, "Camadas no RDWorks")
+            ly += 36
+            for c in layers:
+                if ly > d.H - 170:
+                    break
+                d.font(9, True)
+                d.text(lx, ly, legend_w, 26, f"{color_name(c.aci)} · {c.what}")
+                ly += 24
+                d.font(9)
+                d.text(lx + 14, ly, legend_w - 14, 24, c.mode_text, "#444")
+                ly += 22
+                d.text(lx + 14, ly, legend_w - 14, 24, f"{c.values} · saída {'SIM' if c.output else 'NÃO'}", "#444")
+                ly += 28
+        # registro do que foi usado na máquina
+        d.font(10)
+        p.setPen(QPen(QColor("#999"), 1))
+        fy = d.H - 110
+        d.text(lx, fy, legend_w, 30, "Cortado por:", "#444")
+        p.drawLine(QPointF(lx + 120, fy + 26), QPointF(d.W, fy + 26))
+        d.text(lx, fy + 46, legend_w, 30, "Data:      /      /", "#444")
 
     # ------------------------------------------------------------ lista de peças por solicitação
     def parts_head(cont: bool = False):

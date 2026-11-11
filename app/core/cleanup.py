@@ -5,8 +5,10 @@ import fnmatch
 import os
 from typing import Iterable
 
+from .fileutil import log_exception
+
 REPORT_PATTERNS = ("*_relatorio.pdf",)
-CUT_PATTERNS = ("*_todas_placas.dxf",)
+CUT_PATTERNS = ("*_todas_placas.dxf", "*_placa[0-9][0-9]*.dxf")
 
 
 def downloaded_files(base: str) -> list[str]:
@@ -59,4 +61,4 @@ def remove_empty_dirs(base: str):
             try:
                 os.rmdir(root)
             except OSError:
-                pass
+                log_exception("limpeza: apagar pasta vazia de solicitação")

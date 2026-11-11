@@ -61,6 +61,8 @@ class Part:
     is_open: bool = False              # peça formada por contorno(s) aberto(s)
     material: str = ""                 # ex.: "MDF 3mm" — peças de materiais diferentes nunca dividem placa
     tag: str = ""                      # nº da solicitação (lote com várias): identifica de quem é a peça
+    tabs: int = 0                      # micro-pontes no contorno externo, feitas na exportação (0 = sem)
+    kerf_comp: bool = False            # compensar o kerf na exportação (peça de encaixe): corte ± kerf/2
 
     @property
     def identity(self) -> str:
@@ -125,6 +127,15 @@ class NestResult:
     generation: int = 0
     evaluated: int = 0
     sheet_materials: list[str] = field(default_factory=list)
+    sheet_remnants: list[str] = field(default_factory=list)   # id do retalho de cada placa ("" = chapa)
+    # retângulo ocupado em cada placa: [x0, y0, x1, y1] em mm, com a folga do encaixe (None = vazia).
+    # Vale para o resultado do encaixe automático; depois de ajuste manual use placement.occupied_bbox.
+    sheet_bbox: list = field(default_factory=list)
+
+    @property
+    def sheet_bbox_area(self) -> list[float]:
+        """Área (mm²) do retângulo ocupado em cada placa (0 = sem dado)."""
+        return [max(0.0, (b[2] - b[0]) * (b[3] - b[1])) if b else 0.0 for b in self.sheet_bbox]
 
     def to_json(self) -> dict:
         return {
@@ -134,6 +145,8 @@ class NestResult:
             "fitness": self.fitness,
             "unplaced": [list(u) for u in self.unplaced],
             "sheet_materials": list(self.sheet_materials),
+            "sheet_remnants": list(self.sheet_remnants),
+            "sheet_bbox": [list(b) if b else None for b in self.sheet_bbox],
         }
 
     @staticmethod
@@ -145,6 +158,9 @@ class NestResult:
             fitness=d["fitness"],
             unplaced=[tuple(u) for u in d.get("unplaced", [])],
             sheet_materials=list(d.get("sheet_materials", [])),
+            sheet_remnants=[str(x) for x in d.get("sheet_remnants", [])],
+            sheet_bbox=[[float(v) for v in b] if isinstance(b, (list, tuple)) and len(b) == 4 else None
+                        for b in d.get("sheet_bbox", []) or []],
         )
 
 
@@ -171,14 +187,41 @@ class NestParams:
     ignore_text: bool = True          # textos costumam ser nomes/anotações, não gravação
     excluded_layers: list = field(default_factory=list)   # camadas que não entram no encaixe
     closed_sheets: list = field(default_factory=list)     # placas já cortadas: não recebem peças novas
+    # chapa por material (do banco de materiais): {material: {"sheet_width", "sheet_height", "margin",
+    # "spacing", "grain"}} — só as chaves informadas substituem os valores acima
+    material_sheets: dict = field(default_factory=dict)
+    # retalhos que podem ser usados ANTES de abrir chapa nova: [{"id", "material", "outline", "holes"}]
+    remnants: list = field(default_factory=list)
+    # placas que já existem e são retalhos (encaixar "só o que falta"): [[índice da placa, id do retalho]]
+    sheet_remnants: list = field(default_factory=list)
+    tab_width: float = 0.4            # largura (mm) das micro-pontes das peças com "Pontes" ligado
 
     def import_kwargs(self) -> dict:
         return {"units_override": self.units_override if self.units_override >= 0 else None,
                 "ignore_text": self.ignore_text, "excluded_layers": set(self.excluded_layers)}
 
-    def rotations(self) -> list[float]:
+    def rotations(self, material: Optional[str] = None) -> list[float]:
+        """Rotações permitidas. Material com veio (``grain``): só 0° e 180°."""
         steps = 24 if self.free_rotation else max(1, int(self.rotation_steps))
-        return [round(360.0 * i / steps, 6) for i in range(steps)]
+        rots = [round(360.0 * i / steps, 6) for i in range(steps)]
+        if material is not None and (self.material_sheets.get(material) or {}).get("grain"):
+            rots = [r for r in rots if r in (0.0, 180.0)] or [0.0]
+        return rots
+
+    MATERIAL_KEYS = ("sheet_width", "sheet_height", "margin", "spacing")
+
+    def for_material(self, material: Optional[str]) -> "NestParams":
+        """Cópia com a chapa/margem/espaçamento daquele material (banco de materiais), se houver."""
+        o = self.material_sheets.get(material or "") if material is not None else None
+        if not o:
+            return self
+        import copy
+        p = copy.copy(self)
+        for k in self.MATERIAL_KEYS:
+            v = o.get(k)
+            if isinstance(v, (int, float)) and math.isfinite(v) and (v > 0 or (k == "margin" and v >= 0)):
+                setattr(p, k, float(v))
+        return p
 
     def to_json(self) -> dict:
         return asdict(self)
@@ -194,7 +237,7 @@ class NestParams:
         return p
 
     def validate(self) -> None:
-        for name in ("sheet_width", "sheet_height", "curve_tolerance", "join_tolerance"):
+        for name in ("sheet_width", "sheet_height", "curve_tolerance", "join_tolerance", "tab_width"):
             value = getattr(self, name)
             if not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
                 raise ValueError(f"{name}: informe um número positivo e finito.")
@@ -210,6 +253,12 @@ class NestParams:
                 raise ValueError(f"{name}: informe um inteiro positivo.")
         if self.mutation_rate > 1:
             raise ValueError("mutation_rate deve estar entre 0 e 1.")
+        if not isinstance(self.material_sheets, dict) or not isinstance(self.remnants, list):
+            raise ValueError("material_sheets/remnants inválidos.")
+        for m in self.material_sheets:
+            q = self.for_material(m)
+            if 2 * q.margin >= min(q.sheet_width, q.sheet_height):
+                raise ValueError(f"{m}: a margem deixa a chapa sem área útil.")
 
 
 @dataclass
@@ -221,3 +270,4 @@ class ImportReport:
     files: list[str]
     unit_notes: dict[str, str] = field(default_factory=dict)
     extra: dict[str, Any] = field(default_factory=dict)
+    issues: list = field(default_factory=list)   # ImportIssue: avisos com arquivo, local e gravidade

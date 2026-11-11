@@ -166,3 +166,227 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
     DISCO (Ø do pivô, automático 4 × espessura) tem furo retangular para a LINGUETA da parede da caixa e não
     gira. A parede da caixa do lado da dobradiça termina logo acima da lingueta; a lateral da caixa ganha o
     recorte da diagonal e do nó com folga (e sem ponta fina perto da borda). Simulação: 0–100° sem colisão.
+
+## Relatório de bancada (out/2026) — da exportação à máquina
+54. **Operação por primitiva** (`core/operations.py`): cada primitiva vira `corte_externo`, `corte_interno`,
+    `vinco`, `gravacao_vetorial` ou `gravacao_raster`. O contorno externo é sempre corte; as outras primitivas
+    seguem a operação escolhida para a cor delas (por material). Padrão: as cores que aparecem no contorno
+    externo são corte, as outras são gravação vetorial (arquivo todo preto continua todo corte). Corrige o
+    "uma cor por material", que mandava a gravação azul para a cor de corte (um círculo de gravação virava furo).
+55. No modo por material só o corte vai para a cor do material; vinco e gravação ganham, cada um, uma cor
+    própria por material, nunca a de corte de nenhum material nem a dos números (preferências: vinco azul,
+    gravação verde, raster amarelo). Esgotadas as 5 cores exatas, usa ACIs que caem cada uma numa camada
+    diferente da paleta do RDWorks. Dentro da peça a ordem é gravação → vinco → furos → contorno.
+56. Arquivo com mais de uma cor num material: aviso na importação ("azul → gravação vetorial") e diálogo de
+    confirmação na 1ª exportação. As escolhas e as cores já conferidas vão no projeto (`extra`).
+57. **Material proibido** (`core/material_safety.py`): PVC, vinil, policarbonato (Lexan/Makrolon), ABS, fibra de
+    vidro/FR4/G10 e couro sintético bloqueiam a exportação com o motivo; acrílico sem "cast"/"extrudado" gera
+    atenção. O filtro é pelo nome (texto livre da intranet, sem acento/maiúscula); o banco de materiais pode
+    marcar outros como proibidos.
+58. **Um DXF de corte por placa** (`export_cut_files`): `nome_placaNN_material.dxf`, origem (0,0) no canto da
+    chapa e **sem** contorno da placa (não existe camada cinza para esquecer de desligar). O arquivo com todas as
+    placas lado a lado continua saindo como *conferência* (com contorno/nº das placas, se marcado). `Ctrl+E` abre
+    no RDWorks só a 1ª placa ainda não cortada; o botão ▶ de cada placa no checklist abre a dela. Cada arquivo
+    exportado guarda uma impressão digital (peças, posições, cores, números): se a placa mudou, o ▶ exporta de novo.
+59. **Origem/home**: a posição das peças nunca muda; a opção "começar o corte pelo canto superior direito" só
+    move o ponto de partida do caminho do vizinho mais próximo (perto do home comum da Ruida).
+60. **Aviso camada a camada**: cor, operação, modo, velocidade/potência (mín–máx e passadas quando houver) e
+    saída, na ordem de trabalho (números e gravação antes do corte). Linhas que caem na mesma camada do RDWorks
+    são juntadas.
+61. **Potência mín./máx.**: gravamos (velocidade, mínima, máxima). Sem mínima informada, ela é 65% da máxima no
+    modo corte (a Ruida usa a mínima nos cantos e acelerações; mín. = máx. queima o canto em MDF e derrete em
+    acrílico) e igual à máxima no scan. É ponto de partida, a validar na grade de teste de cada material.
+62. **Máquina de 1 tubo (padrão do laboratório)**: o Sindri só escreve velocidade + tubo 1 (3 doubles do
+    registro); o tubo 2 fica como estava. A opção "Máquina com 2 tubos" volta a gravar os dois.
+63. **Leitura de volta**: depois de gravar o `config`, o Sindri relê o arquivo, reencontra as tabelas e confere
+    cada camada pedida. Se algo não bater, o `config` volta a ser o de antes (a cópia `config.antes_sindri`
+    continua existindo) e o aviso diz o motivo. O aviso final mostra "Aplicado no RDWorks (RDWorks x.y, config
+    8.0.01): preto = 20 mm/s 13–20%…"; a versão do executável (Windows) e a do cabeçalho do `config` ajudam a
+    saber em que versão a tabela foi reconhecida. O ajudante como administrador grava o resultado ao lado do
+    pedido (`.ok`/`.erro`) e a janela acompanha por ~30 s.
+64. **Modo, passadas, intervalo do scan, bidirecional e sopro** ficam nos parâmetros de cada camada (⋯ no painel
+    do laser) e aparecem na conferência camada a camada e no relatório, mas **não** são gravados no `config`:
+    não sabemos ainda em que bytes o RDWorks guarda esses campos. `tools/config_diff.py` compara dois `config`
+    (antes/depois de mudar um campo no RDWorks) e diz a tabela, a camada e o byte do registro que mudou.
+65. **Banco de materiais** (`core/material_db.py`): `materiais.json` versionado (`format`/`version`), em
+    `Documentos/Sindri` ou numa pasta compartilhada escolhida no diálogo (todos os PCs passam a usar o mesmo).
+    Por material: espessura, chapa padrão, margem, espaçamento, kerf, peça mínima, veio, tipo de acrílico,
+    data do teste e quem validou, proibido + motivo e os parâmetros de cada camada (corte, vinco, gravação
+    vetorial, raster). Substitui os valores que ficavam só no QSettings do PC (migrados na criação do banco).
+    Nomes são comparados sem caixa/acento/espaço ("mdf 3 mm" = "MDF 3mm").
+66. **Gravação concorrente**: cada gravação relê o arquivo e junta os materiais que outro PC criou nesse meio
+    tempo (para o mesmo material, vale o último a salvar); troca atômica. Arquivo estragado ou de versão mais
+    nova nunca é sobrescrito: o Sindri usa os pontos de partida só na memória e avisa. No painel do laser, a
+    digitação muda o material na memória na hora e grava no arquivo 0,7 s depois (e ao fechar).
+67. **Chapa por material**: 0/"do painel" em chapa, margem e espaçamento = usar o painel, para o banco nunca
+    mudar o encaixe de surpresa; o painel mostra quais materiais usam valores do banco. O encaixe guarda isso em
+    `NestParams.material_sheets`; cada placa nasce do tamanho do material dela e cada peça recebe a folga do
+    espaçamento do SEU material (peças de materiais diferentes nunca dividem placa, então cada par de vizinhas
+    tem o mesmo espaçamento). Validação, colisão, canvas, DXF e PDF usam o formato de cada placa
+    (`core/sheetspec.py`). Material com veio: só 0° e 180° (encaixe e tecla R).
+68. Os pontos de partida do banco (MDF 3/6 mm, acrílico cast 3 mm, compensado 3 mm) **não trazem velocidade nem
+    potência**: cada laboratório preenche depois da grade de teste. Teste com mais de 90 dias (ou sem teste)
+    aparece com ⚠ no painel do laser.
+69. **Fabricabilidade** (`core/manufacturability.py`, só avisos): parede mais fina que 1,5 × espessura (abertura
+    morfológica com quinas vivas — canto vivo não conta como fino; os trechos são pintados de laranja), furo
+    menor que 2 × kerf, peça com as duas medidas menores que a peça mínima do material (sugere micro-pontes),
+    peça maior que a área útil, rasgo retangular com largura = espessura nominal (sem compensar o kerf) e
+    texto que não virou curva. Sem cadastro: espessura 3 mm, kerf 0,15 mm, peça mínima 10 mm.
+70. **Selo por solicitação** (OK / atenção / bloqueado): material (bloqueia) + avisos de fabricabilidade e
+    arquivos que não são DXF (atenção). Aparece no cartão do lote e é guardado em `selos.json`, para a lista da
+    intranet mostrar o selo de solicitações já abertas antes; no detalhe da solicitação o selo do material e dos
+    arquivos aparece na hora, antes de juntar no lote.
+71. **Retalhos** (`core/remnants.py`): `retalhos.json` na mesma pasta do banco de materiais (compartilhado junto).
+    Um retalho é um contorno com buracos (retângulo, maior contorno fechado de um DXF — com a mesma correção de
+    unidade da importação — ou a sobra de uma placa cortada), com a caixa começando em (0, 0).
+72. **Retalho no encaixe**: o decodificador trata o retalho como uma placa do tamanho da caixa dele em que tudo
+    que está fora do material (e os buracos) vira **obstáculo fixo**: a região válida passa a ser
+    IFP(caixa) − ∪NFP(peças) − ∪NFP(obstáculos), reaproveitando o mesmo NFP com cache. A margem do material é
+    aplicada ao contorno do retalho. Ao precisar de placa nova, o encaixe tenta os retalhos do material (do maior
+    para o menor) e abre chapa inteira só se a peça não couber em nenhum; um retalho em que a peça não coube
+    continua livre para peças menores. Retalho usado não conta como "placa extra" na nota da solução.
+73. Cada placa guarda o retalho que usou (`sheet_remnants`, no resultado e no projeto) para desenhar, validar,
+    exportar (contorno do retalho na conferência) e "encaixar só o que falta". Marcar como cortada uma placa
+    que era retalho tira o retalho da lista (desmarcar devolve).
+74. **Guardar a sobra**: placa cortada → aviso com link; a sobra é a placa menos as peças com o espaçamento,
+    só os pedaços com ≥ 50 × 50 mm² de área e ≥ 30 mm de largura (tiras estreitas não servem).
+75. **Tempo de máquina** (`core/machine_time.py`): por placa, vetor = comprimento ÷ velocidade × passadas +
+    nº de contornos × 0,3 s; scan = (altura ÷ intervalo) × (largura ÷ velocidade + 0,05 s) × passadas; mais o
+    deslocamento entre peças a 300 mm/s. Camada sem velocidade no banco usa um valor padrão e o texto avisa.
+    As duas constantes ficam nas opções de exportação para calibrar com o tempo que o RDWorks mostra.
+76. **Uso por solicitação**: chapa e minutos de cada placa são rateados pela área líquida das peças de cada
+    solicitação (× material). A sobra guardada como retalho entra como "não-perda" (`retalho_salvo_cm2`).
+    O CSV do mês (`relatorios/AAAA-MM.csv`, ao lado do banco de materiais; `;` e vírgula decimal para o Excel
+    em português) é atualizado a cada exportação completa e ao guardar uma sobra; a mesma combinação
+    lote + solicitação + material é substituída (exportar de novo não duplica).
+77. **Relatório PDF**: coluna de tempo no checklist, tabela de uso por solicitação e, em cada placa, espessura,
+    chapa/retalho, tempo estimado, camadas (cor → operação → modo, velocidade, potência mín.–máx., passadas,
+    saída) e os campos "Cortado por" e "Data".
+78. **Ordem física** (opção de exportação): "pequenas primeiro, longe da exaustão" corta por faixa de tamanho
+    (log₂ da área), das peças de baixo (longe da exaustão, que fica no fundo da máquina) para cima, terminando
+    nas grandes; peças dentro de furos continuam antes da hospedeira.
+79. **Foto**: o modo imagem (BMP; o RDWorks faz o scan) é o recomendado e o intervalo padrão passou a 0,1 mm
+    (CO₂ em madeira: 0,08–0,1 mm como ponto de partida). O modo linhas ficou como experimental: vira vetor no
+    RDWorks (acelera e freia em cada traço), é bem mais lento e marca o início/fim de cada traço.
+80. **Campos numéricos** (`app/ui/style.py`): estilo base `SindriStyle` (Fusion + ajuste em `polish`) porque o
+    `padding` do stylesheet não chega ao editor interno do QSpinBox (o texto ficava colado na borda). Cada
+    campo numérico recebe a margem dos outros campos, locale pt-BR (vírgula decimal, como no resto da tela)
+    e o ponto digitado vira vírgula (teclado US/numérico), em vez de ser lido como separador de milhar.
+81. **Tema escuro legível**: links de avisos usam `accent_text` pela paleta (`QPalette.Link`), não o #0000ff do
+    Qt. Linhas do desenho com luminância < 0,15 (preto, azul puro da gravação) ganham luminosidade mantendo o
+    matiz, só na tela (`theme.line_color`); o DXF exportado continua com as cores originais.
+82. **Barra superior e status por modo**: abrir DXF, intranet e salvar projeto aparecem só no Encaixe; a placa
+    aparece no Encaixe e na Foto (a Caixa tem material próprio). Trocar de aba limpa a mensagem da barra de
+    status e mostra a dica do modo. A Foto ganhou estado vazio no padrão do Encaixe ("Escolher imagem…" é a
+    ação principal; o botão do painel fica secundário e vira "Trocar imagem…").
+83. **Um padrão por tipo de botão**: ações secundárias dentro de cartões (`ghost`) são texto azul alinhado à
+    esquerda, com fundo ao passar o mouse (antes pareciam texto solto). Os mostradores de painel Peças/Parâmetros
+    (`PanelToggle`) marcam o estado pelo preenchimento, sem a borda azul de foco. Segmentados da Caixa usam o
+    desenho das abas do topo (trilho cinza, opção escolhida clara) e o foco continua com borda própria.
+84. **Nada cortado em 1024 px**: na lista de peças a medida aparece em mm inteiros a partir de 10 mm (décimos
+    na dica); quando a linha é estreita, "Feito" vira só o ✓ (mesmo limite para todas as linhas). O canvas volta a enquadrar
+    tudo quando a janela muda de tamanho, até o usuário dar zoom ou arrastar a vista (os rótulos das placas
+    não ficam mais cortados). Na Foto, "Exportar como" tem textos curtos; recomendado/experimental na dica.
+85. **A 1ª solução não é cortada pelo tempo**: o limite de tempo e a parada automática valem só para a
+    otimização. Antes, com pouco tempo (ou muitas peças/rotações), a 1ª solução parava no meio e peças que
+    cabiam apareciam como "não couberam" (a linha de comando nem exportava). Só o "Parar" do usuário a interrompe.
+86. **Conferência da importação no lugar da janela de avisos**: os avisos viram dados (`core/import_issues.py`:
+    arquivo, tipo, gravidade, local em mm e, para contornos abertos, as aberturas entre pontas próximas) e
+    aparecem num painel ao lado do "Arquivo original", agrupados por solicitação e arquivo. O que o Sindri já
+    resolveu (linhas repetidas, contornos em dobro, POINT) fica escondido por padrão; o que pede atenção leva
+    ao local exato no desenho (F8 = próximo). Cada arquivo aparece num quadro com nome e solicitação, em grade.
+    **Fechar abertura** liga as duas pontas com um trecho reto na mesma cor/camada, só naquela abertura — não
+    aumenta a tolerância de junção do arquivo inteiro, que poderia juntar detalhes que deviam ficar separados.
+    Os trechos ficam guardados por arquivo, na unidade do desenho (continuam certos se a unidade mudar), no
+    projeto `.sindri`, e podem ser desfeitos. "Está certo" marca uma linha aberta proposital; "Copiar recado"
+    gera o texto para o aluno corrigir o arquivo. Busca de pares até 5 mm; o lote padrão fecha até 0,5 mm.
+87. **Nova placa ligada a cada sessão**: "Abrir nova placa se não couber" desmarcado ficava salvo nas preferências e o encaixe passava a usar só 1 placa em toda abertura, com peças "sem lugar". Agora cada sessão começa com a opção ligada (projetos `.sindri` mantêm o que foi salvo) e, se ela estiver desligada e sobrar peça, o aviso de status diz para ligá-la.
+88. **Furo detalhado não trava o encaixe**: o part-in-part calcula, para cada rotação da peça com furo e cada
+    peça candidata, a soma de Minkowski furo × peça (vértices × vértices). Um anel de 450 mm com o furo desenhado
+    em ~1.800 segmentos (kit de 8 peças numa placa 1400×900) levava ~17 s só na 1ª solução e o genético ficava
+    parado em "1 soluções" (2 rodadas em 2 min). Furos com mais de 100 vértices agora são simplificados como o
+    contorno externo (tolerância crescente até 0,4–1 mm, conforme o tamanho) e encolhidos por essa mesma
+    tolerância, recortados pelo furo exato: o furo usado no encaixe só perde área (no máx. ~0,4 mm na borda),
+    nunca passa do real. Furos pequenos continuam exatos. Os IFPs de furo já calculados vão para os processos
+    do genético junto com o resto do cache. Resultado no kit: 1ª solução em ~0,2 s e ~35 rodadas/s.
+89. **Conferência só quando há pendência; atalhos sem repetição**: o painel de Conferência começa fechado e
+    abre sozinho apenas se a importação deixar algo para conferir; ao encaixar, ele some (é da aba "Arquivo
+    original" — antes ficava por cima do encaixe, porque a troca de aba era feita com os sinais bloqueados).
+    "Abrir projeto…" passou para `Ctrl+Alt+O`: `Ctrl+Shift+P` estava em duas ações e o Qt não disparava
+    nenhuma. Um teste falha se algum atalho se repetir.
+90. **Importar .ai e .rd pelo mesmo fluxo do DXF** (`core/ai_import.py`, `core/rd_import.py`, despacho único em
+    `dxf_import.read_drawing`): o .ai moderno é um PDF — os caminhos são lidos dos operadores de desenho, com a
+    matriz de transformação, em pontos convertidos para mm; cada Bézier vira uma SPLINE cúbica exata (nada é
+    discretizado); caminho de recorte não é desenho; forma só com preenchimento usa o contorno e avisa; texto
+    não convertido em contornos e imagens são ignorados com aviso. O .ai antigo (PostScript, Illustrator ≤ 8)
+    é lido pelo subconjunto de operadores de caminho. .ai salvo sem conteúdo PDF devolve instrução clara.
+    O .rd (arquivo de máquina Ruida) é só leitura: desembaralha os bytes (chave 0x88, 0x11 ou procurada),
+    lê mover/cortar absolutos e relativos, camada, cor, velocidade e potência; curvas chegam como segmentos
+    (aviso para preferir o DXF/AI de origem) e velocidade/potência do arquivo são só informadas, nunca
+    aplicadas. O Sindri **não gera** .rd. O .rld (projeto do RDWorks) não é lido: a mensagem explica o que
+    salvar. **A validar no laboratório** com um .rd salvo pelo RDWorks da máquina e um .ai real de aluno.
+91. **Encaixar ao abrir arquivos** (`files/auto_nest`, ligado; menu Encaixe): abrir pelo diálogo ou soltar na
+    janela já começa o encaixe, como a intranet faz — exceto se houver algo pendente na Conferência, peça
+    grande demais ou placa já cortada.
+92. **RDWorks sem fechar quando nada muda** (`laser.already_applied`): antes de pedir para fechar o RDWorks, o
+    Sindri lê o `config`; se velocidade/potência das camadas já são as da placa (mesmo material da anterior),
+    só abre o arquivo. Config ilegível conta como "não aplicado". **A validar**: o RDWorks aceitar abrir outro
+    arquivo já estando aberto.
+93. **`C` com ciclo completo, opcional** (`bancada/abrir_proxima`, desligado): ao marcar a placa como cortada,
+    abre a próxima não cortada no RDWorks.
+94. **Tempo real × estimado**: o relógio começa quando a placa é aberta no RDWorks pelo Sindri e para ao
+    marcá-la como cortada; a medida vai para `tempos_reais.json` na pasta de gestão. Medida < 20 s ou > 4 h é
+    descartada; desmarcar a placa tira a medida. Com 3 medidas ou mais, a estimativa é multiplicada pela
+    mediana de real ÷ estimado (limitada a 0,5–3×) e o aviso diz "calibrado com N cortes reais".
+95. **Modo bancada** (`F11`, `ui/bench_mode.py`): tela cheia com placa atual, material, conferência das camadas,
+    tempo estimado/decorrido e três botões (Abrir no RDWorks · Cortada ✓ · Próxima placa). Só chama o que a
+    janela principal já faz.
+96. **Atualização por versão marcada**: o atualizador instala a maior tag `vMAIOR.MENOR.CORREÇÃO`; sem nenhuma
+    tag `v*` no repositório vale o comportamento antigo (ponta do `main`), para ninguém ficar sem atualização
+    até a primeira tag. Nunca rebaixa. `versao.txt` guarda "sha tag"; `core/version.py` dá "Sindri 1.1.0
+    (abc1234)" para o Sobre. Erros antes engolidos na abertura, intranet e limpeza vão para o
+    `sindri_erro.log` (`fileutil.log_exception`). CI roda `ruff check app` (regras F e B).
+97. **Micro-pontes e compensação de kerf por peça** (`core/tabs.py`, `core/kerf.py`; botão "Pontes" de cada
+    peça): as pontes interrompem o contorno externo em 2–4 trechos (0,4 mm por padrão, `NestParams.tab_width`),
+    em lados opostos e longe dos cantos, dividindo a primitiva original (linha vira duas linhas, arco vira dois
+    arcos, círculo vira arcos). A compensação desloca o corte externo kerf/2 para fora e os furos kerf/2 para
+    dentro, com o kerf medido do material no banco; linhas continuam linhas e arcos continuam arcos; SPLINE e
+    ELLIPSE são recusadas com aviso. As duas só valem na exportação: o encaixe usa o desenho original. Desfazer
+    cobre as duas e a impressão digital da placa as inclui (mudou → o ▶ exporta de novo). Material sem kerf
+    cadastrado: aviso na hora e a peça sai sem compensação. **A validar**: largura da ponte por material.
+98. **Grade de teste velocidade × potência** (`core/testgrid.py`, botão no banco de materiais): uma cor por
+    combinação, porque o RDWorks separa os valores pela cor — com a paleta padrão cabem 14 combinações por
+    arquivo (uma camada fica para os números); grade maior vira vários arquivos. Corte = contornos; gravação =
+    preenchimento por linhas. Ao abrir, os valores de cada cor vão para o `config` pelo fluxo normal. O
+    quadrado escolhido vai para o banco (corte → camada corte, mínima = 65% da máxima; gravação → gravação
+    vetorial, mínima = máxima), com a data do teste e quem testou.
+99. **Busca local no genético**: a cada geração, 2 filhos saem de um dos 2 melhores com um único movimento
+    grande (reinserir uma peça noutra posição, 70%, ou inverter um trecho da ordem). Medido em
+    `tools/bench_encaixe.py` (10 lotes fixos, 3 sementes, 30 gerações): fitness agregado 34,2029 → 34,1615, o
+    mesmo nº de placas em todos os lotes — ganho pequeno, dentro do que muda de semente para semente. A
+    mutação de inserção/inversão que tinha entrado antes sem medida foi retirada (piorava: 34,28 → 34,36).
+100. **Fila do dia e recado de retirada** (janela da intranet): lotes por material em ordem de chegada (até 8
+    por lote, `intranet/queue_max`), cada solicitação no lote do material com mais DXF e os outros materiais
+    dela em placas próprias; ficam de fora as bloqueadas, as já abertas e as sem DXF. "Abrir lote N" marca e
+    envia direto ao Sindri (os avisos de atenção aparecem depois, na Conferência). Solicitação com todas as
+    peças feitas ou placas cortadas: clique direito no cartão → copiar recado de retirada (nº, primeiro nome
+    e projeto; sem RM) ou abrir na intranet para mudar o status à mão. O Sindri nunca muda status.
+101. **Interface mais enxuta**: resumo da seleção dentro da barra de ícones (sem linha própria); aviso de cores
+    e de placa pouco usada uma vez por lote; parâmetros em ordem fixa (Arquivo → Placa → Encaixe → Laser →
+    avançadas) com seções recolhidas lembradas; placas em grade conforme a proporção da área visível (toda
+    conversão cena↔placa por `sheet_origin`/`sheet_at`); rodapé com aproveitamento das placas cheias e da
+    última; última placa < 15% (material com 2+ placas) → aviso com "Encaixar de novo com mais tempo" e "Ver
+    retalhos" e selo "pouco usada"; "N tentativas"/"melhorou há N s" no lugar de "soluções"; Conferência
+    vazia com estado vazio; abaixo de 1250 px os botões do canto viram ícone; "Intranet" com texto até
+    1250 px; largura mínima da janela 1000 px. No painel de peças, o modo estreito mede pela área visível da
+    lista (com a barra de rolagem a linha ficava mais larga e cortava "Rotação fixa").
+102. **Mover peça pelo teclado**: com o desenho em foco, setas = 1 mm, Shift = 10 mm, Alt = 0,1 mm;
+    Ctrl+seta encosta na vizinha ou na margem respeitando o espaçamento (mesmo verificador de colisão).
+    Toques seguidos são um passo de desfazer; peça travada não se move.
+103. **Encaixe repetível nos testes**: `SINDRI_NEST_SEED` fixa a semente do genético (só o `conftest` usa).
+104. **PySide6 abaixo da 6.12 enquanto houver Python 3.11**: PySide6 6.12.0 com Python 3.11 derruba o programa
+    ("Fatal Python error: none_dealloc: deallocating None" — erro de contagem de referência que só aparece
+    antes do 3.12, onde o None deixou de ser imortal). O CI quebrava assim desde 10/11. `requirements.txt`,
+    `pyproject.toml` e `executar.bat` pedem `<6.12`; `runtime_check` recusa 6.12+ com Python < 3.12 (o
+    lançador reinstala a versão anterior). O `Sindri.exe` já usa 6.11.2 (`requirements-build.txt`). Rever
+    quando sair uma 6.12.x corrigida.

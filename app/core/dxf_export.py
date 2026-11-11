@@ -24,17 +24,137 @@ PLATE_LAYER = "PLACA"
 LABEL_LAYER = "NUMEROS"      # nº da solicitação gravado em cada peça
 
 
-def placed_prims(part: Part, pl: Placement, dx: float = 0.0, inner_first: bool = True) -> list[Prim]:
+def placed_prims(part: Part, pl: Placement, dx: float = 0.0, inner_first: bool = True,
+                 ops: Optional[list[str]] = None, tab_width: Optional[float] = None, kerf: float = 0.0,
+                 info: Optional[dict] = None) -> list[Prim]:
+    return [pr for pr, _ in placed_prims_ops(part, pl, dx, inner_first, ops, tab_width, kerf, info)]
+
+
+def cut_prims_local(part: Part, ops: list[str], tab_width: Optional[float] = None,
+                    kerf: float = 0.0) -> tuple[list[tuple[Prim, str]], list[tuple], list[str], dict]:
+    """Primitivas da peça como vão para o corte, em coordenadas LOCAIS e na ordem original:
+    [(primitiva, operação)], [(p0, p1) de cada micro-ponte reta], avisos e contagens.
+
+    * ``part.kerf_comp`` + ``kerf`` > 0: corte deslocado em kerf/2 (veja kerf.py);
+    * ``part.tabs`` > 0: contorno externo interrompido nas micro-pontes (veja tabs.py).
+    Sem nenhum dos dois devolve as primitivas originais, intactas."""
+    from .operations import CUT_INNER
+    prims, outer = list(part.prims), list(part.outer_prim_idx)
+    items_ops = list(ops)
+    notes: list[str] = []
+    counts = {"tabs": 0, "kerf": 0}
+    gaps: list[tuple] = []
+    name = part.name.split(" (")[0]
+    if getattr(part, "kerf_comp", False):
+        from . import kerf as _kerf
+        try:
+            if not kerf or kerf <= 0:
+                raise _kerf.KerfError("sem kerf")
+            if part.is_open:
+                raise _kerf.KerfError("contorno externo aberto")
+            inner = [i for i, op in enumerate(items_ops) if op == CUT_INNER]
+            repl, outer = _kerf.compensate(prims, outer, inner, float(kerf))
+            prims = [q for r in repl for q in r]
+            items_ops = [op for r, op in zip(repl, items_ops) for _ in r]
+            counts["kerf"] = 1
+        except _kerf.KerfError as e:
+            prims, outer, items_ops = list(part.prims), list(part.outer_prim_idx), list(ops)
+            notes.append(f"{name}: exportada SEM compensação de kerf — {_kerf.reason_text(e)}.")
+    want = int(getattr(part, "tabs", 0) or 0)
+    if want > 0 and not part.is_open:
+        from . import tabs as _tabs
+        width = _tabs.DEFAULT_WIDTH if not tab_width or tab_width <= 0 else float(tab_width)
+        repl, made = _tabs.apply_tabs(prims, outer, want, width)
+        prims = [q for r in repl for q in r]
+        items_ops = [op for r, op in zip(repl, items_ops) for _ in r]
+        counts["tabs"] = len(made)
+        gaps = [(t.p0, t.p1) for t in made if t.straight]
+        if len(made) < want:
+            notes.append(f"{name}: " + ("não há trecho no contorno que comporte micro-ponte."
+                                        if not made else f"só couberam {len(made)} de {want} micro-pontes."))
+    return list(zip(prims, items_ops)), gaps, notes, counts
+
+
+def placed_prims_ops(part: Part, pl: Placement, dx: float = 0.0, inner_first: bool = True,
+                     ops: Optional[list[str]] = None, tab_width: Optional[float] = None, kerf: float = 0.0,
+                     info: Optional[dict] = None) -> list[tuple[Prim, str]]:
+    """Primitivas da peça já posicionadas, com a operação de cada uma. Com ``inner_first`` a ordem é:
+    gravação, vinco, furos e, por último, o contorno (a peça só se solta no fim).
+    Micro-pontes (``part.tabs``) e compensação de kerf (``part.kerf_comp`` com ``kerf`` > 0) entram aqui.
+    ``info`` (opcional) recebe: "gaps" (trechos das pontes, já posicionados — para a remoção de trechos
+    repetidos não cortar a ponte pela peça vizinha), "notes" (avisos), "tabs" e "kerf_parts" (contagens)."""
+    from .operations import order_key, prim_operations
     tf = Transform(pl.rotation, pl.mirrored, pl.x + dx, pl.y)
-    outer = set(part.outer_prim_idx)
-    idx = list(range(len(part.prims)))
+    if ops is None:
+        ops = prim_operations(part)
+    if getattr(part, "tabs", 0) or getattr(part, "kerf_comp", False):
+        cache = info.setdefault("_local", {}) if info is not None else {}
+        key = (part.id, tab_width, kerf)
+        if key not in cache:
+            cache[key] = cut_prims_local(part, ops, tab_width, kerf)
+        items, gaps, notes, counts = cache[key]
+        if info is not None:
+            info.setdefault("gaps", []).extend((tf.pt(a), tf.pt(b)) for a, b in gaps)
+            for n in notes:
+                if n not in info.setdefault("notes", []):
+                    info["notes"].append(n)
+            info["tabs"] = info.get("tabs", 0) + counts["tabs"]
+            info["kerf_parts"] = info.get("kerf_parts", 0) + counts["kerf"]
+    else:
+        items = list(zip(part.prims, ops))
+    idx = list(range(len(items)))
     if inner_first:
-        idx.sort(key=lambda i: (i in outer, i))
-    return [transform_prim(part.prims[i], tf) for i in idx]
+        idx.sort(key=lambda i: (order_key(items[i][1]), i))
+    return [(transform_prim(items[i][0], tf), items[i][1]) for i in idx]
 
 
-def order_placements(parts: dict[str, Part], placements: list[Placement], nearest: bool = True) -> list[Placement]:
-    """Caminho do vizinho mais próximo partindo da origem (reduz deslocamentos do laser)."""
+def part_kerf(part: Part, params, material_kerf: Optional[dict] = None) -> float:
+    """Kerf (mm) do material da peça: ``material_kerf`` {material: kerf} (do banco de materiais) ou, na
+    falta, ``params.material_sheets[material]["kerf"]``. 0 = não cadastrado (não compensa)."""
+    mat = part.material or ""
+    v = (material_kerf or {}).get(mat)
+    if v is None:
+        v = (getattr(params, "material_sheets", None) or {}).get(mat, {}).get("kerf", 0.0)
+    try:
+        v = float(v or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    return v if math.isfinite(v) and v > 0 else 0.0
+
+
+def _kerf_notes(pmap: dict, placements, params, material_kerf, info: dict) -> None:
+    """Avisos de espaçamento menor que o kerf para os materiais com peça compensada na exportação."""
+    from .kerf import spacing_note
+    used = {pl.part_id for pl in placements}
+    for mat in sorted({pmap[i].material or "" for i in used if i in pmap and getattr(pmap[i], "kerf_comp", False)}):
+        part = next(p for p in pmap.values() if (p.material or "") == mat)
+        k = part_kerf(part, params, material_kerf)
+        spacing = params.for_material(mat).spacing if hasattr(params, "for_material") else 0.0
+        note = spacing_note(spacing, k, mat)
+        if note and note not in info.setdefault("notes", []):
+            info["notes"].append(note)
+
+
+START_CORNERS = {"inferior_esquerdo": "canto inferior esquerdo (origem do DXF)",
+                 "superior_direito": "canto superior direito (home comum da Ruida)"}
+
+
+def start_point(corner: str, width: float, height: float) -> tuple[float, float]:
+    """Ponto da placa onde o caminho de corte começa (perto do home da cabeça)."""
+    return (width, height) if corner == "superior_direito" else (0.0, 0.0)
+
+
+ORDER_MODES = {"caminho": "Caminho mais curto",
+               "pequenas": "Pequenas primeiro, longe da exaustão (grandes por último)"}
+
+
+def order_placements(parts: dict[str, Part], placements: list[Placement], nearest: bool = True,
+                     start: tuple[float, float] = (0.0, 0.0), mode: str = "caminho") -> list[Placement]:
+    """Caminho do vizinho mais próximo partindo de ``start`` (reduz deslocamentos do laser). Peças dentro
+    de furos de outra são cortadas antes da hospedeira.
+    ``mode="pequenas"``: peças pequenas primeiro (por faixa de tamanho) e, entre parecidas, as mais longe
+    da exaustão (que fica no fundo da máquina = em cima no desenho); as grandes saem por último, então a
+    chapa perde rigidez mais tarde e peça solta tem menos chance de bater no bico."""
     from .validate import placed_geometry
     rest = list(range(len(placements)))
     envelopes = [placed_geometry(parts[p.part_id].outer, p) for p in placements]
@@ -42,10 +162,18 @@ def order_placements(parts: dict[str, Part], placements: list[Placement], neares
                         and envelopes[i].area > envelopes[j].area and envelopes[i].covers(envelopes[j])}
                     for i in rest}
     out = []
-    cx, cy = 0.0, 0.0
+    cx, cy = float(start[0]), float(start[1])
+    import math as _m
+    size_band = [int(_m.log2(max(1.0, envelopes[i].area / 100.0))) for i in range(len(placements))]
     while rest:
         eligible = [i for i in rest if not dependencies[i].intersection(rest)]
-        k = min(eligible, key=lambda i: (placements[i].x - cx) ** 2 + (placements[i].y - cy) ** 2) if nearest else eligible[0]
+        if mode == "pequenas":
+            k = min(eligible, key=lambda i: (size_band[i], round(placements[i].y / 50.0),
+                                             (placements[i].x - cx) ** 2 + (placements[i].y - cy) ** 2))
+        elif nearest:
+            k = min(eligible, key=lambda i: (placements[i].x - cx) ** 2 + (placements[i].y - cy) ** 2)
+        else:
+            k = eligible[0]
         rest.remove(k)
         pl = placements[k]
         out.append(pl)
@@ -191,11 +319,21 @@ def _finish(doc, path: str):
     doc.saveas(path)
 
 
-def _plate(msp, params: NestParams, dx: float):
+def _plate(msp, params, dx: float):
+    """Contorno da placa (camada cinza). ``params``: NestParams (chapa inteira) ou SheetSpec (pode ser
+    retalho: desenha o contorno dele e os buracos)."""
     _ensure_layer(msp.doc, PLATE_LAYER, 8)
-    w, h = params.sheet_width, params.sheet_height
-    pts = [(dx, 0), (dx + w, 0), (dx + w, h), (dx, h)]
     at = {"layer": PLATE_LAYER, "color": 8}
+    outline = getattr(params, "outline", ())
+    if outline:
+        for ring in [outline, *getattr(params, "holes", ())]:
+            pts = [(x + dx, y) for x, y in ring]
+            for i in range(len(pts)):
+                msp.add_line(pts[i], pts[(i + 1) % len(pts)], dxfattribs=at)
+        return
+    w = getattr(params, "sheet_width", None) or params.width
+    h = getattr(params, "sheet_height", None) or params.height
+    pts = [(dx, 0), (dx + w, 0), (dx + w, h), (dx, h)]
     for i in range(4):
         msp.add_line(pts[i], pts[(i + 1) % 4], dxfattribs=at)
 
@@ -252,20 +390,27 @@ def _plain(text: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFD", text) if not unicodedata.combining(c))
 
 
-def _stroke_text(msp, text: str, x: float, y: float, height: float, layer: str, color: int):
-    """Escreve texto com linhas (sem fonte): largura de cada caractere = metade da altura."""
+def stroke_lines(text: str, x: float, y: float, height: float) -> list[list[tuple[float, float]]]:
+    """Traços do texto (fonte de linhas): uma lista de pontos por traço."""
     sy, sx = height / 2.0, height * 0.55
-    at = {"layer": layer, "color": color}
+    out = []
     cx = x
     for ch in _plain(text).upper():
         for line in _STROKES.get(ch, []):
-            pts = [(cx + px * sx, y + py * sy) for px, py in line]
-            if msp.doc.dxfversion == "AC1009":        # R12 não tem LWPOLYLINE
-                for a, b in zip(pts, pts[1:]):
-                    msp.add_line(a, b, dxfattribs=at)
-            else:
-                msp.add_lwpolyline(pts, dxfattribs=at)
+            out.append([(cx + px * sx, y + py * sy) for px, py in line])
         cx += sx + height * 0.3
+    return out
+
+
+def _stroke_text(msp, text: str, x: float, y: float, height: float, layer: str, color: int):
+    """Escreve texto com linhas (sem fonte): largura de cada caractere = metade da altura."""
+    at = {"layer": layer, "color": color}
+    for pts in stroke_lines(text, x, y, height):
+        if msp.doc.dxfversion == "AC1009":            # R12 não tem LWPOLYLINE
+            for a, b in zip(pts, pts[1:]):
+                msp.add_line(a, b, dxfattribs=at)
+        else:
+            msp.add_lwpolyline(pts, dxfattribs=at)
 
 
 def text_size(text: str, height: float) -> tuple[float, float]:
@@ -315,18 +460,27 @@ def sheet_groups(pmap: dict, placements: list[Placement]) -> list[tuple[str, lis
 def export_sheets(parts: list[Part] | dict[str, Part], placements: list[Placement], params: NestParams,
                   out_dir: str, base_name: str = "projeto", version: str = "R2000",
                   combined: bool = False, sheet_outline: bool = False, inner_first: bool = True,
-                  sort_path: bool = True, gap: float = 20.0) -> list[str]:
-    """Escreve um DXF por placa (e opcionalmente um arquivo com todas lado a lado)."""
+                  sort_path: bool = True, gap: float = 20.0, material_kerf: Optional[dict] = None,
+                  stats: Optional[dict] = None) -> list[str]:
+    """Escreve um DXF por placa (e opcionalmente um arquivo com todas lado a lado).
+    ``material_kerf``: {material: kerf em mm} para as peças com compensação de kerf ligada."""
     pmap = parts if isinstance(parts, dict) else {p.id: p for p in parts}
     os.makedirs(out_dir, exist_ok=True)
     sheets = sorted({pl.sheet_index for pl in placements})
     files = []
 
+    tab_width = getattr(params, "tab_width", None)
+    info: dict = {}
+    _kerf_notes(pmap, placements, params, material_kerf, info)
+
     def emit(msp, pls, dx):
         seq = order_placements(pmap, pls, nearest=sort_path) if inner_first or sort_path else pls
         from .overlap import remove_overlaps
-        prims = [pr for pl in seq for pr in placed_prims(pmap[pl.part_id], pl, dx, inner_first)]
-        for pr in remove_overlaps(prims)[0]:
+        info["gaps"] = []
+        prims = [pr for pl in seq
+                 for pr in placed_prims(pmap[pl.part_id], pl, dx, inner_first, None, tab_width,
+                                        part_kerf(pmap[pl.part_id], params, material_kerf), info)]
+        for pr in remove_overlaps(prims, keep_gaps=info["gaps"])[0]:
             write_prim(msp, pr, version)
 
     groups = sheet_groups(pmap, placements)
@@ -356,7 +510,10 @@ def export_sheets(parts: list[Part] | dict[str, Part], placements: list[Placemen
             files.append(path)
         if len(groups) > 1:
             files.append(export_all_sheets(pmap, placements, params, out_dir, base_name, version,
-                                           sheet_outline, inner_first, sort_path, gap))
+                                           sheet_outline, inner_first, sort_path, gap,
+                                           material_kerf=material_kerf))
+    if stats is not None and info.get("notes"):
+        stats["notes"] = list(info["notes"])
     return files
 
 
@@ -367,11 +524,23 @@ def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Plac
                       only_sheets: Optional[set] = None, file_suffix: str = "_todas_placas",
                       remove_overlap: bool = True, stats: Optional[dict] = None,
                       part_labels: Optional[dict] = None, label_aci: int = 1,
-                      label_height: float = 3.0) -> str:
+                      label_height: float = 3.0, op_colors: Optional[dict] = None,
+                      color_ops: Optional[dict] = None, start_corner: str = "inferior_esquerdo",
+                      sheet_remnants: Optional[dict] = None, order_mode: str = "caminho",
+                      material_kerf: Optional[dict] = None, tab_width: Optional[float] = None) -> str:
     """Um arquivo só (<nome>_todas_placas.dxf) com TODAS as placas de todos os materiais lado a lado,
     na mesma ordem do relatório (materiais separados por um espaço maior). É o que abre no RDWorks.
     ``color_map``: {(material, cor ACI original): cor ACI a gravar} — separa materiais em camadas.
-    ``only_sheets``: exporta só essas placas (índices), mantendo o nº delas ("PLACA 3")."""
+    ``only_sheets``: exporta só essas placas (índices), mantendo o nº delas ("PLACA 3").
+    ``op_colors``: {(material, camada de laser): cor} — modo "uma cor por material": cada primitiva vai para
+    a cor da SUA operação (corte, vinco, gravação), nunca a gravação na cor de corte.
+    ``color_ops``: {(material, cor do arquivo): operação} escolhida pelo técnico (padrão: veja operations).
+    ``material_kerf``: {material: kerf em mm} (banco de materiais) para as peças com "Compensar kerf".
+    ``tab_width``: largura das micro-pontes (padrão: ``params.tab_width``).
+    ``stats`` recebe também "tabs" (pontes feitas), "kerf_parts" (peças compensadas) e "notes" (avisos)."""
+    if tab_width is None:
+        tab_width = getattr(params, "tab_width", None)
+    info: dict = {}
     pmap = parts if isinstance(parts, dict) else {p.id: p for p in parts}
     os.makedirs(out_dir, exist_ok=True)
     doc = _new_doc(version)
@@ -379,8 +548,13 @@ def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Plac
     dx = 0.0
     from .sheets import SheetIndex
     idx = SheetIndex(pmap, placements)
+    from .sheetspec import sheet_specs
+    specs = sheet_specs(params, idx.material, sheet_remnants)
     first = True
     solid_cache: dict = {}
+    ops_cache: dict = {}
+    from .laser import export_aci
+    from .operations import is_text, layer_op, prim_operations
     for mat, sis in idx.groups:
         sis = [si for si in sis if only_sheets is None or si in only_sheets]
         if not sis:
@@ -390,23 +564,33 @@ def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Plac
         first = False
         for si in sis:
             n_sheet = idx.number[si]
+            spec = specs[si]
             if sheet_outline:
-                _plate(msp, params, dx)
+                _plate(msp, spec, dx)
                 # nº da placa acima dela, na mesma camada cinza do contorno (desativar no RDWorks)
-                hh = min(40.0, max(12.0, 0.05 * params.sheet_height))
-                label = f"PLACA {n_sheet}" + (f" - {mat}" if mat else "")
-                _stroke_text(msp, label, dx, params.sheet_height + hh * 0.6, hh, PLATE_LAYER, 8)
+                hh = min(40.0, max(12.0, 0.05 * spec.height))
+                label = f"PLACA {n_sheet}" + (f" - {mat}" if mat else "") + (" - RETALHO" if spec.is_remnant else "")
+                _stroke_text(msp, label, dx, spec.height + hh * 0.6, hh, PLATE_LAYER, 8)
             pls = [pl for pl in placements if pl.sheet_index == si]
-            seq = order_placements(pmap, pls, nearest=sort_path) if inner_first or sort_path else pls
+            sx, sy = start_point(start_corner, spec.width, spec.height)
+            seq = order_placements(pmap, pls, nearest=sort_path, start=(sx, sy), mode=order_mode) \
+                if inner_first or sort_path or order_mode != "caminho" else pls
             sheet_prims = []
+            info["gaps"] = []
             for pl in seq:
                 part = pmap[pl.part_id]
-                for pr in placed_prims(part, pl, dx, inner_first):
-                    if color_map:
-                        from .laser import export_aci
+                if part.id not in ops_cache:
+                    ops_cache[part.id] = prim_operations(part, color_ops)
+                for pr, op in placed_prims_ops(part, pl, dx, inner_first, ops_cache[part.id], tab_width,
+                                               part_kerf(part, params, material_kerf), info):
+                    target = None
+                    if op_colors is not None:
+                        if not is_text(pr):
+                            target = op_colors.get((part.material or "", layer_op(op)))
+                    elif color_map:
                         target = color_map.get((part.material or "", export_aci(pr)))
-                        if target:
-                            pr.color, pr.rgb = target, None
+                    if target:
+                        pr.color, pr.rgb = target, None
                     sheet_prims.append(pr)
             if part_labels:
                 # números primeiro: gravar antes de cortar (a peça solta pode se mexer)
@@ -431,12 +615,57 @@ def export_all_sheets(parts: list[Part] | dict[str, Part], placements: list[Plac
                         stats["labels"] = stats.get("labels", 0) + 1
             if remove_overlap:
                 from .overlap import remove_overlaps
-                sheet_prims, n_rm = remove_overlaps(sheet_prims)
+                sheet_prims, n_rm = remove_overlaps(sheet_prims, keep_gaps=info["gaps"])
                 if stats is not None:
                     stats["overlaps"] = stats.get("overlaps", 0) + n_rm
             for pr in sheet_prims:
                 write_prim(msp, pr, version)
-            dx += params.sheet_width + gap
+            dx += spec.width + gap
+    if stats is not None:
+        _kerf_notes(pmap, [pl for pl in placements if only_sheets is None or pl.sheet_index in only_sheets],
+                    params, material_kerf, info)
+        for k in ("tabs", "kerf_parts"):
+            if info.get(k):
+                stats[k] = stats.get(k, 0) + info[k]
+        for n in info.get("notes", []):
+            if n not in stats.setdefault("notes", []):
+                stats["notes"].append(n)
     path = os.path.join(out_dir, f"{base_name}{file_suffix}.dxf")
     _finish(doc, path)
     return path
+
+
+def sheet_file_suffix(number: int, material: str = "") -> str:
+    """'_placa03_MDF3mm' — nome do arquivo de corte de uma placa."""
+    return f"_placa{number:02d}" + (f"_{material_tag(material)}" if material else "")
+
+
+def export_cut_files(parts: list[Part] | dict[str, Part], placements: list[Placement], params: NestParams,
+                     out_dir: str, base_name: str, only_sheets: Optional[set] = None, **kw) -> dict[int, str]:
+    """Um DXF por placa, pronto para cortar: origem (0, 0) no canto da chapa e SEM o contorno da placa
+    (não há camada cinza para esquecer de desligar). Devolve {índice da placa: caminho}.
+    ``kw`` vai para export_all_sheets (cores, números, ordem de corte…)."""
+    from .sheets import SheetIndex
+    pmap = parts if isinstance(parts, dict) else {p.id: p for p in parts}
+    idx = SheetIndex(pmap, placements)
+    kw.pop("sheet_outline", None)
+    kw.pop("file_suffix", None)
+    stats = kw.pop("stats", None)
+    out: dict[int, str] = {}
+    for si in idx.ordered:
+        if only_sheets is not None and si not in only_sheets:
+            continue
+        sub_stats: dict = {}
+        out[si] = export_all_sheets(pmap, placements, params, out_dir, base_name, sheet_outline=False,
+                                    only_sheets={si},
+                                    file_suffix=sheet_file_suffix(idx.number[si], idx.material.get(si, "")),
+                                    stats=sub_stats, **kw)
+        if stats is not None:
+            stats.setdefault("per_sheet", {})[si] = sub_stats
+            for k, v in sub_stats.items():
+                if isinstance(v, (int, float)):
+                    stats[k] = stats.get(k, 0) + v
+            for n in sub_stats.get("notes", []):
+                if n not in stats.setdefault("notes", []):
+                    stats["notes"].append(n)
+    return out

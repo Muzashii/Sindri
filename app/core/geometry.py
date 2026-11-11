@@ -221,6 +221,8 @@ def transform_prim(p: Prim, tf: Transform) -> Prim:
     nd: dict
     if k == "LINE":
         nd = {"s": tf.pt(d["s"]), "e": tf.pt(d["e"])}
+        if d.get("repair"):          # trecho que fechou uma abertura (destacado na conferência)
+            nd["repair"] = True
     elif k == "CIRCLE":
         nd = {"c": tf.pt(d["c"]), "r": d["r"]}
     elif k == "ARC":

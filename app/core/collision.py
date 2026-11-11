@@ -50,9 +50,23 @@ class CollisionChecker:
             self._placed[key] = g
         return g
 
-    def colliding(self, placements: list[Placement], sheets: set[int] | None = None) -> set[int]:
+    def usable_for(self, material: str | None, remnant: str = "") -> Polygon:
+        """Área onde o polígono com folga pode ficar numa placa daquele material (ou retalho)."""
+        key = (material, remnant)
+        cache = self.__dict__.setdefault("_usable", {})
+        g = cache.get(key)
+        if g is None:
+            from .sheetspec import remnant_spec, standard_spec
+            rem = next((r for r in self.params.remnants if str(r.get("id")) == remnant), None) if remnant else None
+            spec = remnant_spec(self.params, rem) if rem else standard_spec(self.params, material)
+            g = cache[key] = spec.usable(spec.spacing / 2.0 + 0.01)
+        return g
+
+    def colliding(self, placements: list[Placement], sheets: set[int] | None = None,
+                  sheet_remnants: dict | None = None) -> set[int]:
         """Índices das peças que colidem com outra ou saem da área útil.
-        ``sheets``: confere só essas placas (ao arrastar, só as placas envolvidas)."""
+        ``sheets``: confere só essas placas (ao arrastar, só as placas envolvidas).
+        ``sheet_remnants``: {placa: id do retalho} — a área útil é a do retalho."""
         bad: set[int] = set()
         by_sheet: dict[int, list[int]] = {}
         geoms: dict[int, Polygon] = {}
@@ -61,14 +75,14 @@ class CollisionChecker:
                 continue
             by_sheet.setdefault(pl.sheet_index, []).append(i)
             geoms[i] = self.placed(pl)
-            if not self.usable.covers(geoms[i]):
-                bad.add(i)
-        for idxs in by_sheet.values():
+        for si, idxs in by_sheet.items():
             # material errado na placa (ex.: peça de 6mm arrastada para placa de 3mm)
             mats = [self.material.get(placements[i].part_id, "") for i in idxs]
+            main = max(set(mats), key=mats.count)
             if len(set(mats)) > 1:
-                main = max(set(mats), key=mats.count)
                 bad.update(i for i, m in zip(idxs, mats, strict=True) if m != main)
+            usable = self.usable_for(main, (sheet_remnants or {}).get(si, ""))
+            bad.update(i for i in idxs if not usable.covers(geoms[i]))
             gs = [geoms[i] for i in idxs]
             tree = STRtree(gs)
             for a, i in enumerate(idxs):

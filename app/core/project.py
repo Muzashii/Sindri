@@ -9,6 +9,7 @@ from shapely import wkb
 from typing import Optional
 
 from .fileutil import replace_file
+from .import_issues import ImportIssue
 from .models import ImportReport, NestParams, NestResult, Part, Prim
 from .part_builder import import_files
 
@@ -36,6 +37,8 @@ class Project:
     checklist: dict = field(default_factory=dict)
     units: dict = field(default_factory=dict)
     source_hashes: dict = field(default_factory=dict)
+    extra: dict = field(default_factory=dict)       # estado do laser/retalhos (veja save_project)
+    repairs: dict = field(default_factory=dict)     # arquivo -> aberturas fechadas na conferência
 
 
 def source_hash(path):
@@ -65,7 +68,10 @@ def _part_from_json(data):
     data.update(outer=wkb.loads(data["outer"], hex=True),
                 holes=[wkb.loads(h, hex=True) for h in data["holes"]],
                 prims=[Prim.from_json(p) for p in data["prims"]])
+    names = {f.name for f in fields(Part)}
+    data = {k: v for k, v in data.items() if k in names}     # campo de versão mais nova: ignorado
     part = Part(**data)
+    part.tabs, part.kerf_comp = _clean_tabs(part.tabs), bool(part.kerf_comp)
     if type(part.quantity) is not int or part.quantity < 0 or part.file_quantity < 1:
         raise ValueError("Quantidade inválida no projeto.")
     if part.outer.is_empty or not part.outer.is_valid or part.outer.area <= 0:
@@ -73,6 +79,12 @@ def _part_from_json(data):
     if any(type(i) is not int or not 0 <= i < len(part.prims) for i in part.outer_prim_idx):
         raise ValueError("Índice de geometria inválido no projeto.")
     return part
+
+
+def _clean_tabs(v) -> int:
+    """Nº de micro-pontes salvo no projeto (0 se ausente ou inválido)."""
+    from .tabs import MAX_TABS
+    return v if type(v) is int and 0 <= v <= MAX_TABS else 0
 
 
 def _get(d: Optional[dict], f: str, default):
@@ -86,7 +98,10 @@ def save_project(path: str, files: list[str], params: NestParams, parts: list[Pa
                  label: Optional[str] = None, materials: Optional[dict] = None,
                  request: Optional[dict] = None, tags: Optional[dict] = None,
                  checklist: Optional[dict] = None, file_units: Optional[dict] = None,
-                 source_hashes: Optional[dict] = None, report: Optional[ImportReport] = None) -> None:
+                 source_hashes: Optional[dict] = None, report: Optional[ImportReport] = None,
+                 extra: Optional[dict] = None, file_repairs: Optional[dict] = None) -> None:
+    """``extra``: dados que só precisam voltar como estavam (JSON puro): operação de cada cor do
+    arquivo, retalhos usados por placa etc."""
     params.validate()
     base = os.path.dirname(os.path.abspath(path))
     data = {
@@ -96,7 +111,8 @@ def save_project(path: str, files: list[str], params: NestParams, parts: list[Pa
         "files_rel": [relative_path(f, base) for f in files],
         "params": params.to_json(),
         "parts": {p.id: {"quantity": p.quantity, "rotation_locked": p.rotation_locked,
-                         "area": round(p.area, 2)} for p in parts},
+                         "area": round(p.area, 2), "tabs": int(getattr(p, "tabs", 0) or 0),
+                         "kerf_comp": bool(getattr(p, "kerf_comp", False))} for p in parts},
         "result": result.to_json() if result else None,
         "multipliers": [[relative_path(k, base), int(v)]
                         for k, v in (multipliers or {}).items()],
@@ -104,15 +120,18 @@ def save_project(path: str, files: list[str], params: NestParams, parts: list[Pa
         "materials": [[relative_path(k, base), v] for k, v in (materials or {}).items()],
         "request": request,
         "checklist": checklist or {},
+        "extra": extra or {},
         "tags": [[relative_path(k, base), v] for k, v in (tags or {}).items()],
         "geometry": [_part_json(p) for p in parts],
         "import_report": {"preview": [[p.to_json(), issue] for p, issue in report.preview],
                           "warnings": report.warnings, "unit_notes": report.unit_notes,
-                          "extra": report.extra} if report else None,
+                          "extra": report.extra,
+                          "issues": [i.to_json() for i in getattr(report, "issues", [])]} if report else None,
         # por arquivo, na mesma ordem de "files" (não depende do nome: num lote, vários alunos
         # mandam arquivos com o mesmo nome)
         "file_info": [{"mult": int(_get(multipliers, f, 1)), "material": _get(materials, f, ""),
                        "tag": _get(tags, f, ""), "units": _get(file_units, f, None),
+                       "repairs": list(_get(file_repairs, f, []) or []),
                        "sha256": _get(source_hashes, f, source_hash(f))} for f in files],
     }
     tmp = path + ".tmp"
@@ -156,7 +175,7 @@ def _load_project(path: str) -> Project:
                                "Coloque-o na mesma pasta do projeto.")
         files.append(found or fabs)
     params = NestParams.from_json(data.get("params", {}))
-    multipliers, materials, tags, units, hashes = {}, {}, {}, {}, {}
+    multipliers, materials, tags, units, hashes, repairs = {}, {}, {}, {}, {}, {}
     info = data.get("file_info")
     if isinstance(info, list) and len(info) == len(files):
         for f, fi in zip(files, info):
@@ -169,6 +188,8 @@ def _load_project(path: str) -> Project:
                 tags[k] = fi["tag"]
             if fi.get("units") is not None:
                 units[k] = int(fi["units"])
+            if isinstance(fi.get("repairs"), list) and fi["repairs"]:
+                repairs[k] = [r for r in fi["repairs"] if isinstance(r, dict)]
             hashes[k] = fi.get("sha256")
             if portable and (not os.path.isfile(f) or (hashes[k] and source_hash(f) != hashes[k])):
                 warnings.append(f"{os.path.basename(f)}: origem ausente ou alterada; usando o desenho incorporado ao projeto.")
@@ -200,9 +221,22 @@ def _load_project(path: str) -> Project:
             report.warnings = list(saved_report.get("warnings", []))
             report.unit_notes = {paths.get(k, k): v for k, v in saved_report.get("unit_notes", {}).items()}
             report.extra = dict(saved_report.get("extra", {}))
+            frames = report.extra.get("frames")
+            if isinstance(frames, dict):
+                report.extra["frames"] = {os.path.abspath(paths.get(k, k)): v for k, v in frames.items()}
+            issues = []
+            for d in saved_report.get("issues", []) or []:
+                try:
+                    it = ImportIssue.from_json(d)
+                except (KeyError, TypeError, ValueError):
+                    continue
+                it.file = os.path.abspath(paths.get(it.file, it.file))
+                issues.append(it)
+            report.issues = issues
     else:
         report = import_files(files, params.join_tolerance, params.curve_tolerance, **params.import_kwargs(),
-                              multipliers=multipliers, file_materials=materials, file_tags=tags, file_units=units)
+                              multipliers=multipliers, file_materials=materials, file_tags=tags, file_units=units,
+                              file_repairs=repairs)
     saved = data.get("parts", {})
     for p in report.parts:
         s = saved.get(p.id)
@@ -214,6 +248,8 @@ def _load_project(path: str) -> Project:
         if type(s.get("quantity", p.quantity)) is not int or p.quantity < 0:
             raise ProjectError("Quantidade inválida no projeto.")
         p.rotation_locked = bool(s.get("rotation_locked", False))
+        p.tabs = _clean_tabs(s.get("tabs", 0))             # projetos antigos: sem pontes, sem compensação
+        p.kerf_comp = bool(s.get("kerf_comp", False))
     if set(saved) != {p.id for p in report.parts}:
         warnings.append("As peças dos arquivos de origem não correspondem exatamente ao projeto salvo.")
     result = NestResult.from_json(data["result"]) if data.get("result") else None
@@ -227,10 +263,19 @@ def _load_project(path: str) -> Project:
             result = None
         else:
             from .validate import validate_layout
-            issues = validate_layout({p.id: p for p in report.parts}, result.placements, params)
+            extra = data.get("extra") if isinstance(data.get("extra"), dict) else {}
+            rems = {}
+            for row in extra.get("sheet_remnants") or []:
+                try:
+                    rems[int(row[0])] = str(row[1])
+                except (TypeError, ValueError, IndexError):
+                    continue
+            issues = validate_layout({p.id: p for p in report.parts}, result.placements, params,
+                                     sheet_remnants=rems)
             if issues:
                 warnings.append("Encaixe salvo inválido; execute Encaixar novamente. " + issues[0])
                 result = None
     return Project(files, params, report.parts, result, report, sorted(set(warnings)), multipliers,
                    data.get("label"), materials, data.get("request"), tags,
-                   (data.get("checklist") or {}) if result else {}, units, hashes)
+                   (data.get("checklist") or {}) if result else {}, units, hashes,
+                   data.get("extra") if isinstance(data.get("extra"), dict) else {}, repairs)

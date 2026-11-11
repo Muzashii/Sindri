@@ -12,7 +12,7 @@ compacta possível nas placas e entrega um único DXF pronto para o **RDWorks**,
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
 ![PySide6](https://img.shields.io/badge/Qt-PySide6-41CD52?logo=qt&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows&logoColor=white)
-![Testes](https://img.shields.io/badge/testes-215%20pytest-success)
+![Testes](https://img.shields.io/badge/testes-398%20pytest-success)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-MIT-blue)
 
 [Como funciona](#-como-funciona) · [Recursos](#-recursos) · [Instalação](#-instalação-windows) ·
@@ -20,13 +20,32 @@ compacta possível nas placas e entrega um único DXF pronto para o **RDWorks**,
 
 <br>
 
-<img src="docs/tela_encaixe.png" alt="Sindri — lote com 3 solicitações encaixadas em 2 placas" width="900">
+<img src="docs/design/encaixe_claro.png" alt="Sindri — lote com 3 solicitações encaixadas em 2 placas" width="900">
 
 <sub>Um lote com 3 solicitações em MDF 3 mm: cada peça leva a cor e o nº da solicitação de quem pediu.</sub>
 
 </div>
 
 ---
+
+## Interface redesenhada
+
+Painéis de peças e parâmetros podem ser recolhidos pelos botões acima do desenho;
+**Formatos de entrada:** DXF, **AI** (Adobe Illustrator, salvo com "compatível com PDF" ou no formato antigo) e **RD** (arquivo de máquina do RDWorks, só leitura — curvas chegam como segmentos; o Sindri não gera .rd). Abrir ou soltar um arquivo já começa o encaixe (menu Encaixe > "Encaixar ao abrir arquivos").
+
+**Na bancada:** `F11` abre o modo bancada (tela cheia: placa atual, conferência das camadas, tempo e três botões grandes). O RDWorks só precisa ser fechado quando velocidade/potência mudam de uma placa para a outra. O tempo entre abrir a placa e marcá-la como cortada calibra a estimativa. `Ctrl+Alt+O` abre projeto.
+
+**Mais ferramentas de corte:** micro-pontes e compensação de kerf por peça (botão "Pontes" na lista de peças; o kerf vem do banco de materiais) e **grade de teste** velocidade × potência (banco de materiais › "Grade de teste…"), que abre no RDWorks com os valores de cada cor e grava no banco o quadrado escolhido.
+
+**No encaixe:** setas movem a peça selecionada (1 mm; Shift 10 mm; Alt 0,1 mm) e Ctrl+seta encosta na vizinha ou na margem. O rodapé mostra o aproveitamento das placas cheias e o da última; placa quase vazia gera aviso com "Encaixar de novo com mais tempo" e "Ver retalhos". Muitas placas aparecem em grade.
+
+**Intranet:** "Fila do dia" propõe lotes por material em ordem de chegada (até 8 por lote, sem as bloqueadas); solicitação pronta tem, no clique direito do cartão, o recado de retirada e o atalho para abri-la na intranet e mudar o status à mão.
+
+`Ctrl+Shift+P` alterna as peças e `Ctrl+P` alterna os parâmetros. Cabeçalhos com seta
+recolhem as seções de configuração sem perder valores. O resumo da seleção aparece
+acima do canvas, e os rótulos ficam menores conforme o zoom.
+
+[Direção de design](DESIGN_DIRECTION.md) · [Recursos e créditos](ASSETS_CREDITS.md)
 
 ## ✨ Em resumo
 
@@ -38,7 +57,7 @@ compacta possível nas placas e entrega um único DXF pronto para o **RDWorks**,
 | ✅ **Checklist de corte** | Botão **Feito** em cada peça e caixinha por placa cortada, salvos junto com o projeto |
 | 📐 **DXF fiel ao original** | Arcos continuam arcos, camadas e cores preservadas, furos antes do contorno, R2000 ou R12 |
 | 📦 **Gerador de caixas** | Caixa (6 tampas), gaveta, caixa de eletrônica (Arduino/Raspberry), bandeja com rampas e teste de kerf, com receitas prontas e prévia 3D; as peças vão direto para o encaixe |
-| ⚡ **Um clique até o laser** | `Ctrl+E` gera `todas_placas.dxf` + `relatorio.pdf` e abre o RDWorks com o arquivo |
+| ⚡ **Um clique até o laser** | `Ctrl+E` gera um DXF de corte por placa + conferência + `relatorio.pdf` e abre no RDWorks a 1ª placa |
 | 🔄 **Sempre atualizado** | Ao abrir, procura versão nova aqui no GitHub e se atualiza com backup |
 
 ---
@@ -62,17 +81,26 @@ flowchart LR
    (padrão: 40 s). O botão vira **Parar (Esc)** enquanto calcula.
 3. **Ajustar** (se quiser). Arraste peças (ficam vermelhas se colidirem), gire (`R`), trave (`L`), mova entre placas e
    encaixe de novo só o restante.
-4. **Exportar** (`Ctrl+E`). Saem dois arquivos e o RDWorks abre com as placas:
+4. **Exportar** (`Ctrl+E`). O RDWorks abre com a 1ª placa ainda não cortada:
 
    | Arquivo | Conteúdo |
    |---|---|
-   | `nome_todas_placas.dxf` | Todas as placas de todos os materiais, lado a lado, com “PLACA 1”, “PLACA 2”… |
+   | `nome_placa01_MDF3mm.dxf`, `nome_placa02_…` | **Um arquivo de corte por placa**: origem (0,0) no canto da chapa, sem contorno da placa |
+   | `nome_todas_placas.dxf` | **Conferência**: todas as placas lado a lado, com “PLACA 1”, “PLACA 2”… (não é para cortar) |
    | `nome_relatorio.pdf` | Resumo e uma página por placa, com o nº da solicitação em cada peça |
 
-5. **Cortar e marcar.** `C` marca a placa da tela como cortada e vai para a próxima. Cada peça tem o botão **Feito**.
+   O aviso final mostra, camada por camada, o que o RDWorks deve mostrar (cor, operação, modo, velocidade/potência,
+   saída). Confira em 10 segundos antes do Start.
+5. **Cortar e marcar.** No checklist (aba Peças), o botão **▶** ao lado de cada placa abre só o arquivo daquela placa
+   (se a placa mudou desde a exportação, ele exporta de novo antes). Fluxo: **abrir → cortar → marcar → próxima**.
+   `C` marca a placa da tela como cortada e vai para a próxima. Cada peça tem o botão **Feito**.
 
-> [!TIP]
-> No RDWorks, deixe a camada **cinza** (contorno e nº das placas) com **saída = NÃO** antes de cortar.
+> [!IMPORTANT]
+> **Ordem de corte no RDWorks.** O Sindri grava gravação → vinco → furos → contorno e o caminho entre peças, mas o
+> RDWorks tem a própria otimização de caminho e pode reordenar tudo. Para manter a ordem do arquivo, no diálogo de
+> otimização de caminho do RDWorks desligue a reordenação automática (e deixe as camadas na ordem do aviso final:
+> números/gravação antes do corte). Os nomes exatos dos campos variam entre versões do RDWorks V8 — confira na
+> máquina do laboratório e anote aqui o ajuste que respeita a ordem do arquivo.
 
 ---
 
@@ -110,7 +138,9 @@ flowchart LR
 - Geometria **original**, só girada e movida
 - mm, origem em (0,0), camadas e cores mantidas
 - R2000 (padrão) ou R12
-- Furos antes do contorno externo; caminho curto entre peças
+- Furos antes do contorno externo; caminho curto entre peças, começando no canto do home da cabeça
+- Um DXF de corte por placa + arquivo de conferência; botão ▶ “abrir placa N no RDWorks” no checklist
+- Gravação e vinco em camadas próprias (nunca na cor de corte); material proibido (PVC, vinil…) bloqueia
 
 </td>
 </tr>
@@ -124,7 +154,7 @@ flowchart LR
   exportações antigas para a **Lixeira**.
 
 <div align="center">
-<img src="docs/tela_escuro.png" alt="Sindri no tema escuro" width="900">
+<img src="docs/design/encaixe_escuro.png" alt="Sindri no tema escuro" width="900">
 <br><sub>Tema escuro (<code>Ctrl+T</code>)</sub>
 </div>
 
@@ -191,6 +221,58 @@ Roda do mouse = zoom · botão do meio (ou `Alt` + arrastar) = mover a vista.
 
 ---
 
+## 🔥 Laser: camadas, potência e conferência
+
+- **Corte × gravação**: cada linha recebe uma operação — corte (contorno e furos), vinco, gravação vetorial ou
+  raster. O contorno externo é sempre corte; as outras cores seguem o que o técnico confirma em
+  **Cores do arquivo → corte / gravação…** (a cor do contorno é corte; as outras, gravação; nomes de camada como
+  `FUROS`, `VINCO`, `GRAVACAO` ajudam). No modo **uma cor por material**, só o corte vai para a cor do material.
+- **Material proibido**: PVC, vinil, policarbonato, ABS, fibra de vidro e couro sintético bloqueiam a exportação.
+- **Potência mín./máx.**: o Sindri preenche velocidade e potência mínima/máxima no RDWorks antes de abrir
+  (mínima automática = 65% da máxima no corte). Máquina de **1 tubo** por padrão: o tubo 2 não é tocado.
+  Depois de gravar ele **lê de volta** e mostra o que foi aplicado.
+- **⋯** em cada linha do laser: modo (corte/scan), passadas, intervalo do scan, bidirecional e sopro. Esses campos
+  aparecem na conferência para você ajustar no RDWorks.
+- Para descobrir onde o RDWorks guarda outros campos (saída, modo…): `python tools/config_diff.py antes.cfg depois.cfg`.
+
+### 🧪 A peça sobrevive ao laser?
+
+Avisos no ⚠ de cada peça (aba Peças) e no desenho: **parede fina** (pintada de laranja), furo menor que o kerf,
+peça pequena demais para a mesa (sugere micro-pontes), peça maior que a chapa, **rasgo sem compensação de
+kerf** e texto que não virou curva. Cada solicitação ganha um selo **✓ OK / ⚠ atenção / ⛔ bloqueado**, no cartão do
+lote e na lista da intranet — dá para devolver o arquivo ao aluno antes de juntar no lote.
+
+### ⏱️ Tempo, custo e registro
+
+- **Tempo estimado por placa** (velocidade e passadas do banco de materiais) no aviso final e no relatório; ajuste
+  as constantes em *Opções de exportação* comparando com o tempo que o RDWorks mostra.
+- **Uso por solicitação**: chapa e minutos de máquina rateados pela área de cada solicitação, no relatório e num
+  **CSV mensal** (`relatorios/AAAA-MM.csv`, abre direto no Excel) para a gestão do laboratório. Sobra guardada
+  como retalho conta como não-perda.
+- **Relatório PDF** por placa: material e espessura, chapa ou retalho, camadas (cor → operação → modo, velocidade,
+  potência mín./máx., passadas), tempo estimado e os campos **Cortado por / Data**.
+- **Ordem das peças**: caminho mais curto ou **pequenas primeiro, longe da exaustão** (grandes por último).
+
+### ♻️ Retalhos (`Ctrl+Shift+R`)
+
+Cadastre sobras de chapa (retângulo ou contorno de um DXF, com buracos) por material: o encaixe usa os retalhos
+**antes de abrir chapa nova**. Ao marcar uma placa como cortada, o aviso oferece **guardar o que sobrou como
+retalho**; a placa que era retalho sai da lista. Os retalhos ficam ao lado do banco de materiais (na pasta
+compartilhada, se for o caso).
+
+### 🗂️ Banco de materiais (`Ctrl+M`)
+
+Uma tabela por material, salva em `Documentos/Sindri/materiais.json` — ou numa **pasta compartilhada do
+laboratório** (botão *Usar pasta compartilhada…*), para todos os PCs usarem os mesmos parâmetros:
+
+- espessura, **chapa padrão, margem e espaçamento** (vazio = usar o painel), peça mínima e **veio** (só 0°/180°);
+- por camada (corte, vinco, gravação, raster): modo, velocidade, potência mín./máx., passadas, intervalo do scan;
+- **kerf medido, data do último teste e quem validou** — teste com mais de 90 dias aparece com ⚠ no painel do
+  laser (o tubo de CO₂ perde potência com o tempo: refaça a grade em vez de ir subindo a potência);
+- **proibido** + motivo: bloqueia a exportação daquele material.
+
+---
+
 ## 🌐 Intranet FIAP
 
 O botão **Intranet FIAP** abre a página de *Solicitações Maker* num navegador dentro do programa.
@@ -235,7 +317,7 @@ segue passos numerados, no estilo do MakerCase, com botões ilustrados; a prévi
 mostra só os passos de que precisa.
 
 <div align="center">
-<img src="docs/tela_caixa.png" alt="Sindri — gerador de caixas com tampa baú aberta na prévia 3D" width="900">
+<img src="docs/design/caixa.png" alt="Sindri — gerador de caixas com tampa baú aberta na prévia 3D" width="900">
 </div>
 
 **Modelos** (passo 1):
@@ -405,6 +487,11 @@ Use `--permitir-parcial` quando quiser exportar as peças que couberam; o retorn
 - [x] Gerar o `.exe` no Windows com `build_exe.bat` e verificar a inicialização ([registro](docs/COMPILACAO_WINDOWS.md))
 - [ ] Validar o fluxo completo de produção no executável
 - [ ] Cortar uma caixa do gerador em MDF 3 mm e ajustar o kerf padrão do laboratório
+- [ ] Conferir no RDWorks atual que velocidade e potência mín./máx. aplicadas (tubo 1) aparecem nas camadas
+- [ ] Descobrir com `tools/config_diff.py` onde o RDWorks guarda saída, modo e passadas de cada camada
+- [ ] Anotar aqui o ajuste da otimização de caminho do RDWorks que respeita a ordem do arquivo
+- [ ] Fazer a grade de teste de cada material e preencher o banco (validar a mínima de 65% da máxima)
+- [ ] Calibrar a estimativa de tempo com o tempo do RDWorks em 2–3 placas reais
 
 ---
 

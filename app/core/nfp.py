@@ -36,6 +36,7 @@ class PartShape:
     net_area: float
     rotations: list[float]
     material: str = ""
+    spacing: float = -1.0        # espaçamento do material da peça (< 0 = o do encaixe)
 
 
 @dataclass
@@ -59,6 +60,12 @@ DETAIL_LEVELS = {0: (0.0, 0.05), 1: (10.0, 0.2), 2: (20.0, 0.5)}
 # simplificação aumenta (até MAX_SIMPLIFY_MM) e a folga da peça cresce junto, então continua seguro.
 MAX_OUTLINE_VERTICES = 100
 MAX_SIMPLIFY_MM = 0.4
+# Furos com vértices demais (anel de 450 mm desenhado com milhares de segmentos) deixavam o part-in-part
+# lentíssimo: o IFP do furo é uma soma de Minkowski furo × peça (vértices × vértices), calculada para cada
+# rotação do anfitrião e de cada peça candidata — a 1ª solução de um kit com um anel assim levava ~17 s. Acima
+# deste número o furo é simplificado e encolhido pela mesma tolerância (e recortado pelo furo exato), então o
+# furo usado no encaixe fica sempre DENTRO do furo real.
+MAX_HOLE_VERTICES = 100
 
 
 def _ok(g) -> bool:
@@ -98,6 +105,7 @@ class NFPCache:
         self.hole_shrink = self.spacing / 2.0 + self.curve_tol + self.arc_tol
         self._base: dict[str, np.ndarray] = {}
         self._simp: dict[str, float] = {}       # tolerância de simplificação usada em cada peça
+        self._holes: dict[str, list] = {}       # furos (coord. locais) + tolerância de simplificação
         self.part_in_part = part_in_part
         self._variants: dict[tuple, Variant] = {}
         self._nfp: dict[tuple, list] = {}
@@ -117,7 +125,7 @@ class NFPCache:
         v = self._variants.get(key)
         if v is not None:
             return v
-        sh = self.shapes[pid]
+        half = self._half_spacing(pid)
         tf = Transform(rot, mirror)
         simp = Polygon(tf.pts_array(self._base_outline(pid)))
         if not simp.is_valid:
@@ -128,7 +136,7 @@ class NFPCache:
         extra = self._simp.get(pid, self.simplify_tol) - self.simplify_tol
         # simplificação maior que a do nível de detalhe: folga extra proporcional (garante que o contorno
         # usado no cálculo contém a peça inteira, mesmo com os arredondamentos do offset)
-        offset = self.offset + (extra * 1.25 + 0.05 if extra > 1e-9 else 0.0)
+        offset = (self.offset - self.spacing / 2.0 + half) + (extra * 1.25 + 0.05 if extra > 1e-9 else 0.0)
         off = pco.Execute(offset * CLIPPER_SCALE)
         off = [p for p in off if pyclipper.Orientation(p)]
         path = max(off, key=lambda p: abs(pyclipper.Area(p))) if off else base
@@ -136,13 +144,27 @@ class NFPCache:
         bbox = (int(arr[:, 0].min()), int(arr[:, 1].min()), int(arr[:, 0].max()), int(arr[:, 1].max()))
         holes, hole_areas = [], []
         if self.part_in_part:
-            for h in sh.holes:
+            shrink = self.hole_shrink - self.spacing / 2.0 + half
+            for h, tol, h_exact in self._base_holes(pid):
                 hp = Polygon(tf.pts_array(h))
                 if not hp.is_valid:
                     hp = hp.buffer(0)
                 if hp.is_empty or hp.geom_type != "Polygon":
                     continue
-                shrunk = offset_int([polygon_to_int(hp)], -self.hole_shrink, arc_tol_mm=self.arc_tol)
+                shrunk = offset_int([polygon_to_int(hp)], -(shrink + tol), arc_tol_mm=self.arc_tol)
+                if tol > 0 and shrunk:
+                    # garantia: o furo simplificado e encolhido nunca passa do furo exato encolhido
+                    exact = Polygon(tf.pts_array(h_exact))
+                    if not exact.is_valid:
+                        exact = exact.buffer(0)
+                    if _ok(exact):
+                        lim = offset_int([polygon_to_int(exact)], -shrink, arc_tol_mm=self.arc_tol)
+                        pc = pyclipper.Pyclipper()
+                        pc.AddPaths(shrunk, pyclipper.PT_SUBJECT, True)
+                        if lim:
+                            pc.AddPaths(lim, pyclipper.PT_CLIP, True)
+                        shrunk = pc.Execute(pyclipper.CT_INTERSECTION, pyclipper.PFT_NONZERO,
+                                            pyclipper.PFT_NONZERO)
                 for s in shrunk:
                     if pyclipper.Orientation(s) and abs(pyclipper.Area(s)) > 0:
                         holes.append(s)
@@ -151,6 +173,12 @@ class NFPCache:
         self._variants[key] = v
         self._trim(self._variants)
         return v
+
+    def _half_spacing(self, pid: str) -> float:
+        """Meio espaçamento da peça: o do material dela (banco de materiais) ou o do encaixe. Peças de
+        materiais diferentes nunca dividem placa, então cada par de vizinhas tem o mesmo espaçamento."""
+        sp = getattr(self.shapes[pid], "spacing", -1.0)
+        return (float(sp) if sp is not None and sp >= 0 else self.spacing) / 2.0
 
     def _base_outline(self, pid: str) -> np.ndarray:
         """Contorno externo simplificado (e com reentrâncias estreitas fechadas) em coordenadas locais.
@@ -191,13 +219,51 @@ class NFPCache:
         self._simp[pid] = tol
         return b
 
+    def _base_holes(self, pid: str) -> list:
+        """Furos da peça (coordenadas locais) para o part-in-part: [(contorno, tolerância, exato)].
+
+        Furos com até MAX_HOLE_VERTICES vértices ficam exatos (tolerância 0). Os maiores são
+        simplificados; a tolerância usada volta junto para o furo ser encolhido por ela (e recortado
+        pelo furo exato), de modo que só PERDE área — nenhuma peça vai parar fora do furo real."""
+        hs = self._holes.get(pid)
+        if hs is not None:
+            return hs
+        hs = []
+        for h in self.shapes[pid].holes:
+            if len(h) <= MAX_HOLE_VERTICES:
+                hs.append((h, 0.0, h))
+                continue
+            poly = Polygon(h)
+            if not poly.is_valid:
+                poly = poly.buffer(0)
+            if poly.geom_type != "Polygon":
+                poly = max(getattr(poly, "geoms", [poly]), key=lambda g: g.area)
+            if not _ok(poly):
+                hs.append((h, 0.0, h))
+                continue
+            x0, y0, x1, y1 = poly.bounds
+            max_tol = max(MAX_SIMPLIFY_MM, min(1.0, 0.0008 * math.hypot(x1 - x0, y1 - y0)))
+            tol = self.simplify_tol
+            simp = poly.simplify(tol, preserve_topology=True)
+            while _ok(simp) and len(simp.exterior.coords) > MAX_HOLE_VERTICES + 1 and tol < max_tol:
+                tol = min(max_tol, tol * 1.6)
+                simp = poly.simplify(tol, preserve_topology=True)
+            if not _ok(simp):
+                hs.append((h, 0.0, h))
+                continue
+            hs.append((np.asarray(simp.exterior.coords)[:-1], tol + 0.01, h))
+        self._holes[pid] = hs
+        return hs
+
     def export_state(self) -> tuple:
-        return (self._base, self._variants, self._nfp, self._simp)
+        return (self._base, self._variants, self._nfp, self._simp, self._hole_ifp)
 
     def import_state(self, state: tuple):
         base, variants, nfp = state[:3]
         if len(state) > 3:
             self._simp.update(state[3])
+        if len(state) > 4:
+            self._hole_ifp.update(state[4])
         self._base.update(base)
         self._variants.update(variants)
         self._nfp.update(nfp)

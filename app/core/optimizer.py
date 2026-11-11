@@ -41,7 +41,7 @@ class Individual:
 def part_rotations(part: Part, params: NestParams) -> list[float]:
     if part.rotation_locked:
         return [0.0]
-    return params.rotations()
+    return params.rotations(part.material or "")
 
 
 def shapes_from_parts(parts: list[Part], params: NestParams) -> dict[str, PartShape]:
@@ -50,7 +50,9 @@ def shapes_from_parts(parts: list[Part], params: NestParams) -> dict[str, PartSh
         outer = np.asarray(p.outer.exterior.coords)[:-1]
         holes = [np.asarray(h.exterior.coords)[:-1] for h in p.holes]
         net = p.outer.area - sum(h.area for h in p.holes)
-        shapes[p.id] = PartShape(p.id, outer, holes, net, part_rotations(p, params), p.material)
+        spacing = params.for_material(p.material or "").spacing
+        shapes[p.id] = PartShape(p.id, outer, holes, net, part_rotations(p, params), p.material,
+                                 spacing if spacing != params.spacing else -1.0)
     return shapes
 
 
@@ -84,6 +86,9 @@ def _worker_eval(ind: Individual):
 
 # ---------------------------------------------------------------------------
 class GeneticNester:
+    LOCAL_MOVES = 2         # por geração: filhos = um dos 2 melhores + UM movimento (inserção/inversão)
+    INSERT_SHARE = 0.7      # desses movimentos, quantos são inserção (o resto é inversão de trecho)
+
     def __init__(self, parts: list[Part], params: NestParams,
                  locked: Optional[list[Placement]] = None, seed: Optional[int] = None,
                  workers: Optional[int] = None):
@@ -154,6 +159,26 @@ class GeneticNester:
             crit = "left" if crit == "bbox" else "bbox"
         return Individual(tuple(genes), crit)
 
+    def local_move(self, ind: Individual) -> Individual:
+        """Vizinho de ``ind`` com UM movimento grande na ordem, sem mexer no resto: inserção (tira uma peça
+        e reinsere em posição aleatória) ou inversão de um trecho. A mutação comum só troca vizinhos, então
+        uma peça andava uma posição por vez."""
+        genes = list(ind.genes)
+        n = len(genes)
+        if n < 3:
+            return ind
+        if n < 4 or self.rng.random() < self.INSERT_SHARE:
+            i = self.rng.randrange(n)
+            j = self.rng.randrange(n - 1)
+            g = genes.pop(i)
+            genes.insert(j if j < i else j + 1, g)          # nunca volta para o mesmo lugar
+        else:
+            i, j = sorted(self.rng.sample(range(n + 1), 2))
+            if j - i < 2:
+                i, j = (i, i + 2) if i + 2 <= n else (n - 2, n)
+            genes[i:j] = genes[i:j][::-1]
+        return Individual(tuple(genes), ind.criterion)
+
     def crossover(self, a: Individual, b: Individual) -> Individual:
         n = len(a.genes)
         if n < 2:
@@ -174,7 +199,8 @@ class GeneticNester:
     def _to_result(self, res, ind: Individual) -> NestResult:
         return NestResult(res.placements, res.sheets_used, res.utilization, res.fitness,
                           list(res.unplaced) + list(self.too_big), self.generation, self.evaluated,
-                          list(res.sheet_materials))
+                          list(res.sheet_materials), list(getattr(res, "sheet_remnants", [])),
+                          list(getattr(res, "sheet_bbox", [])))
 
     def _consider(self, ind: Individual, res, on_best) -> None:
         self.evaluated += 1
@@ -210,6 +236,14 @@ class GeneticNester:
         new = [scored[0][1]]
         if len(scored) > 1:
             new.append(scored[1][1])
+        # busca local em volta dos melhores: um movimento grande de cada vez (0 = desligado, como era antes)
+        for k in range(min(int(self.LOCAL_MOVES), max(0, size - len(new) - 1))):
+            base = scored[k % min(2, len(scored))][1]
+            for _ in range(8):
+                child = self.local_move(base)
+                if child.key() not in self._seen and all(child.key() != c.key() for c in new):
+                    break
+            new.append(child)
         tries = 0
         while len(new) < size and tries < size * 20:
             tries += 1
@@ -250,10 +284,13 @@ class GeneticNester:
                 on_best(self.best)
             return self.best
 
-        self.decoder.cancelled = should_stop
-        # 1) solução rápida no próprio processo, também interrompível
+        # 1) solução rápida no próprio processo. Só o "Parar" do usuário a interrompe: o limite de
+        # tempo e a parada automática valem para a otimização, senão uma 1ª solução cortada no meio
+        # mostraria peças que cabem como "não couberam".
+        self.decoder.cancelled = stop_event.is_set
         first = self.first_individual()
         self._consider(first, self.evaluate_local(first), on_best)
+        self.decoder.cancelled = should_stop
         if on_progress:
             on_progress(self._progress(t0))
 

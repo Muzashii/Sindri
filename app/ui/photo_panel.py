@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import os
 import threading
-from dataclasses import asdict, fields
+from dataclasses import asdict, fields, replace
 from typing import Callable, Optional
 
 import numpy as np
@@ -125,6 +125,8 @@ class PhotoPanel(QWidget):
         self._result_params: Optional[PhotoParams] = None
         self._gen = 0
         self._busy = False
+        self._trace_active = False
+        self._trace_error = ""
         self._bridge = _Bridge()
         self._bridge.done.connect(self._traced)
         self._timer = QTimer(self)
@@ -147,9 +149,11 @@ class PhotoPanel(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setFixedWidth(340)
+        scroll.setFixedWidth(theme.metric("panel_photo"))
         self._controls = scroll
         body = QWidget()
+        from PySide6.QtWidgets import QSizePolicy
+        body.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         scroll.setWidget(body)
         v = QVBoxLayout(body)
         v.setContentsMargins(12, 12, 6, 12)
@@ -157,12 +161,16 @@ class PhotoPanel(QWidget):
         title = QLabel("Gravação de foto")
         title.setObjectName("SectionTitle")
         v.addWidget(title)
+        scope = QLabel("Foto é um trabalho independente. Salvar projeto guarda apenas o encaixe; exporte a foto antes de fechar.")
+        scope.setWordWrap(True)
+        scope.setObjectName("Muted")
+        v.addWidget(scope)
 
         g0 = _Section("Imagem", "open")
         f0 = QVBoxLayout(g0.body)
         f0.setContentsMargins(0, 0, 0, 0)
+        # ação principal fica no estado vazio da prévia; aqui é secundária (vira "Trocar imagem…")
         self.btn_open = QPushButton("Abrir imagem…")
-        self.btn_open.setObjectName("primary")
         self.btn_open.setToolTip("Foto ou desenho (PNG, JPG, BMP…). Você também pode arrastar para cá.")
         self.btn_open.clicked.connect(self.open_dialog)
         self.file_lbl = QLabel("Nenhuma imagem aberta.")
@@ -190,19 +198,22 @@ class PhotoPanel(QWidget):
         g2 = _Section("Linhas e tons", "layers")
         f2 = QFormLayout(g2.body)
         self.mode = QComboBox()
-        self.mode.addItem("Imagem BMP (rápido)", "imagem")
-        self.mode.addItem("Linhas DXF (vetor)", "linhas")
+        # textos curtos: o campo tem ~130 px e cortava em "Imagem BMP (recom…"; o detalhe fica na dica
+        self.mode.addItem("Imagem BMP", "imagem")
+        self.mode.addItem("Linhas DXF (teste)", "linhas")
+        self.mode.setItemData(0, "Recomendado: o RDWorks faz o scan da imagem", Qt.ToolTipRole)
+        self.mode.setItemData(1, "Experimental: traços vetoriais, bem mais lento", Qt.ToolTipRole)
         self.mode.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.mode.setMinimumContentsLength(10)
         self.mode.setToolTip(
-            "Imagem: um BMP em tons de cinza; o RDWorks grava linha a linha variando a potência entre a\n"
-            "mínima (claro) e a máxima (escuro). Abre na hora, mesmo fotos grandes.\n"
-            "Linhas: cada tom vira traços vetoriais numa camada com potência própria (arquivo bem maior;\n"
-            "o RDWorks pode demorar a abrir).")
+            "Imagem (recomendado): um BMP em tons de cinza; o RDWorks faz o scan linha a linha variando a\n"
+            "potência entre a mínima (claro) e a máxima (escuro). Abre na hora, mesmo fotos grandes.\n"
+            "Linhas (experimental): cada tom vira traços vetoriais. O RDWorks trata como corte: acelera e\n"
+            "freia em cada traço (muito mais lento) e deixa marca no início/fim de cada um.")
         f2.addRow("Exportar como", self.mode)
         self.line = _dspin(0.05, 2, 0.05, 2, " mm",
-                           "Distância entre as linhas (o ponto do laser costuma ter 0,1–0,2 mm).\n"
-                           "Menor = mais detalhe, arquivo maior e gravação mais demorada.")
+                           "Distância entre as linhas. Foto em madeira com laser de CO2: 0,08–0,1 mm (ponto de\n"
+                           "partida para teste). Menor = mais detalhe, arquivo maior e gravação mais demorada.")
         self.levels = QSpinBox()
         self.levels.setRange(1, MAX_LEVELS)
         self.levels.setToolTip("Quantas potências diferentes (cada uma vira uma camada/cor no RDWorks)")
@@ -305,7 +316,12 @@ class PhotoPanel(QWidget):
         self.msg_box.hide()
         v.addWidget(self.msg_box)
         self.view = PhotoView()
-        v.addWidget(self.view, 1)
+        self.view.setAccessibleName("Prévia da foto na placa; use X e Y para posicionar")
+        from PySide6.QtWidgets import QStackedWidget
+        self.view_stack = QStackedWidget()
+        self.view_stack.addWidget(self._build_empty())
+        self.view_stack.addWidget(self.view)
+        v.addWidget(self.view_stack, 1)
         bottom = QHBoxLayout()
         self.info = QLabel("")
         self.info.setObjectName("Muted")
@@ -378,7 +394,7 @@ class PhotoPanel(QWidget):
     def laser_values(self, palette=None) -> dict:
         """{camada do RDWorks: (velocidade, potência)} de cada nível."""
         from ..core import laser
-        p = self.params()
+        p = self.export_params() or self.params()
         pal = palette or laser.DEFAULT_PALETTE
         if p.mode == "imagem":                       # bitmap na camada preta
             if p.dither:                             # pontilhado: um ponto é queimado ou não, potência única
@@ -389,6 +405,41 @@ class PhotoPanel(QWidget):
                 for k, pw in enumerate(p.level_powers()[:n])}
 
     # ------------------------------------------------------------------ imagem
+    def _build_empty(self) -> QWidget:
+        """Estado vazio igual ao do encaixe: ícone, instrução e um botão só."""
+        w = QWidget()
+        w.setObjectName("PhotoEmpty")
+        lay = QVBoxLayout(w)
+        lay.addStretch(1)
+        self.empty_icon = QLabel()
+        self.empty_icon.setAlignment(Qt.AlignCenter)
+        lay.addWidget(self.empty_icon)
+        t1 = QLabel("Arraste uma foto para cá")
+        t1.setObjectName("EmptyTitle")
+        t1.setAlignment(Qt.AlignCenter)
+        t2 = QLabel("PNG, JPG ou BMP. Depois ajuste tamanho, posição e tons; a prévia mostra o que vai ser gravado.")
+        t2.setObjectName("Muted")
+        t2.setAlignment(Qt.AlignCenter)
+        t2.setWordWrap(True)
+        lay.addWidget(t1)
+        lay.addWidget(t2)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        self.btn_empty_open = QPushButton("Escolher imagem…")
+        self.btn_empty_open.setObjectName("primary")
+        self.btn_empty_open.clicked.connect(self.open_dialog)
+        row.addWidget(self.btn_empty_open)
+        row.addStretch(1)
+        lay.addSpacing(8)
+        lay.addLayout(row)
+        lay.addStretch(2)
+        self._refresh_empty_icon()
+        return w
+
+    def _refresh_empty_icon(self):
+        from .icons import pixmap
+        self.empty_icon.setPixmap(pixmap("image", theme.tokens()["accent"], 64, 1.5))
+
     def open_dialog(self):
         start = os.path.dirname(self.image_path) if self.image_path else os.path.expanduser("~")
         path, _ = QFileDialog.getOpenFileName(self, "Abrir imagem", start, IMAGE_FILTER)
@@ -405,9 +456,15 @@ class PhotoPanel(QWidget):
         self.gray, self.image_path = gray, path
         h, w = gray.shape
         self.file_lbl.setText(f"{os.path.basename(path)} · {w} × {h} px")
+        self.btn_open.setText("Trocar imagem…")
+        if self.view_stack.currentWidget() is not self.view:
+            self.view_stack.setCurrentWidget(self.view)
+            QTimer.singleShot(0, self.view.fit)       # a prévia acabou de ganhar tamanho
         self._update_size()
         if first:
             self.center()
+        self._timer.stop()
+        self._invalidate_trace()
         self.retrace()
         return True
 
@@ -442,18 +499,38 @@ class PhotoPanel(QWidget):
             wdg.setToolTip(wdg.toolTip().split("\n(Imagem")[0] + ("" if lines else
                            "\n(Imagem: só para ver na placa — no RDWorks a imagem entra onde você colocar)"))
 
+    def export_params(self):
+        if self.result is None or self._busy or self._timer.isActive() or self._done_gen != self._gen:
+            return None
+        # Position and laser controls do not change pixels; merge them into the valid snapshot.
+        current = self.params()
+        return replace(self._result_params, x_mm=current.x_mm, y_mm=current.y_mm,
+                       speed=current.speed, power_min=current.power_min, power_max=current.power_max)
+
+    def _invalidate_trace(self):
+        self._gen += 1
+        self._busy = True
+        self._trace_error = ""
+        self.btn_export.setEnabled(False)
+        self.info.setText("Gerando… aguarde a prévia atualizada para exportar.")
+
     def _changed(self, *_):
         self._mode_ui()
         self._save_settings()
         self._update_size()
         if self.gray is not None:
-            self.info.setText("Gerando…")
+            self._invalidate_trace()
             self._timer.start()
 
     def retrace(self):
         if self.gray is None:
             return
-        self._gen += 1
+        if self._trace_active:
+            self._timer.start()
+            return
+        self._trace_active = True
+        self._busy = True
+        self.btn_export.setEnabled(False)
         gen, gray, p = self._gen, self.gray, self.params()
 
         def work():
@@ -481,11 +558,19 @@ class PhotoPanel(QWidget):
     _done_gen = -1
 
     def _traced(self, gen, payload, err):
+        self._trace_active = False
         if gen != self._gen:
+            if not self._timer.isActive():
+                self._timer.start()
             return
+        self._busy = False
+        self._timer.stop()
         self._done_gen = gen
         if err is not None or payload is None:
-            self.info.setText(f"Erro ao gerar: {err}")
+            self.result = self._result_params = None
+            self._trace_error = f"Erro ao gerar: {err}. Altere um ajuste ou abra a imagem novamente para tentar."
+            self.btn_export.setEnabled(False)
+            self.info.setText(self._trace_error)
             return
         self.result, self._result_params = payload
         self._refresh_pixmap()
@@ -557,10 +642,12 @@ class PhotoPanel(QWidget):
             wdg.setValue(round(val, 1))
             wdg.blockSignals(False)
         self._save_settings()
+        self._update_info()
 
     def _moved_by_spin(self, *_):
         self._place_photo()
         self._save_settings()
+        self._update_info()
 
     def center(self):
         w, h = self.plate_size()
@@ -588,7 +675,13 @@ class PhotoPanel(QWidget):
             self.info.setText("Abra uma imagem para começar (botão à esquerda ou arraste o arquivo).")
             self.btn_export.setEnabled(False)
             return
+        if self._busy or self._timer.isActive():
+            self.btn_export.setEnabled(False)
+            self.info.setText("Gerando… aguarde a prévia atualizada para exportar.")
+            return
         if self.result is None:
+            self.btn_export.setEnabled(False)
+            self.info.setText(self._trace_error or "Altere um ajuste para gerar a prévia.")
             return
         w, h = self.plate_size()
         outside = (p.x_mm < -1e-6 or p.y_mm < -1e-6 or p.x_mm + self.result.width_mm > w + 1e-6
@@ -614,11 +707,15 @@ class PhotoPanel(QWidget):
         if outside:
             txt += "  ·  ⚠ a foto passa da borda da placa"
         self.info.setText(txt)
+        from .accessibility import announce
+        announce(self.info, txt)
         self.btn_export.setEnabled(ok)
 
     def set_compact(self, on: bool):
         """Telas pequenas: coluna de controles mais estreita."""
-        self._controls.setFixedWidth(290 if on else 340)
+        self._controls.setFixedWidth(290 if on else theme.metric("panel_photo"))
+        for form in self._controls.findChildren(QFormLayout):
+            form.setRowWrapPolicy(QFormLayout.WrapAllRows if on else QFormLayout.WrapLongRows)
 
     def show_message(self, html: str):
         self.msg.setText(html)
@@ -629,4 +726,5 @@ class PhotoPanel(QWidget):
         self._update_info()
 
     def refresh_theme(self):
+        self._refresh_empty_icon()
         self._refresh_plate()

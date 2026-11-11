@@ -11,6 +11,7 @@ from ...core.models import NestResult
 from ...core.project import ProjectError, load_project, save_project
 from ..dialogs import settings
 from ..render import clear_graphics_cache
+from ..tasks import run_task
 from .common import APP_NAME, now_txt
 
 
@@ -60,11 +61,55 @@ class ProjectMixin:
 
     def _write_project(self, path: str):
         res = NestResult(self.placements, self.n_sheets, self._utilization(), 0.0, self.unplaced)
-        save_project(path, self.files, self.settings_panel.params(), self.parts, res,
+        save_project(path, self.files, self.nest_params(), self.parts, res,
                      multipliers=self.file_multipliers, label=self.request_label,
                      materials=self.file_materials, request=self.request_info, tags=self.file_tags,
                      checklist={"cut": sorted(self.cut_sheets), "done": sorted(self.done_parts)},
-                     file_units=self.file_units, source_hashes=self.source_hashes, report=self.report)
+                     file_units=self.file_units, source_hashes=self.source_hashes, report=self.report,
+                     extra=self._project_extra(), file_repairs=self.file_repairs)
+
+    def _project_extra(self) -> dict:
+        from ...core.operations import color_ops_to_json
+        return {"color_ops": color_ops_to_json(self.color_ops),
+                "color_ops_confirmed": [[m, int(a)] for m, a in sorted(self.color_ops_confirmed)],
+                "sheet_files": [[int(si), path, self.sheet_stamps.get(si, "")]
+                                for si, path in sorted(self.sheet_files.items())],
+                "sheet_remnants": [[int(si), rid] for si, rid in sorted(self.sheet_remnants.items())],
+                "saved_leftover": [[int(si), round(float(a), 1)] for si, a in sorted(self.saved_leftover.items())],
+                "last_export_base": getattr(self, "last_export_base", ""),
+                "issue_acks": sorted(self.issue_acks)}
+
+    def _load_project_extra(self, extra: dict):
+        from ...core.operations import color_ops_from_json
+        extra = extra or {}
+        self.color_ops = color_ops_from_json(extra.get("color_ops"))
+        self.color_ops_confirmed = set()
+        for row in extra.get("color_ops_confirmed") or []:
+            try:
+                self.color_ops_confirmed.add((str(row[0]), int(row[1])))
+            except (TypeError, ValueError, IndexError):
+                pass
+        self.sheet_files, self.sheet_stamps = {}, {}
+        for row in extra.get("sheet_files") or []:
+            try:
+                si, path, stamp = int(row[0]), str(row[1]), str(row[2])
+            except (TypeError, ValueError, IndexError):
+                continue
+            self.sheet_files[si], self.sheet_stamps[si] = path, stamp
+        self.sheet_remnants = {}
+        for row in extra.get("sheet_remnants") or []:
+            try:
+                self.sheet_remnants[int(row[0])] = str(row[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+        self.saved_leftover = {}
+        for row in extra.get("saved_leftover") or []:
+            try:
+                self.saved_leftover[int(row[0])] = float(row[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+        self.last_export_base = str(extra.get("last_export_base") or "")
+        self.issue_acks = {str(k) for k in extra.get("issue_acks") or [] if isinstance(k, str)}
 
     @staticmethod
     def autosave_path() -> str:
@@ -82,6 +127,9 @@ class ProjectMixin:
 
     def autosave(self):
         """Guarda o trabalho atual (encaixe + checklist) para recuperar se o programa fechar sem salvar."""
+        if getattr(self, "_ui_task_depth", 0):
+            self.schedule_autosave()
+            return
         if not self.files or not self.dirty or self.worker is not None:
             return
         try:
@@ -125,7 +173,7 @@ class ProjectMixin:
             return
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            proj = load_project(path)
+            proj = run_task(self, "Abrindo projeto de encaixe", lambda: load_project(path))
         except ProjectError as e:
             QApplication.restoreOverrideCursor()
             QMessageBox.critical(self, "Erro ao abrir projeto", str(e))
@@ -145,6 +193,7 @@ class ProjectMixin:
         self.file_materials = dict(proj.materials)
         self.file_tags = dict(getattr(proj, "tags", {}) or {})
         self.file_units = dict(proj.units)
+        self.file_repairs = {k: list(v) for k, v in (getattr(proj, "repairs", {}) or {}).items()}
         self.source_hashes = dict(proj.source_hashes)
         ck = getattr(proj, "checklist", None) or {}
         self.cut_sheets = set(int(x) for x in ck.get("cut", []))
@@ -154,6 +203,7 @@ class ProjectMixin:
         self.parts_panel.set_request(proj.request)
         self.parts = proj.parts
         self.pmap = {p.id: p for p in self.parts}
+        self._load_project_extra(getattr(proj, "extra", {}))
         self.placements = list(proj.result.placements) if proj.result else []
         self.n_sheets = max([pl.sheet_index + 1 for pl in self.placements], default=0)
         self.unplaced = list(proj.result.unplaced) if proj.result else []
@@ -172,8 +222,7 @@ class ProjectMixin:
             self.tabs.setCurrentIndex(1)
             self.tabs.blockSignals(False)
             self._redraw()
-        else:
-            self.canvas.show_preview(self.report.preview)
+        self.refresh_review()
         self._update_status()
         self._update_buttons()
         if proj.warnings:

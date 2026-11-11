@@ -10,6 +10,7 @@ if ROOT not in sys.path:
 # os processos filhos (spawn) também precisam achar o pacote "app"
 os.environ["PYTHONPATH"] = ROOT + os.pathsep + os.environ.get("PYTHONPATH", "")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("SINDRI_NEST_SEED", "1")             # encaixe repetível nos testes de interface
 os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--no-sandbox")
 os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
 try:  # precisa vir antes de qualquer QApplication
@@ -32,6 +33,9 @@ def isolated_preferences(tmp_path, monkeypatch):
     clipboard.setText = lambda value: setattr(clipboard, "value", value)
     clipboard.text = lambda: clipboard.value
     monkeypatch.setattr(QApplication, "clipboard", staticmethod(lambda: clipboard))
+    # o diálogo "cor do arquivo -> operação" é modal: nos testes aceita o padrão
+    from app.ui.color_ops_dialog import ColorOpsDialog
+    monkeypatch.setattr(ColorOpsDialog, "exec", lambda self: 1)
 
 
 @pytest.fixture(scope="session", autouse=True)

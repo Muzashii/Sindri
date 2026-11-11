@@ -1,5 +1,8 @@
 """Leitura de DXF e normalização para primitivas em milímetros.
 
+Outros formatos (.ai em ``ai_import``, .rd em ``rd_import``) devolvem o mesmo ``RawFile``; o despacho por
+extensão fica em :func:`read_drawing`.
+
 * Explode blocos (INSERT/MINSERT), inclusive aninhados, resolvendo camada "0"
   e cor BYBLOCK pelo bloco pai.
 * Converte unidades ($INSUNITS) para mm.
@@ -18,6 +21,7 @@ from ezdxf import recover
 from ezdxf.math import Matrix44
 from ezdxf import units as ezunits
 
+from .import_issues import CHECK, ERROR, FIXED, ImportIssue
 from .models import Prim
 
 try:
@@ -48,6 +52,8 @@ class RawFile:
     suggested_units: Optional[int] = None   # unidade sugerida quando o tamanho parece absurdo
     size_mm: float = 0.0                    # maior dimensão do desenho (mm, após conversão)
     layers: dict = field(default_factory=dict)   # camada -> {"color": aci, "count": n, "texts": n}
+    issues: list = field(default_factory=list)   # ImportIssue (avisos com local e gravidade)
+    meta: dict = field(default_factory=dict)     # dados do formato de origem (ex.: .rd: velocidade/potência)
 
 
 # unidades oferecidas na interface (código $INSUNITS -> nome)
@@ -83,6 +89,11 @@ def read_dxf(path: str, units_override: Optional[int] = None, ignore_text: bool 
         raise DXFImportError(f"\"{name}\" não pôde ser lido: {e}") from e
 
     warnings: list[str] = []
+    issues: list[ImportIssue] = []
+
+    def issue(kind, severity, message, count=1):
+        issues.append(ImportIssue(os.path.abspath(path), kind, severity, message, count))
+
     declared = int(doc.header.get("$INSUNITS", 0) or 0)
     insunits = declared
     if units_override is not None and units_override >= 0:
@@ -93,6 +104,7 @@ def read_dxf(path: str, units_override: Optional[int] = None, ignore_text: bool 
         factor = 1.0
         note = f"{name}: unidade não definida no arquivo — assumindo milímetros."
         warnings.append(note)
+        issue("units_assumed", FIXED, "Sem unidade no arquivo: considerado em milímetros.")
     else:
         try:
             factor = ezunits.conversion_factor(insunits, ezunits.MM)
@@ -101,6 +113,7 @@ def read_dxf(path: str, units_override: Optional[int] = None, ignore_text: bool 
             factor = 1.0
             note = f"{name}: unidade {insunits} desconhecida — assumindo milímetros."
             warnings.append(note)
+            issue("units_unknown", CHECK, f"Unidade {insunits} desconhecida: considerado em milímetros.")
 
     prims: list[Prim] = []
     skipped: dict[str, int] = {}
@@ -114,6 +127,31 @@ def read_dxf(path: str, units_override: Optional[int] = None, ignore_text: bool 
             skipped[key] = skipped.get(key, 0) + 1
     for t, n in skipped.items():
         warnings.append(f"{name}: {n} entidade(s) {t} ignorada(s).")
+        issue("ignored", FIXED, f"{n} entidade(s) {t} ignorada(s) (o laser não usa).", n)
+    prims, layers, size = filter_prims(path, prims, ignore_text, excluded_layers, warnings, issues)
+    suggested = None
+    if prims and (units_override is None or units_override < 0):
+        suggested = suggest_units(size / factor, factor)
+        if suggested is not None:
+            warnings.append(
+                f"{name}: o arquivo diz estar em {UNIT_NAMES.get(declared, 'unidade indefinida')}, "
+                f"mas assim o desenho teria {size / 1000:.1f} m de largura. Provavelmente está em "
+                f"{UNIT_NAMES[suggested]}. Ajuste em Parâmetros > Unidade do DXF.")
+            issue("units_suspicious", CHECK,
+                  f"Na unidade declarada o desenho teria {size / 1000:.1f} m; provavelmente está em "
+                  f"{UNIT_NAMES[suggested]}.")
+    return RawFile(path, prims, factor, note, warnings, declared, suggested, size, layers, issues)
+
+
+def filter_prims(path: str, prims: list[Prim], ignore_text: bool, excluded_layers: Optional[set],
+                 warnings: list, issues: list) -> tuple[list[Prim], dict, float]:
+    """Etapa comum a todos os formatos: tabela de camadas, camadas desligadas, textos ignorados e
+    aviso de arquivo vazio. Devolve (primitivas que ficam, camadas, maior dimensão em mm)."""
+    name = os.path.basename(path)
+
+    def issue(kind, severity, message, count=1):
+        issues.append(ImportIssue(os.path.abspath(path), kind, severity, message, count))
+
     layers: dict = {}
     for p in prims:
         info = layers.setdefault(p.layer, {"color": p.color, "count": 0, "texts": 0})
@@ -126,18 +164,62 @@ def read_dxf(path: str, units_override: Optional[int] = None, ignore_text: bool 
              not (ignore_text and p.kind in ("TEXT", "MTEXT"))]
     if ignore_text and n_txt:
         warnings.append(f"{name}: {n_txt} texto(s) ignorado(s) (opção “Ignorar textos”).")
+        issue("text_ignored", FIXED, f"{n_txt} texto(s) ignorado(s) (opção “Ignorar textos”).", n_txt)
     if not prims:
         warnings.append(f"{name}: nenhuma geometria suportada encontrada.")
-    size = _drawing_size(prims)
-    suggested = None
-    if prims and (units_override is None or units_override < 0):
-        suggested = suggest_units(size / factor, factor)
-        if suggested is not None:
-            warnings.append(
-                f"{name}: o arquivo diz estar em {UNIT_NAMES.get(declared, 'unidade indefinida')}, "
-                f"mas assim o desenho teria {size / 1000:.1f} m de largura. Provavelmente está em "
-                f"{UNIT_NAMES[suggested]}. Ajuste em Parâmetros > Unidade do DXF.")
-    return RawFile(path, prims, factor, note, warnings, declared, suggested, size, layers)
+        issue("empty", ERROR, "Nenhuma linha que o laser consiga cortar.")
+    return prims, layers, _drawing_size(prims)
+
+
+# extensões de desenho que o Sindri abre (o despacho fica em read_drawing)
+DRAWING_EXTS = (".dxf", ".ai", ".rd")
+DRAWING_FILTER = "Desenhos (*.dxf *.ai *.rd);;Todos (*.*)"
+
+
+def is_drawing(path: str) -> bool:
+    """Arquivo que entra pelo fluxo de desenhos. ``.rld`` entra só para receber a explicação."""
+    return str(path).lower().endswith(DRAWING_EXTS + (".rld",))
+
+
+def read_drawing(path: str, units_override: Optional[int] = None, ignore_text: bool = False,
+                 excluded_layers: Optional[set] = None) -> RawFile:
+    """Lê um desenho de qualquer formato aceito (.dxf, .ai, .rd) e devolve o mesmo ``RawFile``.
+
+    Único ponto de despacho por extensão. ``units_override`` só vale para DXF: .ai está sempre em
+    pontos (1/72 pol) e .rd em micrômetros, já convertidos para mm.
+    """
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".ai":
+        from .ai_import import read_ai
+        return read_ai(path, ignore_text, excluded_layers)
+    if ext == ".rd":
+        from .rd_import import read_rd
+        return read_rd(path, ignore_text, excluded_layers)
+    if ext == ".rld":
+        raise DXFImportError(
+            f"\"{os.path.basename(path)}\" é um projeto do RDWorks (.rld), que o Sindri não lê. No RDWorks, "
+            "use “Salvar para arquivo U” para gerar o arquivo de máquina (.rd) ou exporte o desenho como DXF.")
+    return read_dxf(path, units_override, ignore_text, excluded_layers)
+
+
+def rgb_to_color(rgb) -> tuple[int, Optional[tuple[int, int, int]]]:
+    """Cor RGB de um formato sem ACI → (ACI, rgb) no padrão das primitivas: cor exata da paleta do
+    AutoCAD fica só com o ACI (preto e branco = 7); as outras guardam o RGB e o ACI mais próximo."""
+    rgb = (int(rgb[0]), int(rgb[1]), int(rgb[2]))
+    if rgb in ((0, 0, 0), (255, 255, 255)):
+        return 7, None
+    from ezdxf.colors import aci2rgb
+    best, best_d = 7, None
+    for aci in range(1, 256):
+        if aci == 7:
+            continue
+        c = aci2rgb(aci)
+        d = (c[0] - rgb[0]) ** 2 + (c[1] - rgb[1]) ** 2 + (c[2] - rgb[2]) ** 2
+        if d == 0:
+            return aci, None
+        if best_d is None or d < best_d:
+            best, best_d = aci, d
+    return best, rgb
 
 
 def _drawing_size(prims: list[Prim]) -> float:
