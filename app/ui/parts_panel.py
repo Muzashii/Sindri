@@ -78,6 +78,19 @@ class PartRow(QFrame):
         extra = [f"{part.file_quantity}× no arquivo"] + ([f"{len(part.holes)} furo(s)"] if part.holes else [])
         # Os detalhes de origem permanecem na dica, liberando altura na lista.
         sub.setToolTip(f"{_fmt(w)} × {_fmt(h)} mm · " + " · ".join(extra))
+        # excluir a peça da lista (todas as cópias); o arquivo no disco não muda e Ctrl+Z desfaz
+        self.del_btn = QToolButton()
+        self.del_btn.setObjectName("PartDelete")
+        self.del_btn.setText("Excluir")
+        self.del_btn.setAutoRaise(True)
+        self.del_btn.setFixedHeight(20)
+        self.del_btn.setCursor(Qt.PointingHandCursor)
+        self.del_btn.setToolTip("Tira esta peça (todas as cópias) da lista e do encaixe.\n"
+                                "O arquivo no disco não muda. Ctrl+Z desfaz.")
+        self.del_btn.setAccessibleName(f"Excluir {part.name}")
+        self.del_btn.setStyleSheet(f"QToolButton#PartDelete {{ color: {theme.tokens()['danger']}; padding: 0 2px; }}")
+        self.del_btn.clicked.connect(lambda: panel.removeRequested.emit(part.id))
+        info.addWidget(self.del_btn, 0, Qt.AlignLeft)
         lay.addLayout(info, 1)
 
         ctl = QVBoxLayout()
@@ -292,6 +305,8 @@ class PartsPanel(QWidget):
     requestFilter = Signal(str)           # mostrar só as peças de uma solicitação ("" = todas)
     sheetToggled = Signal(int, bool)      # placa marcada como cortada
     sheetOpenRequested = Signal(int)      # abrir só o arquivo desta placa no RDWorks
+    removeRequested = Signal(str)         # botão "Excluir" de uma peça
+    addRequested = Signal()               # botão "Adicionar peças" (DXF, AI ou RD)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -303,6 +318,13 @@ class PartsPanel(QWidget):
         title.setObjectName("SectionTitle")
         head.addWidget(title)
         head.addStretch(1)
+        self.btn_add = QToolButton()
+        self.btn_add.setText(" Adicionar peças")
+        self.btn_add.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.btn_add.setToolTip("Junta peças de outros arquivos às que já estão aqui — DXF, AI (Illustrator) "
+                                "ou RD (RDWorks) (Ctrl+Shift+O)")
+        self.btn_add.clicked.connect(self.addRequested.emit)
+        head.addWidget(self.btn_add)
         self.btn_clear = QToolButton()
         self.btn_clear.setObjectName("Danger")
         self.btn_clear.setText(" Limpar")
@@ -429,6 +451,14 @@ class PartsPanel(QWidget):
             self.sheet_open_buttons[s["si"]] = op
             h.addWidget(op)
             self.sheets_grid.addWidget(cell, i // cols, i % cols)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        # painel estreito (~1024 px): "Adicionar" curto e "Limpar" só com o ícone (a dica diz o que fazem)
+        narrow = self.width() < 330
+        self.btn_add.setText(" Adicionar" if narrow else " Adicionar peças")
+        self.btn_clear.setText("" if narrow else " Limpar")
+        self.btn_clear.setToolButtonStyle(Qt.ToolButtonIconOnly if narrow else Qt.ToolButtonTextBesideIcon)
 
     def eventFilter(self, obj, e):
         # a barra de rolagem apareceu/sumiu: a área visível mudou sem a linha mudar de tamanho
@@ -591,6 +621,7 @@ class PartsPanel(QWidget):
         self.btn_kits.setIcon(icon("copy", t["text"], 15))
         self.btn_reset.setIcon(icon("reset", t["text"], 15))
         self.btn_clear.setIcon(icon("trash", t["danger"], 15, t["muted"]))
+        self.btn_add.setIcon(icon("plus", t["accent"], 15, t["muted"]))
 
     def _update_empty(self):
         has = bool(self.parts)

@@ -329,23 +329,6 @@ def test_encaixar_com_mais_tempo_dobra_o_limite_so_desta_vez(window, monkeypatch
     assert seen[1].stop_after_seconds == 40
 
 
-def test_rodape_troca_solucoes_por_melhora_e_tentativas(window):
-    w = window
-    cap, val = w._metric_caps["soluções testadas"]
-    w.worker = SimpleNamespace(pause_event=threading.Event())
-    try:
-        w.since_improve = 12.4
-        w._update_gen_chip()
-        assert val.text() == "há 12 s" and cap.text() == "última melhora"
-    finally:
-        w.worker = None
-    w.evaluated = 4050
-    w._update_gen_chip()
-    assert val.text() == "4.050" and cap.text() == "tentativas"
-    assert "soluções" not in cap.text()
-
-
-
 # ---------------------------------------------------------------- 7. placas em grade
 def test_grade_origem_e_vaga_sao_inversas():
     from app.core.models import NestParams

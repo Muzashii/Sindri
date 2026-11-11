@@ -390,3 +390,11 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
     `pyproject.toml` e `executar.bat` pedem `<6.12`; `runtime_check` recusa 6.12+ com Python < 3.12 (o
     lançador reinstala a versão anterior). O `Sindri.exe` já usa 6.11.2 (`requirements-build.txt`). Rever
     quando sair uma 6.12.x corrigida.
+105. **Excluir e adicionar peças pela lista; tempo de corte no rodapé** (pedido do técnico, 11/11): cada peça tem
+    "Excluir" (todas as cópias saem da lista e do encaixe; o arquivo no disco não muda; Ctrl+Z desfaz). A
+    peça excluída fica registrada por arquivo + desenho no projeto (`removed_parts`) e não volta quando o
+    arquivo é relido (mudar tolerância, unidade, camadas); abrir o arquivo de novo do zero traz tudo de volta.
+    "Adicionar peças" no cabeçalho junta DXF, AI ou RD ao lote aberto. O **modo bancada (decisão 95) saiu**:
+    o técnico não ia usar. O rodapé troca "tentativas" pelo **tempo estimado de corte** do lote (mesma conta
+    do relatório, com a calibração dos cortes reais); com placas já marcadas como cortadas mostra "falta
+    cortar"; a dica lista cada placa. Reler o arquivo agora também preserva pontes e kerf de cada peça.

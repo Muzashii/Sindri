@@ -229,9 +229,15 @@ class FilesMixin:
                 pt.id = previous.id
                 pt.quantity = max(0, pt.file_quantity + previous.quantity - previous.file_quantity)
                 pt.rotation_locked = previous.rotation_locked
+                pt.tabs, pt.kerf_comp = previous.tabs, previous.kerf_comp
             elif keep_quantities:
                 pt.id = f"P{next_id:03d}"
                 next_id += 1
+        if keep_quantities and getattr(self, "removed_parts", None):
+            # peças que o técnico excluiu da lista não voltam ao reler o arquivo
+            self.parts = [pt for pt in self.parts if self._removed_key(pt) not in self.removed_parts]
+        elif not keep_quantities:
+            self.removed_parts = set()
         from ...core.project import source_hash
         self.source_hashes = {os.path.abspath(f): source_hash(f) for f in self.files}
         self.pmap = {pt.id: pt for pt in self.parts}
@@ -370,6 +376,7 @@ class FilesMixin:
         self.file_tags = {}
         self.file_units, self.source_hashes = {}, {}
         self.file_repairs, self.issue_acks = {}, set()
+        self.removed_parts = set()
         if hasattr(self, "_autosave_timer"):
             self._autosave_timer.stop()
         self.parts_panel.set_request(None)

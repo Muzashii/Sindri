@@ -1,5 +1,5 @@
 """Fluxo de bancada: RDWorks sem fechar quando os valores não mudam, C com ciclo completo, tempo real ×
-estimado, modo bancada e atualização por versão marcada."""
+estimado e atualização por versão marcada."""
 import json
 
 import pytest
@@ -106,7 +106,7 @@ def test_atualizador_usa_a_maior_tag_e_cai_no_main_sem_tags(tmp_path, monkeypatc
 
 
 # ------------------------------------------------------------------ interface
-def test_c_faz_o_ciclo_e_modo_bancada(tmp_path, monkeypatch):
+def test_c_faz_o_ciclo(tmp_path, monkeypatch):
     import time
     from PySide6.QtWidgets import QApplication, QMessageBox
     from app.ui.main_window import MainWindow
@@ -145,15 +145,5 @@ def test_c_faz_o_ciclo_e_modo_bancada(tmp_path, monkeypatch):
         w.on_sheet_cut(order[0], False)
         w.set_open_next_on_cut(False)
 
-        w.toggle_bench_mode()
-        bench = w._bench
-        assert bench.isVisible() and "Placa" in bench.title.text() and bench.btn_cut.isEnabled()
-        first = bench.si
-        bench.mark_cut()
-        assert first in w.cut_sheets and bench.si != first
-        bench.open_current()
-        assert opened[-1] == bench.si
-        bench.close()
-        assert not bench.isVisible()
     finally:
         w.close()

@@ -77,7 +77,8 @@ class ProjectMixin:
                 "sheet_remnants": [[int(si), rid] for si, rid in sorted(self.sheet_remnants.items())],
                 "saved_leftover": [[int(si), round(float(a), 1)] for si, a in sorted(self.saved_leftover.items())],
                 "last_export_base": getattr(self, "last_export_base", ""),
-                "issue_acks": sorted(self.issue_acks)}
+                "issue_acks": sorted(self.issue_acks),
+                "removed_parts": sorted(getattr(self, "removed_parts", set()))}
 
     def _load_project_extra(self, extra: dict):
         from ...core.operations import color_ops_from_json
@@ -110,6 +111,7 @@ class ProjectMixin:
                 continue
         self.last_export_base = str(extra.get("last_export_base") or "")
         self.issue_acks = {str(k) for k in extra.get("issue_acks") or [] if isinstance(k, str)}
+        self.removed_parts = {str(k) for k in extra.get("removed_parts") or [] if isinstance(k, str)}
 
     @staticmethod
     def autosave_path() -> str:

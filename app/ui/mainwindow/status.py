@@ -147,20 +147,59 @@ class StatusMixin:
             f"Aproveitamento: placas cheias {fmt_pct(us['full'])}, {lasts_word} {fmt_pct(us['last'])}"
             if us["full"] is not None else f"Aproveitamento total {fmt_pct(us['total'])}")
 
-    def _update_gen_chip(self):
-        """Durante o cálculo, há quanto tempo melhorou; ao terminar, quantas tentativas o encaixe fez."""
-        cap, val = self._metric_caps["soluções testadas"]
-        ev = getattr(self, "evaluated", 0)
-        if self.worker is not None:
-            since = float(getattr(self, "since_improve", 0.0) or 0.0)
-            val.setText(f"há {since:.0f} s")
-            cap.setText("última melhora")
-            val.setToolTip("Tempo desde a última vez que o encaixe encontrou uma solução melhor.\n"
-                           "Se passa muito tempo sem melhorar, já dá para parar.")
+    def _update_time_chip(self):
+        """Tempo estimado de corte no rodapé. Calcula um instante depois (vários eventos seguidos —
+        arrastar, encaixe melhorando — viram um cálculo só)."""
+        t = getattr(self, "_time_timer", None)
+        if t is None:
+            from PySide6.QtCore import QTimer
+            t = self._time_timer = QTimer(self)
+            t.setSingleShot(True)
+            t.timeout.connect(self._refresh_time_chip)
+        t.start(400)
+
+    def _refresh_time_chip(self):
+        """Soma o tempo estimado das placas; com placas já cortadas, mostra quanto falta."""
+        from ...core.machine_time import fmt_duration
+        cap, val = self._metric_caps["tempo de corte"]
+        if not self.placements:
+            val.setText("—")
+            cap.setText("tempo de corte")
+            val.setToolTip("Tempo estimado de corte: aparece depois do encaixe.")
+            return
+        try:
+            times = self._sheet_times(self._laser_export_plan())
+        except Exception:                               # a estimativa é informativa: nunca atrapalha o encaixe
+            from ...core.fileutil import log_exception
+            log_exception("rodapé: tempo estimado de corte")
+            val.setText("—")
+            return
+        idx = self.sheet_index()
+        order = [si for si in idx.ordered if si in times]
+        left = [si for si in order if si not in self.cut_sheets]
+        total = sum(times[si].seconds for si in order)
+        rest = sum(times[si].seconds for si in left)
+        if not left:
+            val.setText("✓")
+            cap.setText("tudo cortado")
+        elif len(left) < len(order):
+            val.setText(f"~{fmt_duration(rest)}")
+            cap.setText("falta cortar")
         else:
-            val.setText(f"{ev:,}".replace(",", ".") if ev else "—")
-            cap.setText("tentativas")
-            val.setToolTip("Quantas soluções o encaixe automático testou")
+            val.setText(f"~{fmt_duration(total)}")
+            cap.setText("tempo de corte")
+        lines = [f"Placa {idx.number.get(si, si + 1)}: {times[si].text}"
+                 + (" · cortada" if si in self.cut_sheets else "") for si in order]
+        calib = next((times[si].calibration_text for si in order if times[si].calibrated_n), "")
+        tip = ["Tempo estimado de corte (laser ligado + deslocamentos), pelas velocidades do painel Laser.",
+               f"Total do lote: ~{fmt_duration(total)}" + (f" · falta ~{fmt_duration(rest)}" if rest < total else "")]
+        tip += lines
+        if any(times[si].fallback for si in order):
+            tip.append("Camadas sem velocidade cadastrada usam um valor padrão: preencha a velocidade para afinar.")
+        tip.append(calib.strip().capitalize() + "." if calib else
+                   "Fica mais preciso sozinho: abra a placa pelo Sindri e marque como cortada (3 cortes calibram).")
+        val.setToolTip("\n".join(tip))
+        cap.setToolTip(val.toolTip())
 
     def _warn_low_use(self):
         """Aviso não modal quando a última placa de um material ficou quase vazia (≥ 2 placas)."""
@@ -189,7 +228,7 @@ class StatusMixin:
         self.chip_parts.setText(f"{placed}/{total}" if total else "—")
         cut = sum(pl.sheet_index in self.cut_sheets for pl in self.placements)
         self.chip_parts.setToolTip(f"Solicitadas: {total}\nEncaixadas: {placed}\nEm placas cortadas: {cut}\nSem encaixe: {max(0, total - placed)}")
-        self._update_gen_chip()
+        self._update_time_chip()
         missing = total - placed
         if self.worker is not None:
             paused = self.worker.pause_event.is_set()
