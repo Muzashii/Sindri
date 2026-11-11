@@ -58,7 +58,10 @@ class StatusMixin:
         n = max(1, self.n_sheets)
         cur = min(self.canvas.current_sheet(), n - 1) + 1 if self.canvas.mode == "layout" else 0
         if self.canvas.mode == "layout":
-            self.sheet_label.setText(f"  Placa {cur} de {n}  ")
+            # janela estreita: "1/2" deixa espaço para o resumo da seleção na mesma barra
+            tiny = getattr(self, "_width_mode", (False, False))[1]
+            self.sheet_label.setText(f" {cur}/{n} " if tiny else f"  Placa {cur} de {n}  ")
+            self.sheet_label.setToolTip(f"Placa {cur} de {n} (PgUp / PgDn)")
         else:
             self.sheet_label.setText("")
         on = self.canvas.mode == "layout" and n > 1
@@ -71,7 +74,6 @@ class StatusMixin:
         n = max(1, self.n_sheets)
         i = max(0, min(n - 1, i))
         self.canvas.focus_sheet(i)
-        self.sheet_label.setText(f"  Placa {i + 1} de {n}  ")
         self._update_sheet_label()
 
     def _utilization(self) -> float:
@@ -84,21 +86,98 @@ class StatusMixin:
         total = sum(specs[si].area for si in used if si in specs)
         return area / total if total else 0.0
 
-    def _update_status(self):
-        total = sum(p.quantity for p in self.parts)
-        placed = len(self.placements)
-        u = self._utilization()
-        self.progress.setValue(int(round(u * 1000)))
-        self.chip_util.setText(fmt_pct(u) if placed else "—")
-        specs = self.sheet_specs() if self.placements else {}
-        by_sheet = {}
+    def _usage(self) -> dict:
+        """Aproveitamento das placas cheias × última placa de cada material (ver canvas.usage_split)."""
+        from ..canvas import usage_split
+        if not self.placements:
+            return {"total": 0.0, "full": None, "last": 0.0, "lasts": set(), "low": set(), "by_sheet": {},
+                    "areas": {}}
+        specs = self.sheet_specs()
+        by_sheet: dict[int, float] = {}
         for pl in self.placements:
             part = self.pmap[pl.part_id]
             by_sheet[pl.sheet_index] = by_sheet.get(pl.sheet_index, 0) + part.outer.area - sum(h.area for h in part.holes)
-        detail = "\n".join(f"Placa {index + 1}: {fmt_pct(area / specs[index].area)}"
-                           for index, area in sorted(by_sheet.items()) if index in specs and specs[index].area)
-        self.chip_util.setToolTip("Aproveitamento total: área das peças ÷ área das placas usadas" +
-                                  ("\n" + detail if detail else ""))
+        areas = {si: specs[si].area for si in by_sheet if si in specs}
+        out = usage_split(by_sheet, areas, self.sheet_index().material)
+        out["by_sheet"], out["areas"] = by_sheet, areas
+        return out
+
+    def _update_util_chip(self):
+        """Rodapé: com 2+ placas, "Cheias 59,6% · última 8,5%" (o total engana quando a última placa
+        está quase vazia); com uma placa só, o total. Compacto em janelas estreitas."""
+        cap = self._metric_caps["aproveitamento"][0]
+        tiny = getattr(self, "_width_mode", (False, False))[1]
+        compact = getattr(self, "_width_mode", (False, False))[0]
+        if not self.placements:
+            self.progress.setValue(0)
+            self.chip_util.setText("—")
+            cap.setText("aproveit. total" if compact else "aproveitamento total")
+            self.chip_util.setToolTip("Aproveitamento: área das peças ÷ área das placas usadas")
+            return
+        us = self._usage()
+        idx = self.sheet_index()
+        from ..theme import tokens
+        muted = f"color: {tokens()['muted']}; font-size: 9pt; font-weight: 600;"
+        lasts_word = "última" if len(us["lasts"]) == 1 else "últimas"
+        if us["full"] is None:
+            self.progress.setValue(int(round(us["total"] * 1000)))
+            self.chip_util.setText(fmt_pct(us["total"]))
+            cap.setText("aproveit. total" if compact else "aproveitamento total")
+        else:
+            self.progress.setValue(int(round(us["full"] * 1000)))
+            if tiny:
+                self.chip_util.setText(f"{fmt_pct(us['full'])}<span style='{muted}'> · </span>"
+                                       f"{fmt_pct(us['last'])}")
+                cap.setText("cheias · " + lasts_word)
+            else:
+                self.chip_util.setText(f"<span style='{muted}'>Cheias </span>{fmt_pct(us['full'])}"
+                                       f"<span style='{muted}'> · {lasts_word} </span>{fmt_pct(us['last'])}")
+                cap.setText("aproveitamento")
+        detail = "\n".join(f"Placa {idx.number.get(si, si + 1)}"
+                           + (f" ({idx.material.get(si)})" if idx.material.get(si) else "")
+                           + f": {fmt_pct(area / us['areas'][si])}"
+                           + (" · pouco usada" if si in us["low"] else "")
+                           for si, area in sorted(us["by_sheet"].items()) if us["areas"].get(si))
+        head = ("Cheias: área das peças ÷ área das placas, sem contar a última de cada material.\n"
+                f"{lasts_word.capitalize()}: quanto da última placa de cada material foi usado "
+                "(a sobra pode virar retalho).\n" if us["full"] is not None else "")
+        self.chip_util.setToolTip(head + f"Aproveitamento total: {fmt_pct(us['total'])} "
+                                  "(área das peças ÷ área das placas usadas)" + ("\n" + detail if detail else ""))
+        self.chip_util.setAccessibleName(
+            f"Aproveitamento: placas cheias {fmt_pct(us['full'])}, {lasts_word} {fmt_pct(us['last'])}"
+            if us["full"] is not None else f"Aproveitamento total {fmt_pct(us['total'])}")
+
+    def _update_gen_chip(self):
+        """Durante o cálculo, há quanto tempo melhorou; ao terminar, quantas tentativas o encaixe fez."""
+        cap, val = self._metric_caps["soluções testadas"]
+        ev = getattr(self, "evaluated", 0)
+        if self.worker is not None:
+            since = float(getattr(self, "since_improve", 0.0) or 0.0)
+            val.setText(f"há {since:.0f} s")
+            cap.setText("última melhora")
+            val.setToolTip("Tempo desde a última vez que o encaixe encontrou uma solução melhor.\n"
+                           "Se passa muito tempo sem melhorar, já dá para parar.")
+        else:
+            val.setText(f"{ev:,}".replace(",", ".") if ev else "—")
+            cap.setText("tentativas")
+            val.setToolTip("Quantas soluções o encaixe automático testou")
+
+    def _warn_low_use(self):
+        """Aviso não modal quando a última placa de um material ficou quase vazia (≥ 2 placas)."""
+        us = self._usage()
+        if not us["low"]:
+            return
+        idx = self.sheet_index()
+        bits = [f"placa {idx.number.get(si, si + 1)}" + (f" de {idx.material.get(si)}" if idx.material.get(si) else "")
+                + f" com {fmt_pct(us['by_sheet'][si] / us['areas'][si])}" for si in sorted(us["low"])]
+        self.show_banner("Última placa pouco usada: " + "; ".join(bits) + ". "
+                         '<a href="renest:">Encaixar de novo com mais tempo</a> · '
+                         '<a href="remnants:">Ver retalhos</a>', "warn")
+
+    def _update_status(self):
+        total = sum(p.quantity for p in self.parts)
+        placed = len(self.placements)
+        self._update_util_chip()
         sheets = len({pl.sheet_index for pl in self.placements})
         self.chip_sheets.setText(str(sheets) if placed else "—")
         from ...core.dxf_export import sheet_groups
@@ -110,8 +189,7 @@ class StatusMixin:
         self.chip_parts.setText(f"{placed}/{total}" if total else "—")
         cut = sum(pl.sheet_index in self.cut_sheets for pl in self.placements)
         self.chip_parts.setToolTip(f"Solicitadas: {total}\nEncaixadas: {placed}\nEm placas cortadas: {cut}\nSem encaixe: {max(0, total - placed)}")
-        ev = getattr(self, "evaluated", 0)
-        self.chip_gen.setText(f"{ev:,}".replace(",", ".") if (self.worker is not None or ev) else "—")
+        self._update_gen_chip()
         missing = total - placed
         if self.worker is not None:
             paused = self.worker.pause_event.is_set()
@@ -173,6 +251,12 @@ class StatusMixin:
         editing = self.canvas.mode == "layout" and not running and bool(self.placements)
         for b in (self.btn_rot, self.btn_lock, self.btn_del):
             b.setEnabled(editing)
+        # o resumo/dica da seleção só faz sentido no encaixe (no original não há o que selecionar)
+        if self.canvas.mode != "layout":
+            self.selection_summary.setText("")
+        elif not self.selection_summary.full_text():
+            from .ui_build import SELECTION_HINT
+            self.selection_summary.setText(SELECTION_HINT)
         self.stack.setCurrentIndex(1 if self.parts else 0)
         self.parts_panel.set_editing(not running)
         self.settings_panel.setEnabled(not running)

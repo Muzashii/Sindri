@@ -69,7 +69,8 @@ class ReviewMixin:
         btn = getattr(self, "btn_review_panel", None)
         if btn is not None:
             btn.setVisible(bool(issues))
-            btn.setText(f"Conferência ({len(pend)})" if pend else "Conferência")
+            self._review_pending_n = len(pend)
+            self._sync_panel_toggles()
             btn.blockSignals(True)
             btn.setChecked(self._review_open)
             btn.blockSignals(False)

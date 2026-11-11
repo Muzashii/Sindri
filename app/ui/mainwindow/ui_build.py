@@ -29,6 +29,8 @@ from ..parts_panel import PartsPanel
 from ..settings_panel import SettingsPanel
 from ..theme import apply_theme, metric
 
+SELECTION_HINT = "Clique numa peça para ver os detalhes"
+MIN_WINDOW_WIDTH = 1000          # a tela tem de funcionar a partir de 1024 px
 
 class UIBuildMixin:
     def _build_ui(self):
@@ -168,6 +170,8 @@ class UIBuildMixin:
         self.tabs.setTabToolTip(0, "Como as peças estão no arquivo (contornos abertos em vermelho)")
         self.tabs.setTabToolTip(1, "Resultado do encaixe nas placas")
         self.tabs.currentChanged.connect(self._tab_changed)
+        self.tabs.setUsesScrollButtons(False)            # as duas abas sempre inteiras (sem "Enc ◂")
+        self.tabs.setElideMode(Qt.ElideNone)
         head.addWidget(self.tabs)
         head.addStretch(1)
         self.btn_parts_panel = QToolButton()
@@ -200,7 +204,12 @@ class UIBuildMixin:
         for b in (self.btn_rot, self.btn_lock, self.btn_del):
             head.addWidget(b)
         head.addWidget(self._vsep())
-        head.addStretch(1)
+        # resumo da seleção na própria barra de ícones (sem linha própria acima do desenho)
+        from ..components import ElidedLabel
+        self.selection_summary = ElidedLabel(SELECTION_HINT)
+        self.selection_summary.setObjectName("SelectionSummary")
+        self.selection_summary.setProperty("hint", True)
+        head.addWidget(self.selection_summary, 1)
         self.btn_prev = self._tool("Placa anterior (PgUp)", lambda: self.goto_sheet(self.canvas.current_sheet() - 1))
         self.sheet_label = QLabel("")
         self.sheet_label.setObjectName("Muted")
@@ -218,11 +227,6 @@ class UIBuildMixin:
         edit_position.clicked.connect(self.edit_positions)
         head.addWidget(edit_position)
         cl.addLayout(head)
-        self.selection_summary = QLabel("Selecione uma peça para conferir seus detalhes")
-        self.selection_summary.setObjectName("SelectionSummary")
-        self.selection_summary.setWordWrap(True)
-        self.selection_summary.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        cl.addWidget(self.selection_summary)
 
         self.banner = QFrame()
         self.banner.setObjectName("Banner")
@@ -249,6 +253,7 @@ class UIBuildMixin:
         self.canvas.itemsDragging.connect(lambda it: self._drag_timer.start())
         self.canvas.itemsReleased.connect(self.on_items_released)
         self.canvas.contextMenuForItems.connect(self.show_item_menu)
+        self.canvas.nudgeRequested.connect(self.nudge_selected)
         self.canvas.sheetCutClicked.connect(lambda si: self.on_sheet_cut(si, si not in self.cut_sheets))
         self.canvas.scene().selectionChanged.connect(self._canvas_selection)
         self.canvas.setFrameShape(QFrame.NoFrame)
@@ -339,6 +344,9 @@ class UIBuildMixin:
         for widget in (self.btn_open, self.btn_save, self.btn_intranet, self.btn_gear,
                        self.btn_export_menu, self.btn_theme):
             widget.setAccessibleName(widget.toolTip())
+        # largura mínima explícita: a do modo estreito. Sem isso, a janela larga (botões com texto) não deixava
+        # encolher para 1024 px — o modo estreito só entra depois do redimensionamento (apply_width).
+        self.setMinimumWidth(MIN_WINDOW_WIDTH)
         self.canvas.setAccessibleName("Placas e peças do encaixe")
         self.canvas.setAccessibleDescription("Use Editar posições para selecionar uma instância e ajustar X, Y, ângulo e placa por teclado.")
 
@@ -380,7 +388,8 @@ class UIBuildMixin:
         h.addWidget(self._vsep())
         self.chip_sheets = metric("placas")
         self.chip_parts = metric("peças encaixadas")
-        self.chip_gen = metric("soluções testadas")
+        self.chip_gen = metric("soluções testadas")      # chave antiga; legenda: "tentativas"/"última melhora"
+        self._metric_caps["soluções testadas"][0].setText("tentativas")
         h.addWidget(self._vsep())
         self.status_label = QLabel("Pronto")
         self.status_label.setObjectName("State")
@@ -452,12 +461,33 @@ class UIBuildMixin:
         self.btn_next.setIcon(icon("right", c, 17, m))
         self.btn_fit.setIcon(icon("fit", c, 17, m))
         self.btn_positions.setIcon(icon("settings", c, 16, m))
+        self.btn_review_panel.setIcon(icon("warn", c, 16, m))
+        self.btn_parts_panel.setIcon(icon("layers", c, 16, m))
+        self.btn_params_panel.setIcon(icon("settings", c, 16, m))
         self.banner_close.setIcon(icon("close", m, 14))
         self.empty_icon.setPixmap(pixmap("layers", t["accent"], 64, 1.5))
         self.parts_panel.refresh_icons()
         self.settings_panel.refresh_icons()
 
+    def _lot_key(self) -> tuple:
+        """Identifica o lote aberto (os arquivos): avisos fechados valem até o lote mudar."""
+        import os
+        return tuple(sorted(os.path.abspath(f) for f in getattr(self, "files", []) or []))
+
+    @staticmethod
+    def _banner_topic(text: str) -> str:
+        """Avisos que aparecem uma vez por lote (fechou, não volta a cada reimportação/redesenho)."""
+        if 'href="colorops:"' in (text or ""):
+            return "colorops"
+        if 'href="renest:"' in (text or ""):
+            return "lowuse"
+        return ""
+
     def dismiss_banner(self):
+        topic = self._banner_topic(self.banner_text.text()) if not self.banner.isHidden() else ""
+        if topic:
+            self._dismissed_topics = {(t, k) for t, k in getattr(self, "_dismissed_topics", set())
+                                      if k == self._lot_key()} | {(topic, self._lot_key())}
         self.banner.hide()
         self._banner_recovery = False
         queue = getattr(self, "_banner_queue", [])
@@ -467,6 +497,11 @@ class UIBuildMixin:
 
     def show_banner(self, text: str, kind: str = "info"):
         recovery = 'href="recover:"' in text
+        topic = self._banner_topic(text)
+        if topic and (topic, self._lot_key()) in getattr(self, "_dismissed_topics", set()):
+            return                             # o técnico já fechou este aviso neste lote
+        if topic and not self.banner.isHidden() and self.banner_text.text() == text:
+            return                             # mesmo aviso já na tela: não pisca nem repete a leitura
         if getattr(self, "_banner_recovery", False) and not self.banner.isHidden() and not recovery:
             queue = getattr(self, "_banner_queue", [])
             queue.append((text, kind))
@@ -500,6 +535,11 @@ class UIBuildMixin:
         elif href == "colorops:":
             if self.confirm_color_ops(force=True):
                 self.dismiss_banner()
+        elif href == "renest:":
+            self.banner.hide()                 # sem "fechar": se continuar pouco usada, o aviso volta
+            self.start_nest(more_time=True)
+        elif href == "remnants:":
+            self.open_remnants_dialog()
         elif href == "update:":
             self.install_pending_update()
         elif href == "later:":
@@ -534,6 +574,7 @@ class UIBuildMixin:
         act(m_file, "Abrir DXF…", self.open_dxf_dialog, "Ctrl+O")
         act(m_file, "Baixar solicitação da intranet…", lambda: self.open_intranet(), "Ctrl+I")
         act(m_file, "Adicionar solicitação ao lote aberto…", lambda: self.open_intranet(add=True), "Ctrl+Shift+I")
+        act(m_file, "Solicitações prontas para retirada…", self.show_ready_menu)
         act(m_file, "Limpar tudo", lambda: self.clear_all(), "Ctrl+Shift+Del")
         act(m_file, "Adicionar DXF…", lambda: self.open_dxf_dialog(add=True), "Ctrl+Shift+O")
         m_file.addSeparator()
@@ -629,8 +670,13 @@ class UIBuildMixin:
         if not force and (compact, tiny) == getattr(self, "_width_mode", None):
             return
         self._width_mode = (compact, tiny)
-        for b, txt in ((self.btn_open, "Abrir DXF"), (self.btn_intranet, "Intranet FIAP"), (self.btn_save, "Salvar encaixe")):
+        for b, txt in ((self.btn_open, "Abrir DXF"), (self.btn_save, "Salvar encaixe")):
             b.setText("" if compact else txt)
+        # a intranet é a entrada principal do laboratório: mantém o nome até a janela ficar estreita
+        self.btn_intranet.setText("Intranet FIAP" if not compact else ("" if tiny else "Intranet"))
+        # o texto não pode impedir a janela de encolher até 1024 px (ao encolher, vira só ícone em seguida)
+        self.btn_intranet.setMinimumWidth(36)
+        self._sync_panel_toggles()
         self.btn_export.setText("Exportar" if compact else "Exportar para RDWorks")
         self.preset_combo.setMinimumWidth(170 if compact else 230)
         self.plate_lbl.setVisible(not compact and self.mode_tabs.currentIndex() != 2)
@@ -647,12 +693,13 @@ class UIBuildMixin:
                                  "L travar  ·  Del remover  ·  F1 atalhos")
         self.status_hint.setVisible(not tiny)
         self._metrics_layout.setSpacing(10 if compact else 18)
-        for full, short in (("peças encaixadas", "peças"), ("soluções testadas", "soluções"),
-                            ("aproveitamento", "aproveit. total")):
-            cap, val = self._metric_caps[full]
-            cap.setText(short if compact else ("aproveitamento total" if full == "aproveitamento" else full))
+        cap, _ = self._metric_caps["peças encaixadas"]
+        cap.setText("peças" if compact else "peças encaixadas")
         for wdg in self._metric_caps["soluções testadas"]:
             wdg.setVisible(not tiny)
+        self._update_util_chip()                     # "Cheias · última" muda de formato na janela estreita
+        self._update_sheet_label()
+        self._update_gen_chip()
         self.status_label.setMaximumWidth(16777215)
         self.btn_positions.setText("" if tiny else "Posições…")
         self.preset_combo.setMaximumWidth(170 if tiny else 230)
@@ -661,6 +708,31 @@ class UIBuildMixin:
         side_l = int(min(metric("panel_parts"), max(self.parts_panel.minimumWidth(), w * 0.22)))
         side_r = int(min(metric("panel_params"), max(self.settings_panel.minimumWidth(), w * 0.23)))
         self.split.setSizes([side_l, max(300, w - side_l - side_r), side_r])
+
+    def _sync_panel_toggles(self):
+        """Conferência/Peças/Parâmetros: texto em janelas largas; só ícone (com dica) no modo estreito,
+        para as abas "Arquivo original"/"Encaixe" nunca serem cortadas. A Conferência mantém o nº pendente."""
+        tiny = getattr(self, "_width_mode", (False, False))[1]
+        pend = getattr(self, "_review_pending_n", 0)
+        items = ((self.btn_review_panel, "Conferência", pend),
+                 (self.btn_parts_panel, "Peças", 0), (self.btn_params_panel, "Parâmetros", 0))
+        for button, label, n in items:
+            full = f"{label} ({n})" if n else label
+            if tiny:
+                button.setText(str(n) if n else "")
+                button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon if n else Qt.ToolButtonIconOnly)
+            else:
+                button.setText(full)
+                button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            button.setProperty("full_text", full)
+            # o texto não define a largura mínima da janela: ao encolher para 1024 px, vira ícone em seguida
+            button.setMinimumWidth(36)
+        self.btn_review_panel.setToolTip(
+            (f"Conferência: {pend} aviso(s) pendente(s). " if pend else "Conferência. ") +
+            "Avisos da importação de todos os arquivos, com correções em lote (F8: próximo)")
+        for button, label in ((self.btn_parts_panel, "peças"), (self.btn_params_panel, "parâmetros")):
+            button.setToolTip(f"Mostrar ou recolher o painel de {label}" +
+                              (" (Ctrl+Shift+P)" if label == "peças" else " (Ctrl+P)"))
 
     def set_mode(self, i: int):
         """0 = encaixe de peças, 1 = gravação de foto, 2 = gerador de caixas."""
@@ -742,6 +814,9 @@ class UIBuildMixin:
             "M\tEspelhar peça selecionada\n"
             "L\tTravar/destravar posição\n"
             "Del\tRemover peça\n"
+            "Setas\tMover a peça selecionada 1 mm (com o desenho em foco)\n"
+            "Shift / Alt + setas\tMover 10 mm / 0,1 mm\n"
+            "Ctrl+setas\tEncostar na vizinha ou na margem (respeita o espaçamento)\n"
             "Ctrl+Z / Ctrl+Y\tDesfazer / refazer\n"
             "F\tEnquadrar tudo\n"
             "PgUp / PgDn\tPlaca anterior / próxima\n\n"

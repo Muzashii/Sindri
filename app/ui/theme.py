@@ -196,6 +196,7 @@ QPushButton#success:disabled { background: %(surface3)s; color: %(muted)s; borde
 QPushButton#ghost { background: transparent; border: 2px solid transparent; font-weight: 600;
                     color: %(accent_text)s; text-align: left; padding: 6px 8px; }
 QPushButton#ghost:hover { background: %(accent_soft)s; }
+QPushButton#ghost:disabled { color: %(muted)s; background: transparent; border-color: transparent; }
 
 QToolButton { background: transparent; color: %(text)s; border: 2px solid transparent;
               border-radius: %(radius_md)spx; padding: 5px; }
@@ -323,8 +324,9 @@ QPushButton#Chip:checked { background: %(accent_soft)s; color: %(accent_text)s; 
 QToolButton#SectionToggle { text-align: left; font-weight: 700; padding: 4px 6px;
     background: transparent; border: 2px solid transparent; color: %(text)s; }
 QToolButton#SectionToggle:hover { background: %(surface3)s; }
-QLabel#SelectionSummary { color: %(muted)s; padding: 4px 8px; background: %(surface2)s;
-    border-radius: %(radius_sm)spx; }
+QLabel#SelectionSummary { color: %(text)s; padding: 2px 6px; background: transparent; }
+QLabel#SelectionSummary[hint="true"] { color: %(muted)s; font-style: italic; }
+QLabel#EmptyTitleSmall { font-size: %(font_title)spt; font-weight: 700; color: %(text)s; }
 QLabel#EmptyTitle { font-size: %(font_hero)spt; font-weight: 700; color: %(text)s; }
 QCheckBox#CutDone { color: %(success_text)s; font-weight: 700; }
 QLabel#InlineWarning { color: %(warn)s; }

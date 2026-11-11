@@ -23,14 +23,21 @@ ROTATION_CHOICES = [
 ]
 
 
+SECTION_PREF = "ui/sections/"          # preferência: seção do painel de parâmetros aberta?
+# ordem fixa das seções do painel (a do laser aparece depois de abrir arquivo, mas sempre no mesmo lugar)
+SECTION_ORDER = ("arquivo", "placa", "encaixe", "laser", "avancado")
+
+
 class _Section(QFrame):
     """Cartão com cabeçalho (ícone + título) e corpo para um QFormLayout."""
     instances: list = []
 
-    def __init__(self, title: str, icon_name: str):
+    def __init__(self, title: str, icon_name: str, pref_key: str = ""):
+        """``pref_key``: lembra nas preferências se o técnico recolheu a seção (ui/sections/<chave>)."""
         super().__init__()
         self.setObjectName("Card")
         self.icon_name = icon_name
+        self.pref_key = pref_key
         v = QVBoxLayout(self)
         v.setContentsMargins(14, 12, 14, 12)
         v.setSpacing(10)
@@ -42,8 +49,15 @@ class _Section(QFrame):
         self.icon.setObjectName("SectionIcon")
         from .components import SectionToggle
         self.body = QWidget(self)
-        t = SectionToggle(title, self.body, expanded=title != "Ajustes da imagem")
+        expanded = title != "Ajustes da imagem"
+        if pref_key:
+            from .prefs import get_bool
+            expanded = get_bool(SECTION_PREF + pref_key, expanded)
+        t = SectionToggle(title, self.body, expanded=expanded)
         self.toggle = t
+        if pref_key:
+            from .prefs import set_bool
+            t.toggled.connect(lambda on, k=pref_key: set_bool(SECTION_PREF + k, bool(on)))
         head.addWidget(self.icon)
         head.addWidget(t, 1)
         v.addLayout(head)
@@ -128,7 +142,7 @@ class SettingsPanel(QWidget):
         title.setObjectName("SectionTitle")
         lay.addWidget(title)
 
-        g0 = _Section("Arquivo DXF", "open")
+        g0 = _Section("Arquivo DXF", "open", "arquivo")
         f0 = QFormLayout(g0.body)
         self.units = QComboBox()
         for code, name in UNITS:
@@ -155,7 +169,7 @@ class SettingsPanel(QWidget):
         f0.addRow(self.layers)
         lay.addWidget(g0)
 
-        g1 = _Section("Placa", "grid")
+        g1 = _Section("Placa", "grid", "placa")
         f1 = QFormLayout(g1.body)
         self.w = _dspin(10, 5000, 10, 1, " mm", "Largura útil da placa de material (eixo X da máquina)")
         self.h = _dspin(10, 5000, 10, 1, " mm", "Altura da placa de material (eixo Y da máquina)")
@@ -171,7 +185,7 @@ class SettingsPanel(QWidget):
         f1.addRow(self.sheet_note)
         lay.addWidget(g1)
 
-        gl = _Section("Laser (RDWorks)", "zap")
+        gl = _Section("Laser (RDWorks)", "zap", "laser")
         self.laser_box = gl
         gv = QVBoxLayout(gl.body)
         gv.setContentsMargins(0, 0, 0, 0)
@@ -209,9 +223,8 @@ class SettingsPanel(QWidget):
         gv.addLayout(self.laser_rows)
         self._laser_keys: list[str] = []
         gl.setVisible(False)
-        lay.addWidget(gl)
 
-        g2 = _Section("Encaixe", "layers")
+        g2 = _Section("Encaixe", "layers", "encaixe")
         f2 = QFormLayout(g2.body)
         self.spacing = _dspin(0, 50, 0.5, 2, " mm",
                               "Distância mínima entre peças. Inclua a largura do corte do laser (kerf).\n"
@@ -241,17 +254,22 @@ class SettingsPanel(QWidget):
         f2.addRow(self.pip)
         f2.addRow(self.multi)
         lay.addWidget(g2)
+        lay.addWidget(gl)                 # Laser sempre depois de Encaixe (não empurra espaçamento/rotações)
 
         self.adv_btn = QPushButton("▸  Opções avançadas")
         self.adv_btn.setObjectName("ghost")
         self.adv_btn.setCheckable(True)
         self.adv_btn.setStyleSheet("text-align: left;")
         lay.addWidget(self.adv_btn)
-        g3 = _Section("Avançado", "settings")
+        g3 = _Section("Avançado", "settings", "avancado")
         self.adv_box = g3
         g3.setVisible(False)
         self.adv_btn.toggled.connect(lambda v: (g3.setVisible(v), self.adv_btn.setText(
             ("▾" if v else "▸") + "  Opções avançadas")))
+        from .prefs import get_bool, set_bool
+        self.adv_btn.setChecked(get_bool(SECTION_PREF + "avancado_visivel", False))
+        self.adv_btn.toggled.connect(lambda v: set_bool(SECTION_PREF + "avancado_visivel", bool(v)))
+        self.sections = {"arquivo": g0, "placa": g1, "encaixe": g2, "laser": gl, "avancado": g3}
         f3 = QFormLayout(g3.body)
         self.curve = _dspin(0.01, 2, 0.05, 2, " mm",
                             "Precisão usada no cálculo (não afeta o arquivo exportado, que mantém arcos e círculos).\n"

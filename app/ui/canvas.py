@@ -17,8 +17,91 @@ RED = QColor(220, 40, 40)
 
 
 def sheet_offset(params: NestParams, index: int) -> float:
-    gap = max(30.0, 0.08 * params.sheet_width)
-    return index * (params.sheet_width + gap)
+    """Posição X da placa numa fileira única (compatibilidade; o canvas usa ``sheet_origin``)."""
+    return grid_origin(params, index, 0)[0]
+
+
+def grid_gaps(params: NestParams) -> tuple[float, float]:
+    """Folga entre placas na grade: horizontal e vertical (a vertical cabe a etiqueta da placa de baixo)."""
+    gx = max(30.0, 0.08 * params.sheet_width)
+    return gx, max(gx, 0.25 * params.sheet_height)
+
+
+def grid_origin(params: NestParams, index: int, cols: int) -> tuple[float, float]:
+    """Canto inferior esquerdo da vaga ``index`` numa grade de ``cols`` colunas (0 = uma fileira só).
+    As linhas descem (Y para cima, como no DXF)."""
+    gx, gy = grid_gaps(params)
+    col, row = (index, 0) if cols <= 0 else (index % cols, index // cols)
+    return col * (params.sheet_width + gx), -row * (params.sheet_height + gy)
+
+
+def grid_index(params: NestParams, x: float, y: float, cols: int) -> int:
+    """Vaga da grade sob o ponto (x, y) da cena — o inverso de ``grid_origin`` (meio da folga = divisa)."""
+    gx, gy = grid_gaps(params)
+    col = max(0, int((x + gx / 2) // (params.sheet_width + gx)))
+    if cols <= 0:
+        return col
+    col = min(col, cols - 1)
+    row = max(0, int((params.sheet_height - y + gy / 2) // (params.sheet_height + gy)))
+    return row * cols + col
+
+
+def best_columns(n: int, sheet_w: float, sheet_h: float, gaps: tuple[float, float], view_w: float,
+                 view_h: float) -> int:
+    """Quantas colunas mostram ``n`` placas maiores na área visível (várias linhas se a área for alta)."""
+    if n <= 1 or view_w < 50 or view_h < 50:
+        return max(1, n)
+    gx, gy = gaps
+    best, best_scale = n, -1.0
+    for c in range(n, 0, -1):                      # empate: mais colunas (fileira, como antes)
+        rows = -(-n // c)
+        tw, th = c * sheet_w + (c - 1) * gx, rows * sheet_h + (rows - 1) * gy + 0.06 * sheet_h
+        scale = min(view_w / tw, view_h / th)
+        if scale > best_scale * 1.02:
+            best, best_scale = c, scale
+    return best
+
+
+NUDGE_KEYS = {Qt.Key_Left: (-1.0, 0.0), Qt.Key_Right: (1.0, 0.0),
+              Qt.Key_Up: (0.0, 1.0), Qt.Key_Down: (0.0, -1.0)}     # Y para cima, como no DXF
+
+
+def nudge_step(key, modifiers):
+    """((dx, dy), encostar?) para uma tecla de seta com modificadores, ou None se não for seta.
+    Seta = 1 mm · Shift = 10 mm · Alt = 0,1 mm · Ctrl = encostar (desliza até a vizinha ou a margem)."""
+    d = NUDGE_KEYS.get(key)
+    if d is None:
+        return None
+    mods = modifiers
+    if mods & Qt.ControlModifier:
+        return d, True
+    size = 10.0 if mods & Qt.ShiftModifier else 0.1 if mods & Qt.AltModifier else 1.0
+    return (d[0] * size, d[1] * size), False
+
+
+LOW_USE = 0.15          # última placa de um material com menos que isso de uso: "pouco usada"
+
+
+def usage_split(used: dict, areas: dict, materials: dict) -> dict:
+    """Aproveitamento separado em placas cheias × última placa de cada material.
+
+    ``used``: {placa: mm² de peças} (só placas com peças); ``areas``: {placa: mm² da placa};
+    ``materials``: {placa: material}. Devolve {"total", "full" (None se não há placa cheia), "last",
+    "lasts" (placas últimas), "low" (últimas com < 15% num material com ≥ 2 placas)}."""
+    sheets = sorted(s for s in used if areas.get(s))
+    by_mat: dict = {}
+    for s in sheets:
+        by_mat.setdefault(materials.get(s, "") or "", []).append(s)
+    lasts = {max(v) for v in by_mat.values()}
+    full = [s for s in sheets if s not in lasts]
+
+    def ratio(ss):
+        a = sum(areas[s] for s in ss)
+        return sum(used[s] for s in ss) / a if a else 0.0
+    low = {max(v) for v in by_mat.values()
+           if len(v) >= 2 and used[max(v)] / areas[max(v)] < LOW_USE}
+    return {"total": ratio(sheets), "full": ratio(full) if full else None,
+            "last": ratio(sorted(lasts)), "lasts": lasts, "low": low}
 
 
 def _spec_of(params: NestParams):
@@ -50,7 +133,7 @@ class SheetItem(QGraphicsItem):
         self.material = material
         self.done = done
         self.setZValue(-10)
-        self.setPos(sheet_offset(slot or params, index), 0)
+        self.setPos(*grid_origin(slot or params, index, 0))
         if self.spec.is_remnant:
             self.setToolTip(f"Retalho {self.spec.name or self.spec.remnant_id} · "
                             f"{self.spec.width:.0f} × {self.spec.height:.0f} mm")
@@ -143,9 +226,11 @@ class SheetLabel(QGraphicsItem):
     """Etiqueta "Placa N · x peças · y%" acima da placa (tamanho fixo na tela), com o botão
     "cortada" clicável. Encolhe quando a placa fica pequena na tela (não invade a vizinha)."""
 
-    def __init__(self, title: str, sub: str, material: str = "", done: bool = False, sheet_w: float = 0.0):
+    def __init__(self, title: str, sub: str, material: str = "", done: bool = False, sheet_w: float = 0.0,
+                 low: bool = False):
         super().__init__()
         self.title, self.sub, self.material, self.done = title, sub, material, done
+        self.low = low                     # última placa do material quase vazia: selo "pouco usada"
         self.sheet_w = sheet_w
         self.index = 0
         self.setFlag(QGraphicsItem.ItemIgnoresTransformations)
@@ -163,7 +248,9 @@ class SheetLabel(QGraphicsItem):
         self.w0 = (QFontMetrics(self.f2).horizontalAdvance(material) + 18) if material else 0
         self.wd = QFontMetrics(self.f2).horizontalAdvance("✓ cortada") + 18
         self.full = self.w0 + self.w1 + self.w2 + 34 + self.wd + 6
-        self.setToolTip("Clique em “cortada” para marcar/desmarcar esta placa (atalho: C)")
+        self.setToolTip("Clique em “cortada” para marcar/desmarcar esta placa (atalho: C)" +
+                        ("\nPouco usada: dá para encaixar de novo com mais tempo ou guardar a sobra como retalho."
+                         if low else ""))
         self.set_done(done)
 
     def set_done(self, done: bool):
@@ -205,7 +292,7 @@ class SheetLabel(QGraphicsItem):
         painter.setFont(self.f1)
         painter.drawText(QRectF(x, -32, self.w1 + 2, 24), Qt.AlignVCenter | Qt.AlignLeft, self.title)
         if not compact:
-            painter.setPen(theme.qcolor("muted"))
+            painter.setPen(theme.qcolor("warn" if self.low else "muted"))
             painter.setFont(self.f2)
             painter.drawText(QRectF(x + self.w1 + 10, -32, self.w2 + 4, 24), Qt.AlignVCenter | Qt.AlignLeft,
                              self.sub)
@@ -268,7 +355,8 @@ class PartItem(QGraphicsItem):
     def sync_from_placement(self):
         pl = self.placement
         self._syncing = True
-        self.setPos(sheet_offset(self.canvas.params, pl.sheet_index) + pl.x, pl.y)
+        ox, oy = self.canvas.sheet_origin(pl.sheet_index)
+        self.setPos(ox + pl.x, oy + pl.y)
         self.setRotation(pl.rotation)
         self._syncing = False
 
@@ -379,6 +467,7 @@ class NestCanvas(QGraphicsView):
     zoomChanged = Signal(float)
     sheetCutClicked = Signal(int)                  # clique no "cortada" da etiqueta da placa
     previewFileClicked = Signal(str)               # clique no nome de um arquivo no "Arquivo original"
+    nudgeRequested = Signal(float, float, bool)    # setas: deslocamento em mm (x, y) e "encostar" (Ctrl)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -551,6 +640,14 @@ class NestCanvas(QGraphicsView):
         slot.sheet_height = max([params.sheet_height] + [sp.height for sp in specs.values()])
         self.params = slot
         self.specs = specs
+        # grade de placas: colunas conforme a proporção da área visível (refeita quando a vista segue o
+        # enquadramento automático; com zoom/arraste do técnico, a grade fica como está)
+        grew = self._auto_fit and n != self._grid_n          # placa nova enquanto a vista segue o enquadramento
+        if not keep_view or grew or self._cols <= 0:
+            self._cols = self._best_columns(n)
+        self._grid_n = n
+        usage = usage_split({i: idx.net_area(i) for i in range(n) if idx.count(i)},
+                            {i: specs[i].area for i in range(n)}, idx.material)
         for i in range(n):
             mat = idx.material.get(i, "")
             done = i in self.cut_sheets
@@ -563,9 +660,15 @@ class NestCanvas(QGraphicsView):
             txt = f"Placa {idx.number.get(i, i + 1)}" + (" · retalho" if sp.is_remnant else "")
             sub_txt = (f"{cnt} {'peça' if cnt == 1 else 'peças'} · {100 * util:.1f}%".replace(".", ",")
                        if cnt else "vazia")
-            label = SheetLabel(txt, sub_txt, mat, done, sp.width)
-            label.setPos(sheet_offset(slot, i), sp.height)
+            low = i in usage["low"]
+            if low:
+                sub_txt += " · pouco usada"
+            label = SheetLabel(txt, sub_txt, mat, done, sp.width, low=low)
+            label.sheet_h = sp.height
             label.index = i
+            ox, oy = self.sheet_origin(i)
+            s.setPos(ox, oy)
+            label.setPos(ox, oy + sp.height)
             self.scene().addItem(label)
             self.sheet_labels.append(label)
         for pl in placements:
@@ -581,11 +684,36 @@ class NestCanvas(QGraphicsView):
                 it.setSelected(True)
         r = self.scene().itemsBoundingRect().adjusted(-200, -200, 200, 200)
         self.scene().setSceneRect(r)
-        if keep_view and old is not None:
+        if keep_view and old is not None and not grew:
             self.setTransform(old)
             self.centerOn(center)
         else:
             self.fit_all()
+
+    # ------------------------------------------------------------------ grade de placas
+    _cols = 0                           # colunas da grade (0 = ainda não decidido)
+    _grid_n = 0                         # nº de placas quando a grade foi decidida
+
+    def _best_columns(self, n: int) -> int:
+        vp = self.viewport()
+        return best_columns(n, self.params.sheet_width, self.params.sheet_height, grid_gaps(self.params),
+                            vp.width(), vp.height())
+
+    def sheet_origin(self, i: int) -> tuple[float, float]:
+        """Canto inferior esquerdo da placa ``i`` na cena (única fonte da posição das placas)."""
+        return grid_origin(self.params, i, self._cols)
+
+    def _place_grid(self):
+        """Reposiciona placas, etiquetas e peças depois de mudar o nº de colunas."""
+        for s in self.sheet_items:
+            s.setPos(*self.sheet_origin(s.index))
+        for lb in self.sheet_labels:
+            ox, oy = self.sheet_origin(lb.index)
+            lb.setPos(ox, oy + getattr(lb, "sheet_h", self.params.sheet_height))
+        for it in self.part_items:
+            it.sync_from_placement()
+        r = self.scene().itemsBoundingRect().adjusted(-200, -200, 200, 200)
+        self.scene().setSceneRect(r)
 
     engrave_labels: dict = {}           # id da peça -> nº gravado (igual ao que vai no DXF)
     engrave_height: float = 3.0
@@ -677,27 +805,35 @@ class NestCanvas(QGraphicsView):
     def _refit(self):
         self._fit_pending = False
         if self._auto_fit:
+            if self.mode == "layout" and self.sheet_items:
+                cols = self._best_columns(len(self.sheet_items))
+                if cols != self._cols:
+                    self._cols = cols
+                    self._place_grid()
             self.fit_all()
 
     def focus_sheet(self, i: int):
         self._auto_fit = False
         p = self.params
         sp = getattr(self, "specs", {}).get(i)
-        r = QRectF(sheet_offset(p, i), 0, sp.width if sp else p.sheet_width, sp.height if sp else p.sheet_height)
+        ox, oy = self.sheet_origin(i)
+        r = QRectF(ox, oy, sp.width if sp else p.sheet_width, sp.height if sp else p.sheet_height)
         self.fitInView(r.adjusted(-15, -25, 15, 25), Qt.KeepAspectRatio)
 
     def current_sheet(self) -> int:
+        """Placa mais perto do centro da vista (em linha ou em grade)."""
         if not self.sheet_items:
             return 0
         c = self.mapToScene(self.viewport().rect().center())
-        best = min(self.sheet_items, key=lambda s: abs(s.pos().x() + self.params.sheet_width / 2 - c.x()))
-        return best.index
+        w, h = self.params.sheet_width / 2, self.params.sheet_height / 2
 
-    def sheet_at(self, x: float) -> int:
-        p = self.params
-        gap = sheet_offset(p, 1) - p.sheet_width
-        i = int((x + gap / 2) // (p.sheet_width + gap))
-        return max(0, i)
+        def dist(s):
+            return (s.pos().x() + w - c.x()) ** 2 + (s.pos().y() + h - c.y()) ** 2
+        return min(self.sheet_items, key=dist).index
+
+    def sheet_at(self, x: float, y: float = 0.0) -> int:
+        """Vaga de placa sob o ponto (x, y) da cena; pode ser a vaga logo depois da última (placa nova)."""
+        return grid_index(self.params, x, y, self._cols)
 
     def selected_items(self) -> list[PartItem]:
         return [it for it in self.part_items if it.isSelected()]
@@ -749,6 +885,17 @@ class NestCanvas(QGraphicsView):
             event.accept()
             return
         super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event):
+        """Setas movem a(s) peça(s) selecionada(s): 1 mm; Shift = 10 mm; Alt = 0,1 mm; Ctrl = encostar
+        na vizinha/margem. Só com o desenho em foco (campos numéricos continuam com as setas deles)."""
+        step = nudge_step(event.key(), event.modifiers())
+        if step is not None and self.mode == "layout" and self.editable and self.selected_items():
+            (dx, dy), snap = step
+            self.nudgeRequested.emit(dx, dy, snap)
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def contextMenuEvent(self, event):
         if self.mode != "layout":

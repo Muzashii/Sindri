@@ -43,7 +43,9 @@ class NestingMixin:
         from ...core.sheetspec import sheet_specs
         return sheet_specs(self.nest_params(), self.sheet_index().material, self.sheet_remnants)
 
-    def start_nest(self):
+    def start_nest(self, more_time: bool = False):
+        """``more_time``: refaz com o dobro do "parar sozinho sem melhora" (mín. 60 s), só nesta vez
+        (ação do aviso de placa pouco usada); o valor do painel não muda."""
         if not self.parts or self.worker is not None:
             return
         if sum(pt.quantity for pt in self.parts) == 0:
@@ -74,6 +76,9 @@ class NestingMixin:
             QMessageBox.warning(self, "Parâmetros inválidos", str(e))
             return
         self.params = p
+        if more_time and p.stop_after_seconds > 0:
+            p = copy.copy(p)
+            p.stop_after_seconds = max(60.0, 2.0 * float(p.stop_after_seconds))
         self._cut_keys = set()
         if keep_cut:
             # peças das placas cortadas ficam travadas onde estão; essas placas não recebem peças novas
@@ -176,6 +181,7 @@ class NestingMixin:
             msg += " Ctrl+E exporta."
         self.statusBar().showMessage(msg + " Ao cortar, marque as placas e as peças feitas na lista de Peças.",
                                      12000)
+        self._warn_low_use()
 
     def toggle_pause(self):
         if self.worker is None:

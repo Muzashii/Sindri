@@ -6,7 +6,6 @@ import copy
 from PySide6.QtWidgets import QInputDialog, QMenu
 
 from ...core.models import Placement
-from ..canvas import sheet_offset
 from ..owners import sheet_numbers
 from .common import MAX_UNDO
 
@@ -128,10 +127,8 @@ class EditingMixin:
             if it.isSelected():
                 involved.add(pl.sheet_index)
                 pl = copy.copy(pl)
-                s = min(self.canvas.sheet_at(it.pos().x()), max(self.n_sheets, 1))   # igual ao soltar
+                s, pl.x, pl.y = self._drop_target(it)                      # igual ao soltar
                 pl.sheet_index = s
-                pl.x = it.pos().x() - sheet_offset(self.canvas.params, s)
-                pl.y = it.pos().y()
                 involved.add(s)
             pls.append(pl)
         bad = self.checker.colliding(pls, involved, self.sheet_remnants)   # só as placas envolvidas no arraste
@@ -143,13 +140,18 @@ class EditingMixin:
                 it.colliding = c
                 it.update()
 
+    def _drop_target(self, it) -> tuple[int, float, float]:
+        """(placa, x, y) de uma peça arrastada: a vaga da grade sob ela (no máximo uma placa nova) e a
+        posição relativa a essa placa."""
+        pos = it.pos()
+        s = min(self.canvas.sheet_at(pos.x(), pos.y()), max(self.n_sheets, 1))
+        ox, oy = self.canvas.sheet_origin(s)
+        return s, pos.x() - ox, pos.y() - oy
+
     def on_items_released(self):
         moved = []
         for it in self.canvas.selected_items():
-            s = self.canvas.sheet_at(it.pos().x())
-            s = min(s, max(self.n_sheets, 1))  # no máximo uma placa nova
-            x = it.pos().x() - sheet_offset(self.canvas.params, s)
-            y = it.pos().y()
+            s, x, y = self._drop_target(it)
             pl = it.placement
             if s != pl.sheet_index or abs(x - pl.x) > 1e-6 or abs(y - pl.y) > 1e-6:
                 moved.append((it, s, x, y))
@@ -267,6 +269,124 @@ class EditingMixin:
         self.parts_panel.update_summary()
         self.reconcile_state()
         self._update_status()
+
+    # ------------------------------------------------------------------ mover pelo teclado
+    NUDGE_SEQ_MS = 1200        # toques seguidos dentro deste intervalo = um passo só de desfazer
+
+    def nudge_selected(self, dx: float, dy: float, snap: bool = False):
+        """Setas: move a seleção dx/dy mm na própria placa. Com ``snap`` (Ctrl), (dx, dy) é só a direção e
+        a seleção desliza até encostar na vizinha ou na margem, respeitando o espaçamento. Peças travadas
+        não se movem; colisão deixa a peça vermelha (mesma checagem do arraste)."""
+        if self.worker is not None or self.canvas.mode != "layout":
+            return
+        items = [it for it in self.canvas.selected_items() if not it.placement.locked]
+        if not items:
+            if self.canvas.selected_items():
+                self.statusBar().showMessage("Peça travada: destrave com L para mover.", 4000)
+            return
+        if snap:
+            dist = self._snap_distance([it.placement for it in items], dx, dy)
+            if dist is None:
+                self.statusBar().showMessage("Para encostar, a peça precisa estar sem colisão.", 4000)
+                return
+            if dist < 0.005:
+                self.statusBar().showMessage("Já está encostada nessa direção.", 3000)
+                return
+            dx, dy = dx * dist, dy * dist
+        self._nudge_undo_step(items)
+        self._invalidate_cut_for([it.placement for it in items])
+        for it in items:
+            it.placement.x = round(it.placement.x + dx, 4)
+            it.placement.y = round(it.placement.y + dy, 4)
+            it.sync_from_placement()
+        self.mark_changed()
+        self.schedule_autosave()
+        self._mark_collisions()
+        self._canvas_selection()
+        if snap:
+            self.statusBar().showMessage(f"Encostada: andou {abs(dx) + abs(dy):.2f} mm.".replace(".", ","), 3000)
+
+    def _nudge_undo_step(self, items):
+        """Um passo de desfazer por sequência de toques (mesma seleção, sem pausa longa nem outra ação)."""
+        from PySide6.QtCore import QTimer
+        keys = frozenset((it.placement.part_id, it.placement.instance) for it in items)
+        timer = getattr(self, "_nudge_timer", None)
+        if timer is None:
+            timer = self._nudge_timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.setInterval(self.NUDGE_SEQ_MS)
+        same = (timer.isActive() and getattr(self, "_nudge_keys", None) == keys and self.undo_stack
+                and id(self.undo_stack[-1]) == getattr(self, "_nudge_snap", None))
+        if not same:
+            self._push_undo()
+            self._nudge_snap = id(self.undo_stack[-1])
+            self._nudge_keys = keys
+        timer.start()
+
+    def _snap_distance(self, moving: list[Placement], ux: float, uy: float):
+        """Quanto a seleção pode andar na direção (ux, uy) até encostar (mm), ou None se já colide.
+        Avança com a distância livre (shapely) e fecha o contato por busca binária no verificador."""
+        if not self.checker:
+            return None
+        from shapely import affinity
+        from shapely.geometry import box
+        from shapely.strtree import STRtree
+        from ...core.collision import TOL_AREA
+        chk = self.checker
+        idx = self.sheet_index()
+        keys = {(pl.part_id, pl.instance) for pl in moving}
+        groups: dict[int, list] = {}
+        for pl in moving:
+            groups.setdefault(pl.sheet_index, []).append(pl)
+        worlds = []
+        for si, pls in groups.items():
+            mat = idx.material.get(si) or self.pmap[pls[0].part_id].material or ""
+            usable = chk.usable_for(mat, self.sheet_remnants.get(si, ""))
+            mine = [affinity.translate(chk.solid(p.part_id, p.rotation, p.mirrored), p.x, p.y) for p in pls]
+            others = [chk.placed(p) for p in self.placements
+                      if p.sheet_index == si and (p.part_id, p.instance) not in keys]
+            worlds.append((usable, mine, others, STRtree(others) if others else None))
+
+        def free(d: float):
+            """Folga mínima depois de andar d mm (< 0 = colide ou sai da área útil)."""
+            gap = float("inf")
+            for usable, mine, others, tree in worlds:
+                for g in mine:
+                    m = affinity.translate(g, ux * d, uy * d)
+                    if not usable.covers(m):
+                        return -1.0
+                    gap = min(gap, m.distance(usable.boundary))
+                    if tree is not None:
+                        x0, y0, x1, y1 = m.bounds
+                        for j in tree.query(box(x0 - gap, y0 - gap, x1 + gap, y1 + gap)):
+                            o = others[int(j)]
+                            if m.intersection(o).area > TOL_AREA:
+                                return -1.0
+                            gap = min(gap, m.distance(o))
+            return gap
+
+        if free(0.0) < 0:
+            return None
+        lo, step_min = 0.0, 0.25
+        # avanço conservador: anda a folga livre (nunca atravessa uma vizinha) ou, rente a uma peça que fica
+        # para trás/ao lado, um passo mínimo de 0,25 mm (as peças com folga têm vários mm: não dá para pular)
+        for _ in range(4000):
+            g = free(lo)
+            hi = lo + max(g, step_min)
+            if free(hi) < 0:
+                break                                 # contato entre lo (livre) e hi (colide)
+            lo = hi
+        else:
+            return lo
+        for _ in range(30):                           # busca binária até 0,005 mm
+            if hi - lo < 0.005:
+                break
+            mid = (lo + hi) / 2
+            if free(mid) < 0:
+                hi = mid
+            else:
+                lo = mid
+        return lo
 
     def select_all(self):
         for it in self.canvas.part_items:
@@ -409,9 +529,15 @@ class EditingMixin:
             if item.colliding:
                 text += " · Atenção: colisão, borda ou material incompatível"
         elif sel:
-            text = f"{len(sel)} cópias selecionadas · R girar · L travar · Del remover"
+            text = f"{len(sel)} cópias selecionadas · setas movem · R girar · L travar · Del remover"
         else:
-            text = "Selecione uma peça para conferir seus detalhes"
+            from .ui_build import SELECTION_HINT
+            text = SELECTION_HINT
+        hint = not sel
+        if self.selection_summary.property("hint") != hint:
+            self.selection_summary.setProperty("hint", hint)
+            self.selection_summary.style().unpolish(self.selection_summary)
+            self.selection_summary.style().polish(self.selection_summary)
         self.selection_summary.setText(text)
         from ..accessibility import announce
         announce(self.selection_summary, text)

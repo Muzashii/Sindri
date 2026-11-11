@@ -148,7 +148,31 @@ class ReviewPanel(QFrame):
         self.tree.itemSelectionChanged.connect(self._selection_changed)
         self.tree.itemActivated.connect(lambda it, _c: self._activate(it))
         self.tree.itemClicked.connect(lambda it, _c: self._activate(it))
-        lay.addWidget(self.tree, 1)
+        # lista vazia: um estado vazio explicado em vez de uma caixa em branco
+        from PySide6.QtWidgets import QStackedWidget, QWidget
+        self.empty = QWidget()
+        self.empty.setObjectName("ReviewEmpty")
+        ev = QVBoxLayout(self.empty)
+        ev.setContentsMargins(8, 24, 8, 24)
+        ev.addStretch(1)
+        self.empty_icon = QLabel()
+        self.empty_icon.setAlignment(Qt.AlignCenter)
+        ev.addWidget(self.empty_icon)
+        self.empty_title = QLabel("Nada a conferir neste lote")
+        self.empty_title.setObjectName("EmptyTitleSmall")
+        self.empty_title.setAlignment(Qt.AlignCenter)
+        self.empty_title.setWordWrap(True)
+        ev.addWidget(self.empty_title)
+        self.empty_text = QLabel()
+        self.empty_text.setObjectName("Muted")
+        self.empty_text.setAlignment(Qt.AlignCenter)
+        self.empty_text.setWordWrap(True)
+        ev.addWidget(self.empty_text)
+        ev.addStretch(2)
+        self.list_stack = QStackedWidget()
+        self.list_stack.addWidget(self.tree)
+        self.list_stack.addWidget(self.empty)
+        lay.addWidget(self.list_stack, 1)
 
         # ---- ações sobre a seleção
         acts = QGridLayout()
@@ -177,7 +201,10 @@ class ReviewPanel(QFrame):
         acts.addWidget(self.btn_undo, 1, 0, 1, 2)
         acts.addWidget(self.btn_open, 2, 0)
         acts.addWidget(self.btn_folder, 2, 1)
-        lay.addLayout(acts)
+        self.actions_box = QFrame()
+        self.actions_box.setLayout(acts)
+        acts.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self.actions_box)
         foot = QHBoxLayout()
         self.btn_note = QPushButton("Copiar recado para o aluno")
         self.btn_note.setObjectName("ghost")
@@ -283,6 +310,14 @@ class ReviewPanel(QFrame):
                 item.setSelected(True)
             stack.extend(item.child(i) for i in range(item.childCount()))
         self.tree.blockSignals(False)
+        empty = self.tree.topLevelItemCount() == 0
+        self.list_stack.setCurrentWidget(self.empty if empty else self.tree)
+        # sem itens na lista não há o que selecionar: as ações sobre a seleção saem de cena
+        self.actions_box.setVisible(not empty)
+        if empty:
+            self.empty_text.setText("Todos os arquivos abriram sem avisos." if not self.issues else
+                                    "O que apareceu já foi resolvido sozinho.")
+            self.empty_icon.setPixmap(self._empty_pixmap())
         self._update_summary()
         self._update_batch()
         self._selection_changed()
@@ -366,7 +401,17 @@ class ReviewPanel(QFrame):
         one = len(files) == 1 and os.path.isfile(files[0])
         self.btn_open.setEnabled(one)
         self.btn_folder.setEnabled(one)
-        self.btn_next.setEnabled(bool(self.pending()))
+        pend = self.pending()
+        self.btn_next.setEnabled(bool(pend))
+        # recado ao aluno: só com algo ainda não conferido (dos selecionados ou do lote inteiro)
+        target = issues or self.issues
+        self.btn_note.setEnabled(any(it.severity != ii.FIXED and it.key not in self.acked for it in target))
+        has_fixed = any(it.severity == ii.FIXED for it in self.issues)
+        self.show_fixed.setEnabled(has_fixed or self.show_fixed.isChecked())
+
+    def _empty_pixmap(self):
+        from .icons import pixmap
+        return pixmap("check", theme.tokens()["success_text"], 36, 2.0)
 
     def _activate(self, item):
         if item is None:

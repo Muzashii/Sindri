@@ -1,7 +1,7 @@
 """Painel lateral de peças: cartões com miniatura, medidas, quantidade e trava de rotação."""
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QFrame, QGridLayout, QHBoxLayout, QLabel,
                                QListWidget, QListWidgetItem, QPushButton, QSpinBox, QToolButton, QVBoxLayout,
                                QWidget)
@@ -253,9 +253,16 @@ class PartRow(QFrame):
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
-        # linha estreita (janela de ~1024 px): "Feito" vira só o ✓ para a medida da peça continuar legível
+        self.fit_width()
+
+    def fit_width(self):
+        # linha estreita (janela de ~1024 px): "Feito" vira só o ✓ para a medida da peça continuar legível.
+        # Mede pela área visível da lista: com a barra de rolagem, a linha pode ficar mais larga que ela
+        # (cortando "Rotação fixa" e o ✓) e nunca encolher sozinha.
         m = self.layout().contentsMargins()
-        free = (self.width() - m.left() - m.right() - theme.metric("thumb") - 2 * 10
+        view = self.parentWidget()
+        width = min(self.width(), view.width()) if view is not None and view.width() > 0 else self.width()
+        free = (width - m.left() - m.right() - theme.metric("thumb") - 2 * 10
                 - max(104, 54 + 4 + 70))                  # largura do texto com os controles inteiros
         # mesmo limite para todas as linhas (medida típica de 3 dígitos), para a lista não ficar desigual
         compact = free < self._sub.fontMetrics().horizontalAdvance("000 × 000 mm")
@@ -263,6 +270,7 @@ class PartRow(QFrame):
             self._compact_done = compact
             self.done_btn.setToolButtonStyle(Qt.ToolButtonIconOnly if compact else Qt.ToolButtonTextBesideIcon)
             self.done_btn.setFixedWidth(34 if compact else 70)
+            self.lock.setText("Rot. fixa" if compact else "Rotação fixa")
             self.lock.setMinimumWidth(self.lock.sizeHint().width() if compact else 104)
             self.layout().setSpacing(6 if compact else 10)
         fm = self.name.fontMetrics()
@@ -355,6 +363,7 @@ class PartsPanel(QWidget):
         self.list.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.list.currentRowChanged.connect(self._sel)
+        self.list.viewport().installEventFilter(self)
         lay.addWidget(self.list, 1)
 
         self.empty = QLabel("Abra ou arraste um arquivo DXF\npara ver as peças aqui.")
@@ -420,6 +429,15 @@ class PartsPanel(QWidget):
             self.sheet_open_buttons[s["si"]] = op
             h.addWidget(op)
             self.sheets_grid.addWidget(cell, i // cols, i % cols)
+
+    def eventFilter(self, obj, e):
+        # a barra de rolagem apareceu/sumiu: a área visível mudou sem a linha mudar de tamanho
+        if e.type() == QEvent.Resize and obj is self.list.viewport():
+            for r in getattr(self, "rows", []):
+                r.fit_width()
+            # a lista não reposiciona as linhas sozinha quando só a área visível muda
+            QTimer.singleShot(0, self.list.doItemsLayout)
+        return super().eventFilter(obj, e)
 
     def _ready_menu(self, b, code: str):
         """Solicitação pronta: clique direito no cartão copia o recado de retirada ou abre na intranet."""
