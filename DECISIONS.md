@@ -346,3 +346,41 @@ Registro das escolhas feitas onde a especificação deixava espaço, conforme pe
     até a primeira tag. Nunca rebaixa. `versao.txt` guarda "sha tag"; `core/version.py` dá "Sindri 1.1.0
     (abc1234)" para o Sobre. Erros antes engolidos na abertura, intranet e limpeza vão para o
     `sindri_erro.log` (`fileutil.log_exception`). CI roda `ruff check app` (regras F e B).
+97. **Micro-pontes e compensação de kerf por peça** (`core/tabs.py`, `core/kerf.py`; botão "Pontes" de cada
+    peça): as pontes interrompem o contorno externo em 2–4 trechos (0,4 mm por padrão, `NestParams.tab_width`),
+    em lados opostos e longe dos cantos, dividindo a primitiva original (linha vira duas linhas, arco vira dois
+    arcos, círculo vira arcos). A compensação desloca o corte externo kerf/2 para fora e os furos kerf/2 para
+    dentro, com o kerf medido do material no banco; linhas continuam linhas e arcos continuam arcos; SPLINE e
+    ELLIPSE são recusadas com aviso. As duas só valem na exportação: o encaixe usa o desenho original. Desfazer
+    cobre as duas e a impressão digital da placa as inclui (mudou → o ▶ exporta de novo). Material sem kerf
+    cadastrado: aviso na hora e a peça sai sem compensação. **A validar**: largura da ponte por material.
+98. **Grade de teste velocidade × potência** (`core/testgrid.py`, botão no banco de materiais): uma cor por
+    combinação, porque o RDWorks separa os valores pela cor — com a paleta padrão cabem 14 combinações por
+    arquivo (uma camada fica para os números); grade maior vira vários arquivos. Corte = contornos; gravação =
+    preenchimento por linhas. Ao abrir, os valores de cada cor vão para o `config` pelo fluxo normal. O
+    quadrado escolhido vai para o banco (corte → camada corte, mínima = 65% da máxima; gravação → gravação
+    vetorial, mínima = máxima), com a data do teste e quem testou.
+99. **Busca local no genético**: a cada geração, 2 filhos saem de um dos 2 melhores com um único movimento
+    grande (reinserir uma peça noutra posição, 70%, ou inverter um trecho da ordem). Medido em
+    `tools/bench_encaixe.py` (10 lotes fixos, 3 sementes, 30 gerações): fitness agregado 34,2029 → 34,1615, o
+    mesmo nº de placas em todos os lotes — ganho pequeno, dentro do que muda de semente para semente. A
+    mutação de inserção/inversão que tinha entrado antes sem medida foi retirada (piorava: 34,28 → 34,36).
+100. **Fila do dia e recado de retirada** (janela da intranet): lotes por material em ordem de chegada (até 8
+    por lote, `intranet/queue_max`), cada solicitação no lote do material com mais DXF e os outros materiais
+    dela em placas próprias; ficam de fora as bloqueadas, as já abertas e as sem DXF. "Abrir lote N" marca e
+    envia direto ao Sindri (os avisos de atenção aparecem depois, na Conferência). Solicitação com todas as
+    peças feitas ou placas cortadas: clique direito no cartão → copiar recado de retirada (nº, primeiro nome
+    e projeto; sem RM) ou abrir na intranet para mudar o status à mão. O Sindri nunca muda status.
+101. **Interface mais enxuta**: resumo da seleção dentro da barra de ícones (sem linha própria); aviso de cores
+    e de placa pouco usada uma vez por lote; parâmetros em ordem fixa (Arquivo → Placa → Encaixe → Laser →
+    avançadas) com seções recolhidas lembradas; placas em grade conforme a proporção da área visível (toda
+    conversão cena↔placa por `sheet_origin`/`sheet_at`); rodapé com aproveitamento das placas cheias e da
+    última; última placa < 15% (material com 2+ placas) → aviso com "Encaixar de novo com mais tempo" e "Ver
+    retalhos" e selo "pouco usada"; "N tentativas"/"melhorou há N s" no lugar de "soluções"; Conferência
+    vazia com estado vazio; abaixo de 1250 px os botões do canto viram ícone; "Intranet" com texto até
+    1250 px; largura mínima da janela 1000 px. No painel de peças, o modo estreito mede pela área visível da
+    lista (com a barra de rolagem a linha ficava mais larga e cortava "Rotação fixa").
+102. **Mover peça pelo teclado**: com o desenho em foco, setas = 1 mm, Shift = 10 mm, Alt = 0,1 mm;
+    Ctrl+seta encosta na vizinha ou na margem respeitando o espaçamento (mesmo verificador de colisão).
+    Toques seguidos são um passo de desfazer; peça travada não se move.
+103. **Encaixe repetível nos testes**: `SINDRI_NEST_SEED` fixa a semente do genético (só o `conftest` usa).

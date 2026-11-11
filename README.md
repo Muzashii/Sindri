@@ -35,6 +35,12 @@ Painéis de peças e parâmetros podem ser recolhidos pelos botões acima do des
 
 **Na bancada:** `F11` abre o modo bancada (tela cheia: placa atual, conferência das camadas, tempo e três botões grandes). O RDWorks só precisa ser fechado quando velocidade/potência mudam de uma placa para a outra. O tempo entre abrir a placa e marcá-la como cortada calibra a estimativa. `Ctrl+Alt+O` abre projeto.
 
+**Mais ferramentas de corte:** micro-pontes e compensação de kerf por peça (botão "Pontes" na lista de peças; o kerf vem do banco de materiais) e **grade de teste** velocidade × potência (banco de materiais › "Grade de teste…"), que abre no RDWorks com os valores de cada cor e grava no banco o quadrado escolhido.
+
+**No encaixe:** setas movem a peça selecionada (1 mm; Shift 10 mm; Alt 0,1 mm) e Ctrl+seta encosta na vizinha ou na margem. O rodapé mostra o aproveitamento das placas cheias e o da última; placa quase vazia gera aviso com "Encaixar de novo com mais tempo" e "Ver retalhos". Muitas placas aparecem em grade.
+
+**Intranet:** "Fila do dia" propõe lotes por material em ordem de chegada (até 8 por lote, sem as bloqueadas); solicitação pronta tem, no clique direito do cartão, o recado de retirada e o atalho para abri-la na intranet e mudar o status à mão.
+
 `Ctrl+Shift+P` alterna as peças e `Ctrl+P` alterna os parâmetros. Cabeçalhos com seta
 recolhem as seções de configuração sem perder valores. O resumo da seleção aparece
 acima do canvas, e os rótulos ficam menores conforme o zoom.
