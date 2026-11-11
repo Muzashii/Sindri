@@ -487,3 +487,49 @@ def test_painel_de_pecas_tem_pontes_e_kerf():
     panel.set_cut_options("Q", 0, False)                      # ex.: depois de desfazer — sem emitir sinal
     assert row.cut_btn.text() == "Pontes" and len(got) == 2
     panel.deleteLater()
+
+
+def test_janela_grava_pontes_e_kerf_com_desfazer_e_kerf_do_banco(tmp_path, monkeypatch):
+    """Os botões do painel chegam à peça (com desfazer), o kerf vem do banco de materiais e a impressão
+    digital da placa muda — o arquivo exportado antes deixa de valer."""
+    from PySide6.QtWidgets import QApplication, QMessageBox
+    from app.core import material_db
+    from app.ui.main_window import MainWindow
+    from tests.conftest import fx
+    QApplication.instance() or QApplication([])
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: 0)
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.Discard))
+    monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: QMessageBox.Discard))
+    w = MainWindow(workers=0)
+    try:
+        w.load_files([fx("exemplo_lab.dxf")])
+        part = w.parts[0]
+        part.material = "MDF 3mm"
+        db = w.material_db()
+        m = db.find("MDF 3mm") or db.add(material_db.Material(name="MDF 3mm"))
+        m.kerf = 0.15
+        db.save()
+        w.__dict__.pop("_mdb", None)
+        assert w._material_kerf() == {"MDF 3mm": 0.15}
+        assert w._export_kwargs({"version": "R2000", "inner": True, "path": True},
+                                {"numbers": {"color": 1}, "cmap": {}, "labels": {}, "op_colors": {},
+                                 "color_ops": {}}, {})["material_kerf"] == {"MDF 3mm": 0.15}
+
+        row = next(r for r in w.parts_panel.rows if r.part.id == part.id)
+        row.tab_actions[3].trigger()
+        row.kerf_action.trigger()
+        assert part.tabs == 3 and part.kerf_comp is True and w.dirty
+        w.undo()
+        assert part.kerf_comp is False and part.tabs == 3
+        w.undo()
+        row = next(r for r in w.parts_panel.rows if r.part.id == part.id)      # o painel pode ter sido refeito
+        assert part.tabs == 0 and row.cut_btn.text() == "Pontes"
+        w.redo()
+        assert part.tabs == 3
+
+        part.material = "Papelão"                              # sem kerf no banco: avisa na hora
+        row = next(r for r in w.parts_panel.rows if r.part.id == part.id)
+        row.kerf_action.trigger()
+        assert "kerf cadastrado" in w.banner_text.text()
+    finally:
+        w.close()

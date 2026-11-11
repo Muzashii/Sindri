@@ -212,7 +212,8 @@ class ExportMixin:
                     label_aci=int(numbers["color"]), label_height=float(numbers.get("height") or 3.0),
                     op_colors=plan["op_colors"], color_ops=plan["color_ops"],
                     start_corner=o.get("start", "inferior_esquerdo"),
-                    sheet_remnants=dict(self.sheet_remnants), order_mode=o.get("order", "caminho"))
+                    sheet_remnants=dict(self.sheet_remnants), order_mode=o.get("order", "caminho"),
+                    material_kerf=self._material_kerf())
 
     def _sheet_stamp(self, si: int, plan: dict) -> str:
         """Impressão digital do que vai no arquivo de uma placa (peças, posições e cores): se mudar,
@@ -220,7 +221,8 @@ class ExportMixin:
         import hashlib
         import json
         pls = sorted((self.pmap[pl.part_id].identity, round(pl.x, 4), round(pl.y, 4), round(pl.rotation, 4),
-                      bool(pl.mirrored)) for pl in self.placements if pl.sheet_index == si and pl.part_id in self.pmap)
+                      bool(pl.mirrored), int(self.pmap[pl.part_id].tabs), bool(self.pmap[pl.part_id].kerf_comp))
+                     for pl in self.placements if pl.sheet_index == si and pl.part_id in self.pmap)
         colors = sorted(f"{k}={v}" for k, v in (plan["op_colors"] or plan["cmap"] or {}).items())
         payload = json.dumps([pls, colors, sorted((plan["labels"] or {}).items())], ensure_ascii=False)
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()

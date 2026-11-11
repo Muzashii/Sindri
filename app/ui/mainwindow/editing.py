@@ -65,7 +65,8 @@ class EditingMixin:
     def _snapshot(self):
         return (copy.deepcopy(self.placements), self.n_sheets, {p.id: p.quantity for p in self.parts},
                 list(self.unplaced), set(self.cut_sheets), set(self.done_parts),
-                {p.id: p.rotation_locked for p in self.parts})
+                {p.id: p.rotation_locked for p in self.parts},
+                {p.id: (p.tabs, p.kerf_comp) for p in self.parts})
 
     def _restore(self, snap):
         pls, n, qty, unplaced = snap[:4]
@@ -75,6 +76,10 @@ class EditingMixin:
             self.done_parts = set(snap[5])
             for p in self.parts:
                 p.rotation_locked = snap[6].get(p.id, False)
+        if len(snap) > 7:
+            for p in self.parts:
+                p.tabs, p.kerf_comp = snap[7].get(p.id, (0, False))
+                self.parts_panel.set_cut_options(p.id, p.tabs, p.kerf_comp)
         self.placements = copy.deepcopy(pls)
         self.n_sheets = n
         self.unplaced = list(unplaced)
@@ -326,6 +331,32 @@ class EditingMixin:
             part.rotation_locked = locked
             self._rebuild_checker()
             self.mark_changed()
+
+    def on_part_tabs_changed(self, pid: str, n: int):
+        """Micro-pontes da peça (0 = sem). Só a exportação muda: o encaixe continua o mesmo, mas o arquivo
+        já exportado das placas com essa peça deixa de valer (a impressão digital inclui as pontes)."""
+        part = self.pmap.get(pid)
+        if part and part.tabs != int(n):
+            self._push_undo()
+            part.tabs = int(n)
+            self.mark_changed()
+            self._update_status()
+
+    def on_part_kerf_changed(self, pid: str, on: bool):
+        """Compensar o kerf desta peça na exportação (corte externo + kerf/2, furos − kerf/2)."""
+        part = self.pmap.get(pid)
+        if part and part.kerf_comp != bool(on):
+            self._push_undo()
+            part.kerf_comp = bool(on)
+            self.mark_changed()
+            if on:
+                from ...core.dxf_export import part_kerf
+                k = part_kerf(part, self.nest_params(), self._material_kerf())
+                if k <= 0:
+                    self.show_banner(f"<b>{part.name}</b>: o material “{part.material or 'sem material'}” não tem "
+                                     "kerf cadastrado no banco de materiais (Ctrl+M). Sem ele a peça sai sem "
+                                     "compensação.", "warn")
+            self._update_status()
 
     def multiply_kits(self):
         if not self.parts:

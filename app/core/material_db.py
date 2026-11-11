@@ -250,6 +250,15 @@ class MaterialDB:
         """{material: {"color", "speed", "power", …, "ops": {…}}} — o formato do painel do laser."""
         return {m.name: m.laser_cfg() for m in self.materials}
 
+    def kerf_map(self, materials) -> dict:
+        """{material (como está nas peças): kerf em mm} só para os que têm kerf medido (> 0)."""
+        out = {}
+        for name in materials:
+            m = self.find(name or "")
+            if m is not None and m.kerf > 0:
+                out[name] = float(m.kerf)
+        return out
+
     def nest_overrides(self, materials) -> dict:
         """{material (como está nas peças): chapa/margem/espaçamento/veio} para NestParams.material_sheets."""
         out = {}

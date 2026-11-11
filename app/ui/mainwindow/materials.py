@@ -148,6 +148,11 @@ class MaterialsMixin:
         mats = {pt.material for pt in getattr(self, "parts", []) if pt.quantity > 0 and pt.material}
         return self.material_db().nest_overrides(sorted(mats))
 
+    def _material_kerf(self) -> dict:
+        """{material: kerf medido em mm} dos materiais em uso que têm kerf no banco (para "Compensar kerf")."""
+        mats = {pt.material for pt in getattr(self, "parts", []) if pt.material}
+        return self.material_db().kerf_map(sorted(mats))
+
     def open_materials_dialog(self, select: str = ""):
         from ..materials_dialog import MaterialsDialog
         dlg = MaterialsDialog(self, select)

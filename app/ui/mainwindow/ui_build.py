@@ -143,6 +143,8 @@ class UIBuildMixin:
         self.parts_panel = PartsPanel()
         self.parts_panel.quantityChanged.connect(self.on_quantity_changed)
         self.parts_panel.rotationLockChanged.connect(self.on_rotation_lock_changed)
+        self.parts_panel.tabsChanged.connect(self.on_part_tabs_changed)
+        self.parts_panel.kerfCompChanged.connect(self.on_part_kerf_changed)
         self.parts_panel.partSelected.connect(self.on_part_selected)
         self.parts_panel.btn_kits.clicked.connect(self.multiply_kits)
         self.parts_panel.btn_reset.clicked.connect(self.reset_quantities)
